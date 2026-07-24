@@ -10,17 +10,17 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 0 — Fundaciones y setup (infraestructura)
 **Objetivo:** repo listo, entorno reproducible, esqueleto que arranca.
 
-- [ ] 🔴 Inicializar monorepo (workspaces `apps/api`, `apps/web`, `packages/shared`)
-- [ ] 🔴 Configurar `docker-compose` (Postgres, Redis)
-- [ ] 🔴 Backend NestJS: bootstrap, config por entorno, health check `/health`
-- [ ] 🔴 Frontend React+Vite+Tailwind: layout base y routing
-- [ ] 🟡 Prisma: conexión + primera migración (User, Task)
-- [ ] 🟡 `packages/shared`: tipos y enums compartidos (Status, Priority)
-- [ ] 🟡 Linter/formatter (ESLint + Prettier) y `.editorconfig`
-- [ ] 🟢 CI básico (GitHub Actions: install, lint, build)
-- [ ] 🟢 README de arranque local
+- [x] 🔴 Inicializar monorepo (workspaces `apps/api`, `apps/web`, `packages/shared`)
+- [x] 🔴 Configurar `docker-compose` (Postgres, Redis)
+- [x] 🔴 Backend NestJS: bootstrap, config por entorno, health check `/health`
+- [x] 🔴 Frontend React+Vite+Tailwind: layout base y routing
+- [ ] 🟡 Prisma: conexión + primera migración (User, Task) — _movido a Sprint 1 (se crea junto al modelo User)_
+- [x] 🟡 `packages/shared`: tipos y enums compartidos (Status, Priority)
+- [ ] 🟡 Linter/formatter (ESLint + Prettier) y `.editorconfig` — _pendiente_
+- [ ] 🟢 CI básico (GitHub Actions: install, lint, build) — _pendiente_
+- [x] 🟢 README de arranque local
 
-**Entregable:** `docker-compose up` levanta api + web + DB y responden.
+**Entregable:** `docker-compose up` levanta api + web + DB y responden. ✅ API `/health` verificada; frontend con build OK y semáforo de estado.
 
 ---
 

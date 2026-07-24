@@ -4,13 +4,22 @@
   "private": true,
   "description": "Sistema PMO integrado con Gmail, WhatsApp y Copiloto de IA",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
-    "dev:api": "npm --workspace apps/api run start:dev",
-    "dev:web": "npm --workspace apps/web run dev",
-    "build": "npm --workspaces run build",
-    "lint": "npm --workspaces run lint"
+    "build:shared": "npm --workspace @pmo/shared run build",
+    "dev:api": "npm --workspace @pmo/api run start:dev",
+    "dev:web": "npm --workspace @pmo/web run dev",
+    "build": "npm run build:shared && npm --workspace @pmo/api run build && npm --workspace @pmo/web run build",
+    "lint": "npm --workspaces --if-present run lint",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
   }
 }
