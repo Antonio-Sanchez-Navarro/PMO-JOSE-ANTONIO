@@ -1,9 +1,25 @@
-import { Controller, Get, Logger, Query, Req, Res } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  HttpCode,
+  Logger,
+  Post,
+  Query,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
-import { OAUTH_STATE_COOKIE } from "./auth.constants";
+import { SessionService } from "./session.service";
+import { UsersService } from "../users/users.service";
+import { OAUTH_STATE_COOKIE, REFRESH_COOKIE } from "./auth.constants";
+import { AuthGuard } from "./auth.guard";
+import { CurrentUser } from "./current-user.decorator";
+import type { CurrentUserContext } from "./auth.types";
 
 @Controller("auth")
 export class AuthController {
@@ -11,6 +27,8 @@ export class AuthController {
 
   constructor(
     private readonly authService: AuthService,
+    private readonly session: SessionService,
+    private readonly users: UsersService,
     private readonly config: ConfigService,
   ) {}
 
@@ -27,7 +45,7 @@ export class AuthController {
     return res.redirect(this.authService.getAuthorizationUrl(state));
   }
 
-  /** Callback de Google: valida `state`, intercambia el code y (próximamente) emite sesión. */
+  /** Callback de Google: valida `state`, intercambia el code y emite la sesión. */
   @Get("google/callback")
   async googleCallback(
     @Query("code") code: string | undefined,
@@ -55,11 +73,49 @@ export class AuthController {
     res.clearCookie(OAUTH_STATE_COOKIE);
 
     const user = await this.authService.handleCallback(code);
+    await this.session.issue(res, user);
 
-    // TODO(sesión JWT): emitir cookie de sesión httpOnly con el userId persistido.
-    //   Por ahora redirigimos al frontend indicando éxito.
-    return res.redirect(
-      `${webUrl}/?login=success&email=${encodeURIComponent(user.email)}`,
-    );
+    return res.redirect(`${webUrl}/?login=success`);
+  }
+
+  /** Perfil del usuario de la sesión actual. */
+  @UseGuards(AuthGuard)
+  @Get("me")
+  async getCurrentUser(@CurrentUser() current: CurrentUserContext) {
+    const user = await this.users.findById(current.userId);
+    if (!user) {
+      // La sesión apunta a un usuario borrado: el frontend debe rehacer login.
+      throw new UnauthorizedException("El usuario de la sesión ya no existe");
+    }
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      hasGoogleTokens: Boolean(user.googleTokens),
+    };
+  }
+
+  /** Renueva el token de acceso a partir de la cookie de refresco. */
+  @Post("refresh")
+  @HttpCode(200)
+  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const token = req.cookies?.[REFRESH_COOKIE];
+    if (!token) {
+      this.session.clear(res);
+      throw new UnauthorizedException("No hay token de refresco");
+    }
+
+    const payload = await this.session.verifyRefresh(token);
+    await this.session.issue(res, { id: payload.sub, email: payload.email });
+    return { refreshed: true };
+  }
+
+  /** Cierra la sesión borrando ambas cookies. */
+  @Post("logout")
+  @HttpCode(200)
+  logout(@Res({ passthrough: true }) res: Response) {
+    this.session.clear(res);
+    return { ok: true };
   }
 }

@@ -2,14 +2,14 @@ import { Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Credentials, OAuth2Client } from "google-auth-library";
 import { CryptoService } from "../../common/crypto/crypto.service";
+import { UsersService } from "../users/users.service";
 import { GOOGLE_SCOPES } from "./auth.constants";
 
 export interface AuthenticatedUser {
+  id: string;
   email: string;
   name?: string;
   picture?: string;
-  /** Set de tokens de Google ya cifrado (listo para persistir en User.googleTokens). */
-  encryptedTokens: string;
 }
 
 @Injectable()
@@ -19,6 +19,7 @@ export class AuthService {
   constructor(
     private readonly config: ConfigService,
     private readonly crypto: CryptoService,
+    private readonly users: UsersService,
   ) {}
 
   private createOAuthClient(): OAuth2Client {
@@ -42,7 +43,7 @@ export class AuthService {
 
   /**
    * Intercambia el `code` del callback por tokens, valida el id_token,
-   * cifra los tokens y devuelve el perfil del usuario autenticado.
+   * cifra los tokens, persiste el usuario y devuelve su perfil.
    */
   async handleCallback(code: string): Promise<AuthenticatedUser> {
     const client = this.createOAuthClient();
@@ -69,18 +70,55 @@ export class AuthService {
       throw new UnauthorizedException("No se pudo obtener el correo del perfil de Google");
     }
 
-    const encryptedTokens = this.crypto.encryptJson(tokens);
+    const user = await this.users.upsertFromGoogle(
+      { email: payload.email, name: payload.name, picture: payload.picture },
+      this.crypto.encryptJson(tokens),
+    );
 
-    // TODO(persistencia): crear/actualizar User en Prisma con { email, name, googleTokens: encryptedTokens }
-    //   una vez que la base de datos esté activa (docker compose up + prisma migrate).
-    //   El siguiente paso del Sprint 1 (sesión JWT) tomará el userId de aquí.
     this.logger.log(`Autenticación exitosa para ${payload.email}`);
 
     return {
-      email: payload.email,
-      name: payload.name,
+      id: user.id,
+      email: user.email,
+      name: user.name ?? undefined,
       picture: payload.picture,
-      encryptedTokens,
     };
+  }
+
+  /**
+   * Cliente de Google listo para llamar a las APIs en nombre del usuario.
+   *
+   * `google-auth-library` renueva el `access_token` con el `refresh_token`
+   * cuando detecta que expiró; el evento `tokens` nos deja re-cifrar y
+   * persistir el set actualizado para no perder la renovación.
+   *
+   * Lo usará el módulo Gmail en el Sprint 2.
+   */
+  async getAuthorizedClient(userId: string): Promise<OAuth2Client> {
+    const credentials = await this.users.getGoogleCredentials(userId);
+    if (!credentials?.refresh_token && !credentials?.access_token) {
+      throw new UnauthorizedException(
+        "El usuario no tiene credenciales de Google válidas: debe volver a autorizar",
+      );
+    }
+
+    const client = this.createOAuthClient();
+    client.setCredentials(credentials);
+
+    client.on("tokens", (fresh) => {
+      // Google no reenvía el refresh_token en cada renovación: hay que conservarlo.
+      const merged: Credentials = {
+        ...credentials,
+        ...fresh,
+        refresh_token: fresh.refresh_token ?? credentials.refresh_token,
+      };
+      this.users
+        .saveGoogleCredentials(userId, merged)
+        .catch((err) =>
+          this.logger.error(`No se pudieron guardar los tokens renovados de ${userId}`, err),
+        );
+    });
+
+    return client;
   }
 }

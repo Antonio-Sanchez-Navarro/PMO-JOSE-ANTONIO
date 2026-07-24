@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { PrismaModule } from "./common/prisma/prisma.module";
 import { CryptoModule } from "./common/crypto/crypto.module";
 import { HealthModule } from "./modules/health/health.module";
 import { AuthModule } from "./modules/auth/auth.module";
@@ -19,6 +20,7 @@ import { AuthModule } from "./modules/auth/auth.module";
       // Lee el .env de la raíz del monorepo (y un .env local si existiera).
       envFilePath: ["../../.env", ".env"],
     }),
+    PrismaModule,
     CryptoModule,
     HealthModule,
     AuthModule,

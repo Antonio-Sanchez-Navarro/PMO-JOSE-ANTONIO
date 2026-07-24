@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { LoginPage } from "./features/auth/LoginPage";
+import { useSession, type SessionUser } from "./features/auth/useSession";
 
 type Health = {
   status: string;
@@ -9,6 +11,32 @@ type Health = {
 };
 
 export function App() {
+  const { user, status, logout } = useSession();
+
+  // Al volver del callback de Google la URL trae `?login=success`: la limpiamos
+  // una vez que la sesión está confirmada para no dejarlo en el historial.
+  useEffect(() => {
+    if (status === "authenticated" && window.location.search) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [status]);
+
+  if (status === "loading") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-400">
+        Cargando sesión…
+      </div>
+    );
+  }
+
+  if (status === "anonymous" || !user) {
+    return <LoginPage />;
+  }
+
+  return <Dashboard user={user} onLogout={logout} />;
+}
+
+function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,40 +50,81 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800">
-      <div className="mx-auto max-w-3xl px-6 py-16">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
+          <span className="font-semibold">PMO Dashboard</span>
+          <div className="flex items-center gap-4 text-sm">
+            <span className="text-slate-500">{user.name ?? user.email}</span>
+            <button
+              onClick={onLogout}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-600 transition hover:bg-slate-50"
+            >
+              Cerrar sesión
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-3xl px-6 py-12">
         <span className="inline-block rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
-          Sprint 0 · Fundaciones
+          Sprint 1 · Autenticación
         </span>
-        <h1 className="mt-4 text-4xl font-bold tracking-tight">PMO Dashboard</h1>
+        <h1 className="mt-4 text-4xl font-bold tracking-tight">Hola, {user.name ?? user.email}</h1>
         <p className="mt-2 text-slate-500">
-          Monorepo listo · Backend NestJS · Frontend React + Vite + Tailwind.
+          Sesión iniciada con Google. El siguiente sprint conecta la bandeja de Gmail.
         </p>
 
-        <div className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-            Estado del backend (/health)
-          </h2>
-          {health ? (
-            <div className="mt-3 flex items-center gap-3">
-              <span className="h-3 w-3 rounded-full bg-green-500" />
-              <span className="font-medium">{health.status.toUpperCase()}</span>
-              <span className="text-slate-400">·</span>
-              <span className="text-slate-500">
-                {health.service} v{health.version} · uptime {health.uptimeSec}s
-              </span>
-            </div>
-          ) : error ? (
-            <div className="mt-3 flex items-center gap-3">
-              <span className="h-3 w-3 rounded-full bg-red-500" />
-              <span className="text-red-600">
-                Sin conexión con la API ({error}). ¿Está corriendo en :3000?
-              </span>
-            </div>
-          ) : (
-            <p className="mt-3 text-slate-400">Consultando…</p>
-          )}
+        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+          <Card title="Cuenta">
+            <dl className="space-y-1 text-sm">
+              <Row label="Correo" value={user.email} />
+              <Row label="Rol" value={user.role} />
+              <Row
+                label="Permisos de Gmail"
+                value={user.hasGoogleTokens ? "Concedidos" : "Faltantes"}
+              />
+            </dl>
+          </Card>
+
+          <Card title="Estado del backend (/health)">
+            {health ? (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="h-3 w-3 shrink-0 rounded-full bg-green-500" />
+                <span className="font-medium">{health.status.toUpperCase()}</span>
+                <span className="text-slate-400">·</span>
+                <span className="text-slate-500">
+                  v{health.version} · uptime {health.uptimeSec}s
+                </span>
+              </div>
+            ) : error ? (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="h-3 w-3 shrink-0 rounded-full bg-red-500" />
+                <span className="text-red-600">Sin conexión con la API ({error}).</span>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">Consultando…</p>
+            )}
+          </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">{title}</h2>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <dt className="text-slate-400">{label}</dt>
+      <dd className="truncate font-medium">{value}</dd>
     </div>
   );
 }

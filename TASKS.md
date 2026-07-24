@@ -14,7 +14,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [x] 🔴 Configurar `docker-compose` (Postgres, Redis)
 - [x] 🔴 Backend NestJS: bootstrap, config por entorno, health check `/health`
 - [x] 🔴 Frontend React+Vite+Tailwind: layout base y routing
-- [ ] 🟡 Prisma: conexión + primera migración (User, Task) — _movido a Sprint 1 (se crea junto al modelo User)_
+- [x] 🟡 Prisma: conexión + primera migración (User, Task) — ✅ Completado en Sprint 1
 - [x] 🟡 `packages/shared`: tipos y enums compartidos (Status, Priority)
 - [ ] 🟡 Linter/formatter (ESLint + Prettier) y `.editorconfig` — _pendiente_
 - [ ] 🟢 CI básico (GitHub Actions: install, lint, build) — _pendiente_
@@ -31,11 +31,11 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [ ] 🔴 Configurar pantalla de consentimiento OAuth y credenciales — _acción del usuario_
 - [x] 🔴 Backend: flujo `/auth/google` → `/auth/google/callback` — ✅ 302 a Google con scopes + state anti-CSRF
 - [x] 🔴 Cifrado de tokens (AES-256-GCM) en reposo — ✅ `CryptoService` (round-trip + integridad verificados)
-- [ ] 🟡 Emisión de sesión JWT (httpOnly cookie) + refresh — _en curso (dep `@nestjs/jwt` lista)_
-- [ ] 🟡 Guard de autenticación + middleware de usuario actual
-- [ ] 🟡 Frontend: pantalla de login + estado de sesión + logout
-- [ ] 🟢 Manejo de expiración/refresh de token de Google
-- [ ] 🟡 Persistencia del `User` en Prisma (requiere DB activa: `docker compose up`)
+- [x] 🟡 Emisión de sesión JWT (httpOnly cookie) + refresh — ✅ `SessionService`: access 15 min + refresh 30 d, `POST /auth/refresh` y `/auth/logout`
+- [x] 🟡 Guard de autenticación + middleware de usuario actual — ✅ `AuthGuard` (stateless) + `@CurrentUser()` y `GET /auth/me`
+- [x] 🟡 Frontend: pantalla de login + estado de sesión + logout — ✅ `LoginPage`, hook `useSession` y reintento automático tras 401
+- [x] 🟢 Manejo de expiración/refresh de token de Google — ✅ `AuthService.getAuthorizedClient()` re-cifra y persiste los tokens renovados
+- [x] 🟡 Persistencia del `User` en Prisma (requiere DB activa: `docker compose up`) — ✅ `UsersService.upsertFromGoogle` + migración `20260724000000_init` aplicada
 
 **Entregable:** usuario inicia sesión y el backend guarda credenciales de Gmail.
 
