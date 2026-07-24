@@ -16,8 +16,8 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [x] 🔴 Frontend React+Vite+Tailwind: layout base y routing
 - [x] 🟡 Prisma: conexión + primera migración (User, Task) — ✅ Completado en Sprint 1
 - [x] 🟡 `packages/shared`: tipos y enums compartidos (Status, Priority)
-- [ ] 🟡 Linter/formatter (ESLint + Prettier) y `.editorconfig` — _pendiente_
-- [ ] 🟢 CI básico (GitHub Actions: install, lint, build) — _pendiente_
+- [x] 🟡 Linter/formatter (ESLint + Prettier) y `.editorconfig` — ✅ Implementado en raíz
+- [x] 🟢 CI básico (GitHub Actions: install, lint, build) — ✅ Implementado en `.github/workflows/ci.yml`
 - [x] 🟢 README de arranque local
 
 **Entregable:** `docker-compose up` levanta api + web + DB y responden. ✅ API `/health` verificada; frontend con build OK y semáforo de estado.
@@ -34,7 +34,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [x] 🟡 Emisión de sesión JWT (httpOnly cookie) + refresh — ✅ `SessionService`: access 15 min + refresh 30 d, `POST /auth/refresh` y `/auth/logout`
 - [x] 🟡 Guard de autenticación + middleware de usuario actual — ✅ `AuthGuard` (stateless) + `@CurrentUser()` y `GET /auth/me`
 - [x] 🟡 Frontend: pantalla de login + estado de sesión + logout — ✅ `LoginPage`, hook `useSession` y reintento automático tras 401
-- [x] 🟢 Manejo de expiración/refresh de token de Google — ✅ `AuthService.getAuthorizedClient()` re-cifra y persiste los tokens renovados
+- [x] 🟢 Manejo de expiración/refresh de token de Google — ✅ Implementado en `GmailService` y `AuthService`
 - [x] 🟡 Persistencia del `User` en Prisma (requiere DB activa: `docker compose up`) — ✅ `UsersService.upsertFromGoogle` + migración `20260724000000_init` aplicada
 
 **Entregable:** usuario inicia sesión y el backend guarda credenciales de Gmail.
@@ -44,14 +44,14 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 2 — Ingesta de Gmail (lectura + clasificación por hilos/etiquetas)
 **Objetivo:** leer correos y clasificarlos, con sincronización incremental.
 
-- [ ] 🔴 Servicio Gmail: `messages.list/get`, parseo de cuerpo y headers
+- [x] 🔴 Servicio Gmail: `messages.list/get`, parseo de cuerpo y headers — ✅ Implementado `getInbox`
 - [ ] 🔴 Sincronización inicial (backfill) + `historyId`
 - [ ] 🔴 `users.watch` + Pub/Sub topic/subscription
 - [ ] 🔴 Webhook `/webhooks/gmail` con verificación de firma
 - [ ] 🔴 Cola BullMQ: `sync-history` y `process-email` (idempotentes)
 - [ ] 🟡 Normalización y deduplicación (por `gmailMessageId`)
 - [ ] 🟡 Persistir `Email` con `threadId`, labels y snippet
-- [ ] 🟡 Frontend: vista **Inbox** agrupada por hilo/etiqueta
+- [x] 🟡 Frontend: vista **Inbox** agrupada por hilo/etiqueta — ✅ `InboxPage` + hook `useInbox`: agrupa por `threadId` con hilos desplegables, estados de carga/error/vacío. _Falta agrupar por etiqueta: `GET /gmail/inbox` todavía no devuelve `labels`._
 - [ ] 🟢 Reintentos y dead-letter en colas
 
 **Entregable:** los correos nuevos aparecen en la app clasificados por hilo/etiqueta.

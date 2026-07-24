@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { LoginPage } from "./features/auth/LoginPage";
 import { useSession, type SessionUser } from "./features/auth/useSession";
+import { InboxPage } from "./features/inbox/InboxPage";
 
 type Health = {
   status: string;
@@ -67,12 +68,16 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
 
       <div className="mx-auto max-w-3xl px-6 py-12">
         <span className="inline-block rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
-          Sprint 1 · Autenticación
+          Sprint 2 · Bandeja de Gmail
         </span>
         <h1 className="mt-4 text-4xl font-bold tracking-tight">Hola, {user.name ?? user.email}</h1>
         <p className="mt-2 text-slate-500">
-          Sesión iniciada con Google. El siguiente sprint conecta la bandeja de Gmail.
+          Tus correos, agrupados por conversación. El siguiente sprint extrae tareas con IA.
         </p>
+
+        <div className="mt-8">
+          <InboxPage />
+        </div>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
           <Card title="Cuenta">

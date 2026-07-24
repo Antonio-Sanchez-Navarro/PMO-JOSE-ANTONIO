@@ -13,10 +13,14 @@
     "dev:web": "npm --workspace @pmo/web run dev",
     "build": "npm run build:shared && npm --workspace @pmo/api run build && npm --workspace @pmo/web run build",
     "lint": "npm --workspaces --if-present run lint",
+    "format": "prettier --write \"apps/**/*.{ts,tsx}\" \"packages/**/*.{ts,tsx}\"",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down"
   },
   "devDependencies": {
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "prettier": "^3.9.6",
     "typescript": "^5.4.5"
   },
   "allowScripts": {

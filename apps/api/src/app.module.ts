@@ -4,9 +4,9 @@ import { PrismaModule } from "./common/prisma/prisma.module";
 import { CryptoModule } from "./common/crypto/crypto.module";
 import { HealthModule } from "./modules/health/health.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { GmailModule } from "./modules/gmail/gmail.module";
 
 // Módulos de dominio (se implementan por sprint — ver TASKS.md):
-// import { GmailModule } from "./modules/gmail/gmail.module";
 // import { TasksModule } from "./modules/tasks/tasks.module";
 // import { AiModule } from "./modules/ai/ai.module";
 // import { CopilotModule } from "./modules/copilot/copilot.module";
@@ -24,6 +24,7 @@ import { AuthModule } from "./modules/auth/auth.module";
     CryptoModule,
     HealthModule,
     AuthModule,
+    GmailModule,
   ],
 })
 export class AppModule {}
