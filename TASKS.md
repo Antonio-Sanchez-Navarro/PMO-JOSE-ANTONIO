@@ -44,15 +44,15 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 2 — Ingesta de Gmail (lectura + clasificación por hilos/etiquetas)
 **Objetivo:** leer correos y clasificarlos, con sincronización incremental.
 
-- [x] 🔴 Servicio Gmail: `messages.list/get`, parseo de cuerpo y headers — ✅ Implementado `getInbox`
-- [ ] 🔴 Sincronización inicial (backfill) + `historyId`
-- [x] 🔴 `users.watch` + Pub/Sub topic/subscription — ✅ Implementado en `GmailService.watchInbox` y documentado en `GCP_SETUP.md`
-- [x] 🔴 Webhook `/webhooks/gmail` con verificación de firma — ✅ Implementado en `GmailController` y encolado seguro por base64
-- [x] 🔴 Cola BullMQ: `sync-history` y `process-email` (idempotentes) — ✅ Implementado `GmailProcessor` y encolado en `gmail-sync`
-- [ ] 🟡 Normalización y deduplicación (por `gmailMessageId`)
-- [x] 🟡 Persistir `Email` con `threadId`, labels y snippet — ✅ Implementado `prisma.email.upsert` en `GmailService.syncHistory`
-- [x] 🟡 Frontend: vista **Inbox** agrupada por hilo/etiqueta — ✅ `InboxPage` + hook `useInbox`: agrupa por `threadId` con hilos desplegables, estados de carga/error/vacío. _Falta agrupar por etiqueta: `GET /gmail/inbox` todavía no devuelve `labels`._
-- [ ] 🟢 Reintentos y dead-letter en colas
+- [x] 🔴 Servicio Gmail: `messages.list/get`, parseo de cuerpo y headers — ✅ `getInbox` + parseo MIME recursivo (`text/plain`, con degradado de HTML a texto). `format: 'full'` en la sync; la lista usa `metadata` salvo `?includeBody=true`
+- [x] 🔴 Sincronización inicial (backfill) + `historyId` — ✅ `syncHistory` usa `users.history.list` desde `User.gmailHistoryId`; sin marcador hace backfill de 25 y fija el `historyId` del perfil; ante 404 (marcador caducado) rehace backfill. _Verificado: backfill 25 correos → incremental desde `6457254`._
+- [x] 🔴 `users.watch` + Pub/Sub topic/subscription — ✅ `GmailService.watchInbox` (guarda el `historyId` inicial) y `GCP_SETUP.md`. _Falta la parte de consola de GCP: acción del usuario._
+- [x] 🔴 Webhook `/webhooks/gmail` con verificación de firma — ✅ `PubSubAuthGuard` valida el JWT OIDC de Google (firma, `aud` y cuenta de servicio emisora). _Verificado: 401 sin token y con token falso._
+- [x] 🔴 Cola BullMQ: `sync-history` y `process-email` (idempotentes) — ✅ `GmailProcessor` sobre la cola `gmail-sync`, con `jobId` = `messageId` de Pub/Sub, 3 reintentos y backoff exponencial. _`process-email` aún no existe: llega con la clasificación por IA del Sprint 3._
+- [x] 🟡 Normalización y deduplicación (por `gmailMessageId`) — ✅ `upsert` sobre la clave única. _Verificado: reenviar el mismo webhook no duplica._
+- [x] 🟡 Persistir `Email` con `threadId`, labels y snippet — ✅ Ahora también `labels` y `bodyText`. _Verificado: 25/25 registros con etiquetas y cuerpo (media ~8 KB)._
+- [x] 🟡 Frontend: vista **Inbox** agrupada por hilo/etiqueta — ✅ `InboxPage` + `useInbox`: hilos desplegables por `threadId`, barra de filtro por etiqueta con conteos, píldoras por correo y marca de no leídos
+- [ ] 🟢 Reintentos y dead-letter en colas — _reintentos configurados (3 + backoff); falta la cola de dead-letter_
 
 **Entregable:** los correos nuevos aparecen en la app clasificados por hilo/etiqueta.
 

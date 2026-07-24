@@ -4,6 +4,11 @@ import { Logger } from '@nestjs/common';
 import { GmailService } from './gmail.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
+interface SyncHistoryJob {
+  emailAddress?: string;
+  historyId?: string;
+}
+
 @Processor('gmail-sync')
 export class GmailProcessor extends WorkerHost {
   private readonly logger = new Logger(GmailProcessor.name);
@@ -15,10 +20,10 @@ export class GmailProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<any, any, string>): Promise<any> {
+  async process(job: Job<SyncHistoryJob, unknown, string>): Promise<unknown> {
     this.logger.log(`Procesando tarea de sincronización para el job ${job.id}`);
 
-    const emailAddress = job.data.emailAddress;
+    const { emailAddress, historyId } = job.data;
     if (!emailAddress) {
       this.logger.warn('Job descartado: falta emailAddress en los datos');
       return;
@@ -35,8 +40,11 @@ export class GmailProcessor extends WorkerHost {
     }
 
     try {
-      await this.gmailService.syncHistory(user.id);
-      this.logger.log(`Sincronización completada con éxito para el usuario ${user.id}`);
+      const result = await this.gmailService.syncHistory(user.id, historyId);
+      this.logger.log(
+        `Sincronización completada para ${user.id}: ${result.processed} correo(s) en modo ${result.mode}`,
+      );
+      return result;
     } catch (error) {
       this.logger.error(`Falló la sincronización para el usuario ${user.id}`, error);
       throw error; // Lanzar error para que BullMQ lo reintente si aplica

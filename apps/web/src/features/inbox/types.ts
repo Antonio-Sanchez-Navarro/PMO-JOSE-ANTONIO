@@ -9,6 +9,10 @@ export interface EmailSnippet {
   from: string;
   subject: string;
   date: string;
+  /** Etiquetas de Gmail: `INBOX`, `UNREAD`, `IMPORTANT`, `CATEGORY_*`, … */
+  labels: string[];
+  /** Solo llega si se pide `?includeBody=true`. */
+  bodyText?: string;
 }
 
 /** Mensajes de un mismo hilo, del más reciente al más antiguo. */

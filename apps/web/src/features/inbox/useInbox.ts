@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../../lib/api";
+import { visibleLabels } from "./format";
 import type { EmailSnippet, EmailThread } from "./types";
 
 export type InboxStatus = "loading" | "ready" | "error";
+
+/** Etiqueta presente en los resultados, con cuántos correos la llevan. */
+export interface LabelFacet {
+  id: string;
+  name: string;
+  count: number;
+}
 
 /** Agrupa los mensajes por `threadId`, ordenando hilos y mensajes por fecha descendente. */
 function groupByThread(emails: EmailSnippet[]): EmailThread[] {
@@ -38,6 +46,7 @@ export function useInbox(initialMaxResults = 20) {
   const [error, setError] = useState<string | null>(null);
   const [maxResults, setMaxResults] = useState(initialMaxResults);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [labelFilter, setLabelFilter] = useState<string | null>(null);
 
   const load = useCallback(async (limit: number, { silent = false } = {}) => {
     if (silent) setIsRefreshing(true);
@@ -66,11 +75,33 @@ export function useInbox(initialMaxResults = 20) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, maxResults]);
 
-  const threads = useMemo(() => groupByThread(emails), [emails]);
+  /** Etiquetas presentes en los resultados, ordenadas por frecuencia. */
+  const labels = useMemo<LabelFacet[]>(() => {
+    const counts = new Map<string, LabelFacet>();
+    for (const email of emails) {
+      for (const label of visibleLabels(email.labels ?? [])) {
+        const existing = counts.get(label.id);
+        if (existing) existing.count++;
+        else counts.set(label.id, { ...label, count: 1 });
+      }
+    }
+    return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  }, [emails]);
+
+  const visible = useMemo(
+    () => (labelFilter ? emails.filter((e) => (e.labels ?? []).includes(labelFilter)) : emails),
+    [emails, labelFilter],
+  );
+
+  const threads = useMemo(() => groupByThread(visible), [visible]);
 
   return {
-    emails,
+    emails: visible,
+    totalEmails: emails.length,
     threads,
+    labels,
+    labelFilter,
+    setLabelFilter,
     status,
     error,
     isRefreshing,

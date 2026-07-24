@@ -57,3 +57,41 @@ export function formatFullDate(raw: string): string {
   const date = new Date(raw);
   return Number.isNaN(date.getTime()) ? raw : date.toLocaleString("es-MX");
 }
+
+// ─── Etiquetas de Gmail ──────────────────────────────────────────────────
+
+/** Nombres legibles de las etiquetas de sistema que sí aportan información. */
+const LABEL_NAMES: Record<string, string> = {
+  IMPORTANT: "Importante",
+  STARRED: "Destacado",
+  CATEGORY_PERSONAL: "Personal",
+  CATEGORY_SOCIAL: "Social",
+  CATEGORY_PROMOTIONS: "Promociones",
+  CATEGORY_UPDATES: "Novedades",
+  CATEGORY_FORUMS: "Foros",
+};
+
+/**
+ * Etiquetas que no vale la pena pintar: `INBOX` la tienen todas y `UNREAD` se
+ * representa con el estilo de la fila, no con una píldora.
+ */
+const HIDDEN_LABELS = new Set(["INBOX", "UNREAD"]);
+
+/** Etiquetas mostrables de un correo, ya con nombre legible. */
+export function visibleLabels(labels: string[]): { id: string; name: string }[] {
+  return labels
+    .filter((id) => !HIDDEN_LABELS.has(id))
+    .map((id) => ({ id, name: LABEL_NAMES[id] ?? prettifyLabelId(id) }));
+}
+
+/** Convierte ids de etiquetas de usuario (`Label_12`, `TRABAJO/CLIENTES`) en algo legible. */
+function prettifyLabelId(id: string): string {
+  const leaf = id.split("/").pop() ?? id;
+  const cleaned = leaf.replace(/^Label_/i, "").replace(/[_-]+/g, " ").trim();
+  if (!cleaned) return id;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+}
+
+export function isUnread(labels: string[]): boolean {
+  return labels.includes("UNREAD");
+}

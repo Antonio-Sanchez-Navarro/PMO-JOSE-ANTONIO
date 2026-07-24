@@ -29,6 +29,8 @@ model User {
   email          String       @unique
   name           String?
   googleTokens   String? // cifrado en reposo (AES-256-GCM)
+  /// Último `historyId` de Gmail sincronizado: punto de partida de la sync incremental.
+  gmailHistoryId String?
   whatsappNumber String?
   role           String       @default("owner")
   createdAt      DateTime     @default(now())

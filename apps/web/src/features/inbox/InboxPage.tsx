@@ -1,10 +1,29 @@
 import { useState } from "react";
-import { useInbox } from "./useInbox";
-import { formatEmailDate, formatFullDate, initialOf, parseSender } from "./format";
+import { useInbox, type LabelFacet } from "./useInbox";
+import {
+  formatEmailDate,
+  formatFullDate,
+  initialOf,
+  isUnread,
+  parseSender,
+  visibleLabels,
+} from "./format";
 import type { EmailSnippet, EmailThread } from "./types";
 
 export function InboxPage() {
-  const { threads, emails, status, error, isRefreshing, refresh, loadMore } = useInbox();
+  const {
+    threads,
+    emails,
+    totalEmails,
+    labels,
+    labelFilter,
+    setLabelFilter,
+    status,
+    error,
+    isRefreshing,
+    refresh,
+    loadMore,
+  } = useInbox();
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -15,6 +34,7 @@ export function InboxPage() {
             <p className="text-xs text-slate-400">
               {emails.length} {emails.length === 1 ? "correo" : "correos"} ·{" "}
               {threads.length} {threads.length === 1 ? "conversación" : "conversaciones"}
+              {labelFilter && ` · filtrado de ${totalEmails}`}
             </p>
           )}
         </div>
@@ -26,6 +46,10 @@ export function InboxPage() {
           {isRefreshing ? "Actualizando…" : "Actualizar"}
         </button>
       </header>
+
+      {status === "ready" && labels.length > 0 && (
+        <LabelFilterBar labels={labels} active={labelFilter} onChange={setLabelFilter} />
+      )}
 
       {status === "loading" && <InboxSkeleton />}
 
@@ -43,7 +67,9 @@ export function InboxPage() {
 
       {status === "ready" && threads.length === 0 && (
         <p className="px-6 py-12 text-center text-sm text-slate-400">
-          No hay correos en la bandeja de entrada.
+          {labelFilter
+            ? "Ningún correo con esta etiqueta."
+            : "No hay correos en la bandeja de entrada."}
         </p>
       )}
 
@@ -110,6 +136,8 @@ function EmailRow({
 }) {
   const sender = parseSender(email.from);
   const interactive = Boolean(onToggle);
+  const labels = visibleLabels(email.labels ?? []);
+  const unread = isUnread(email.labels ?? []);
 
   const content = (
     <div className={`flex items-start gap-4 px-6 py-4 ${nested ? "pl-16" : ""}`}>
@@ -124,7 +152,16 @@ function EmailRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="truncate font-medium text-slate-800" title={sender.email}>
+          {unread && (
+            <span
+              aria-label="No leído"
+              className="h-2 w-2 shrink-0 self-center rounded-full bg-indigo-500"
+            />
+          )}
+          <span
+            className={`truncate text-slate-800 ${unread ? "font-semibold" : "font-medium"}`}
+            title={sender.email}
+          >
             {sender.name}
           </span>
           {threadCount && threadCount > 1 && (
@@ -133,8 +170,23 @@ function EmailRow({
             </span>
           )}
         </div>
-        <p className="truncate text-sm font-medium text-slate-700">{email.subject}</p>
+        <p className={`truncate text-sm text-slate-700 ${unread ? "font-semibold" : "font-medium"}`}>
+          {email.subject}
+        </p>
         <p className="truncate text-sm text-slate-500">{email.snippet}</p>
+
+        {labels.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {labels.map((label) => (
+              <span
+                key={label.id}
+                className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500"
+              >
+                {label.name}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <time
@@ -158,6 +210,41 @@ function EmailRow({
     >
       {content}
     </button>
+  );
+}
+
+function LabelFilterBar({
+  labels,
+  active,
+  onChange,
+}: {
+  labels: LabelFacet[];
+  active: string | null;
+  onChange: (label: string | null) => void;
+}) {
+  const chip = (selected: boolean) =>
+    `rounded-full px-3 py-1 text-xs font-medium transition ${
+      selected
+        ? "bg-indigo-600 text-white"
+        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+    }`;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-6 py-3">
+      <span className="mr-1 text-xs uppercase tracking-wide text-slate-400">Etiqueta</span>
+      <button onClick={() => onChange(null)} className={chip(active === null)}>
+        Todas
+      </button>
+      {labels.map((label) => (
+        <button
+          key={label.id}
+          onClick={() => onChange(active === label.id ? null : label.id)}
+          className={chip(active === label.id)}
+        >
+          {label.name} <span className="opacity-60">{label.count}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
