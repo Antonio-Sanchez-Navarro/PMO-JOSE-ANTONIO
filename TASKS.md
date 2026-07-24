@@ -27,14 +27,15 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 1 — Autenticación Google (OAuth2)
 **Objetivo:** login con Google y almacenamiento seguro de tokens.
 
-- [ ] 🔴 Crear proyecto en Google Cloud Console + habilitar Gmail API
-- [ ] 🔴 Configurar pantalla de consentimiento OAuth y credenciales
-- [ ] 🔴 Backend: flujo `/auth/google` → `/auth/google/callback`
-- [ ] 🔴 Cifrado de tokens (AES-256-GCM) en reposo
-- [ ] 🟡 Emisión de sesión JWT (httpOnly cookie) + refresh
+- [ ] 🔴 Crear proyecto en Google Cloud Console + habilitar Gmail API — _acción del usuario_
+- [ ] 🔴 Configurar pantalla de consentimiento OAuth y credenciales — _acción del usuario_
+- [x] 🔴 Backend: flujo `/auth/google` → `/auth/google/callback` — ✅ 302 a Google con scopes + state anti-CSRF
+- [x] 🔴 Cifrado de tokens (AES-256-GCM) en reposo — ✅ `CryptoService` (round-trip + integridad verificados)
+- [ ] 🟡 Emisión de sesión JWT (httpOnly cookie) + refresh — _en curso (dep `@nestjs/jwt` lista)_
 - [ ] 🟡 Guard de autenticación + middleware de usuario actual
 - [ ] 🟡 Frontend: pantalla de login + estado de sesión + logout
 - [ ] 🟢 Manejo de expiración/refresh de token de Google
+- [ ] 🟡 Persistencia del `User` en Prisma (requiere DB activa: `docker compose up`)
 
 **Entregable:** usuario inicia sesión y el backend guarda credenciales de Gmail.
 

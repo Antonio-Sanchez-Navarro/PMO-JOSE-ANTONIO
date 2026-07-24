@@ -1,9 +1,10 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { CryptoModule } from "./common/crypto/crypto.module";
 import { HealthModule } from "./modules/health/health.module";
+import { AuthModule } from "./modules/auth/auth.module";
 
 // Módulos de dominio (se implementan por sprint — ver TASKS.md):
-// import { AuthModule } from "./modules/auth/auth.module";
 // import { GmailModule } from "./modules/gmail/gmail.module";
 // import { TasksModule } from "./modules/tasks/tasks.module";
 // import { AiModule } from "./modules/ai/ai.module";
@@ -18,7 +19,9 @@ import { HealthModule } from "./modules/health/health.module";
       // Lee el .env de la raíz del monorepo (y un .env local si existiera).
       envFilePath: ["../../.env", ".env"],
     }),
+    CryptoModule,
     HealthModule,
+    AuthModule,
   ],
 })
 export class AppModule {}
