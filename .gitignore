@@ -1,0 +1,38 @@
+# Dependencias
+node_modules/
+**/node_modules/
+
+# Entorno / secretos
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Builds
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Prisma
+apps/api/prisma/*.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Editor / SO
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+coverage/
+.nyc_output/

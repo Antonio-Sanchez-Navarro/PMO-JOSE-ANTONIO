@@ -1,0 +1,16 @@
+{
+  "name": "pmo-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sistema PMO integrado con Gmail, WhatsApp y Copiloto de IA",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace apps/api run start:dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "build": "npm --workspaces run build",
+    "lint": "npm --workspaces run lint"
+  }
+}

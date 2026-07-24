@@ -1,0 +1,2 @@
+# Módulos de dominio: auth, gmail, tasks, ai, copilot, whatsapp, time-tracking.
+# Cada uno con su *.module.ts, *.service.ts, *.controller.ts (ver TASKS.md).

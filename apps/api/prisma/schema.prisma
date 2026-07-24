@@ -1,0 +1,93 @@
+// Esquema de datos del PMO Dashboard — ver ARCHITECTURE.md §4.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  POSTPONED
+  DONE
+  OVERDUE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  name           String?
+  googleTokens   String? // cifrado en reposo (AES-256-GCM)
+  whatsappNumber String?
+  role           String       @default("owner")
+  createdAt      DateTime     @default(now())
+  emails         Email[]
+  tasks          Task[]
+  timeEntries    TimeEntry[]
+}
+
+model Email {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  gmailMessageId String    @unique
+  threadId       String
+  from           String
+  subject        String?
+  snippet        String?
+  bodyText       String?
+  labels         String[]
+  category       String?
+  isActionable   Boolean   @default(false)
+  receivedAt     DateTime
+  processedAt    DateTime?
+  tasks          Task[]
+
+  @@index([threadId])
+}
+
+model Task {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  title         String
+  description   String?
+  status        TaskStatus   @default(TODO)
+  priority      TaskPriority @default(MEDIUM)
+  dueDate       DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  sourceEmail   Email?       @relation(fields: [sourceEmailId], references: [id])
+  sourceEmailId String?
+  aiConfidence  Float?
+  tags          String[]
+  position      Int          @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  timeEntries   TimeEntry[]
+
+  @@index([userId, status])
+}
+
+model TimeEntry {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  startedAt   DateTime
+  endedAt     DateTime?
+  durationSec Int?
+  note        String?
+}

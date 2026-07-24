@@ -1,0 +1,30 @@
+{
+  "name": "@pmo/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start:dev": "nest start --watch",
+    "build": "nest build",
+    "lint": "eslint \"src/**/*.ts\"",
+    "prisma:migrate": "prisma migrate dev",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/platform-socket.io": "^10.0.0",
+    "@nestjs/websockets": "^10.0.0",
+    "@pmo/shared": "*",
+    "@prisma/client": "^5.0.0",
+    "bullmq": "^5.0.0",
+    "googleapis": "^140.0.0",
+    "ioredis": "^5.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.0.0",
+    "prisma": "^5.0.0",
+    "typescript": "^5.4.0"
+  }
+}
