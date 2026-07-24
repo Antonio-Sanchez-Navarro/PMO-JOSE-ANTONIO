@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { BullModule } from '@nestjs/bullmq';
 import { PrismaModule } from "./common/prisma/prisma.module";
 import { CryptoModule } from "./common/crypto/crypto.module";
 import { HealthModule } from "./modules/health/health.module";
@@ -25,6 +26,15 @@ import { GmailModule } from "./modules/gmail/gmail.module";
     HealthModule,
     AuthModule,
     GmailModule,
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        connection: {
+          url: configService.get<string>('REDIS_URL') || 'redis://localhost:6379',
+        },
+      }),
+      inject: [ConfigService],
+    }),
   ],
 })
 export class AppModule {}

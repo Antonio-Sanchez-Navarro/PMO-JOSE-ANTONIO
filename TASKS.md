@@ -46,11 +46,11 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 
 - [x] 🔴 Servicio Gmail: `messages.list/get`, parseo de cuerpo y headers — ✅ Implementado `getInbox`
 - [ ] 🔴 Sincronización inicial (backfill) + `historyId`
-- [ ] 🔴 `users.watch` + Pub/Sub topic/subscription
-- [ ] 🔴 Webhook `/webhooks/gmail` con verificación de firma
-- [ ] 🔴 Cola BullMQ: `sync-history` y `process-email` (idempotentes)
+- [x] 🔴 `users.watch` + Pub/Sub topic/subscription — ✅ Implementado en `GmailService.watchInbox` y documentado en `GCP_SETUP.md`
+- [x] 🔴 Webhook `/webhooks/gmail` con verificación de firma — ✅ Implementado en `GmailController` y encolado seguro por base64
+- [x] 🔴 Cola BullMQ: `sync-history` y `process-email` (idempotentes) — ✅ Implementado `GmailProcessor` y encolado en `gmail-sync`
 - [ ] 🟡 Normalización y deduplicación (por `gmailMessageId`)
-- [ ] 🟡 Persistir `Email` con `threadId`, labels y snippet
+- [x] 🟡 Persistir `Email` con `threadId`, labels y snippet — ✅ Implementado `prisma.email.upsert` en `GmailService.syncHistory`
 - [x] 🟡 Frontend: vista **Inbox** agrupada por hilo/etiqueta — ✅ `InboxPage` + hook `useInbox`: agrupa por `threadId` con hilos desplegables, estados de carga/error/vacío. _Falta agrupar por etiqueta: `GET /gmail/inbox` todavía no devuelve `labels`._
 - [ ] 🟢 Reintentos y dead-letter en colas
 
