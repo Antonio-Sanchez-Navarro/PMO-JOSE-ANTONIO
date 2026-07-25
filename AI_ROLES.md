@@ -76,6 +76,15 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
   Mismo motivo, distinto sitio: los tests transpilan sin type-check
   (`isolatedModules` en `tsconfig.spec.json`) porque jest moría igual.
 
+- **No ejecutes `nest build` con el watcher levantado.** `npm run build` y
+  `npm run dev:api` escriben los dos en `apps/api/dist`. Si coinciden, el
+  watcher recompila sin errores ("Found 0 errors") y acto seguido su hijo muere
+  con `Cannot find module '...dist/main'`, porque el build le borró la carpeta
+  debajo. Parece un fallo del código y no lo es.
+
+  Para comprobar tipos con el servidor arriba: `npx tsc -p apps/api/tsconfig.spec.json`
+  (lleva `noEmit`, no toca `dist`). Si ya pasó, basta con reiniciar `dev:api`.
+
 ## Deuda técnica anotada
 
 - **Origen de la tarea**: hoy las tareas creadas a mano llevan la etiqueta

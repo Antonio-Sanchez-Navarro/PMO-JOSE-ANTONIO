@@ -77,9 +77,9 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 4 — Dashboard Kanban + creación de tareas
 **Objetivo:** tablero interactivo con las 5 columnas y CRUD directo.
 
-- [ ] 🔴 CRUD Tasks (`GET/POST/PATCH/DELETE /tasks`) — ✅ `GET` y `PATCH` implementados en `TasksController`
+- [ ] 🔴 CRUD Tasks (`GET/POST/PATCH/DELETE /tasks`) — ✅ `GET` y `PATCH` implementados en `TasksController`; `GET` ordena por `status` (orden del enum) y `position`. Faltan `POST` y `DELETE`
 - [ ] 🔴 Columnas: **Por hacer · En proceso · Pospuestas · Cumplidas · Atrasadas**
-- [ ] 🔴 Drag & drop con `@dnd-kit` + `PATCH /tasks/:id/move` (status+position)
+- [ ] 🔴 Drag & drop con `@dnd-kit` + `PATCH /tasks/:id/move` (status+position) — ✅ **Backend listo** (adelantado del Sprint 4): `TasksService.move` renumera la columna entera en transacción y devuelve el orden final de las columnas afectadas. Saneadas las `position` duplicadas con `prisma/scripts/renumber-task-positions.js`. _Pendiente: que el frontend lo consuma._
 - [ ] 🔴 Job cron: marcar `OVERDUE` (dueDate vencido)
 - [ ] 🟡 Modal de creación/edición (React Hook Form + Zod)
 - [ ] 🟡 Filtros (prioridad, etiqueta, fecha) y búsqueda
