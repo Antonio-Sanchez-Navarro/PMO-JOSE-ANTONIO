@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { LoginPage } from "./features/auth/LoginPage";
 import { useSession, type SessionUser } from "./features/auth/useSession";
-import { InboxPage } from "./features/inbox/InboxPage";
+import { KanbanBoard } from "./features/kanban/components/KanbanBoard";
 
 type Health = {
   status: string;
@@ -66,17 +66,17 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         </div>
       </header>
 
-      <div className="mx-auto max-w-3xl px-6 py-12">
+      <div className="mx-auto max-w-7xl px-6 py-12">
         <span className="inline-block rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
-          Sprint 2 · Bandeja de Gmail
+          Sprint 4 · Tablero Kanban
         </span>
         <h1 className="mt-4 text-4xl font-bold tracking-tight">Hola, {user.name ?? user.email}</h1>
         <p className="mt-2 text-slate-500">
-          Tus correos, agrupados por conversación. El siguiente sprint extrae tareas con IA.
+          Tus tareas extraídas por IA y organizadas.
         </p>
 
-        <div className="mt-8">
-          <InboxPage />
+        <div className="mt-8 overflow-x-auto min-h-[600px] border border-slate-200 rounded-xl bg-white shadow-sm">
+          <KanbanBoard />
         </div>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
