@@ -69,6 +69,21 @@ export class AiProcessor extends WorkerHost {
           },
         });
 
+        // Idempotencia del reproceso: si este correo ya había generado tareas
+        // (p. ej. tras poner `processedAt = null` para reanalizarlo con un
+        // prompt nuevo), se borran antes de crear las actuales. Sin esto, cada
+        // reproceso duplica las tareas del correo.
+        //
+        // Nota: `TimeEntry` referencia `Task`. Mientras el Sprint 5 no exista no
+        // hay filas que lo impidan, pero en cuanto haya tiempos registrados
+        // este borrado debe excluir las tareas con `timeEntries`.
+        const { count: deleted } = await tx.task.deleteMany({
+          where: { sourceEmailId: email.id },
+        });
+        if (deleted > 0) {
+          this.logger.log(`Reproceso: borradas ${deleted} tareas previas del email ${emailId}`);
+        }
+
         // Crear las Tareas si es accionable
         if (result.isActionable && result.tasks && result.tasks.length > 0) {
           const tasksToCreate = result.tasks.map((task, index) => ({
