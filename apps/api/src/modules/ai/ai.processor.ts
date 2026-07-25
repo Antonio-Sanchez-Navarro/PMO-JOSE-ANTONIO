@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
-import { AiService } from './ai.service';
+import { EmailClassificationService } from './email-classification.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 @Processor('classify-email')
@@ -9,7 +9,7 @@ export class AiProcessor extends WorkerHost {
   private readonly logger = new Logger(AiProcessor.name);
 
   constructor(
-    private readonly aiService: AiService,
+    private readonly classification: EmailClassificationService,
     private readonly prisma: PrismaService,
   ) {
     super();
@@ -24,9 +24,9 @@ export class AiProcessor extends WorkerHost {
 
     this.logger.log(`Procesando clasificación de email ${emailId}`);
 
-    // Paso A: Cargar el Email
     const email = await this.prisma.email.findUnique({
       where: { id: emailId },
+      select: { id: true, processedAt: true, bodyText: true, snippet: true },
     });
 
     if (!email) {
@@ -34,78 +34,31 @@ export class AiProcessor extends WorkerHost {
       return;
     }
 
-    // Paso E (Idempotencia)
+    // Idempotencia: la cola puede reentregar el mismo job.
     if (email.processedAt) {
       this.logger.log(`El email ${emailId} ya fue procesado el ${email.processedAt}. Omitiendo.`);
       return;
     }
 
+    if (!email.bodyText && !email.snippet) {
+      this.logger.warn(`El email ${emailId} no tiene texto para analizar.`);
+      return;
+    }
+
     try {
-      // Paso B: Análisis
-      const textToAnalyze = email.bodyText || email.snippet || '';
-      
-      if (!textToAnalyze) {
-        this.logger.warn(`El email ${emailId} no tiene texto para analizar.`);
-        return;
-      }
-
-      const result = await this.aiService.analyzeEmail(
-        email.subject || '(Sin Asunto)',
-        textToAnalyze,
-        email.receivedAt,
-      );
-
-      this.logger.log(`Resultado de IA para ${emailId}: isActionable=${result.isActionable}`);
-
-      // Paso C y D en una transacción para mantener consistencia
-      await this.prisma.$transaction(async (tx) => {
-        // Actualizar el Email
-        await tx.email.update({
-          where: { id: emailId },
-          data: {
-            isActionable: result.isActionable,
-            category: result.category,
-            processedAt: new Date(),
-          },
-        });
-
-        // Idempotencia del reproceso: si este correo ya había generado tareas
-        // (p. ej. tras poner `processedAt = null` para reanalizarlo con un
-        // prompt nuevo), se borran antes de crear las actuales. Sin esto, cada
-        // reproceso duplica las tareas del correo.
-        //
-        // Nota: `TimeEntry` referencia `Task`. Mientras el Sprint 5 no exista no
-        // hay filas que lo impidan, pero en cuanto haya tiempos registrados
-        // este borrado debe excluir las tareas con `timeEntries`.
-        const { count: deleted } = await tx.task.deleteMany({
-          where: { sourceEmailId: email.id },
-        });
-        if (deleted > 0) {
-          this.logger.log(`Reproceso: borradas ${deleted} tareas previas del email ${emailId}`);
-        }
-
-        // Crear las Tareas si es accionable
-        if (result.isActionable && result.tasks && result.tasks.length > 0) {
-          const tasksToCreate = result.tasks.map((task, index) => ({
-            userId: email.userId,
-            sourceEmailId: email.id,
-            title: task.title,
-            description: task.description,
-            priority: task.priority,
-            tags: task.tags || [],
-            dueDate: task.dueDate,
-            aiConfidence: result.aiConfidence,
-            position: index,
-          }));
-
-          await tx.task.createMany({
-            data: tasksToCreate,
-          });
-          
-          this.logger.log(`Creadas ${tasksToCreate.length} tareas para el email ${emailId}`);
-        }
+      const result = await this.classification.classifyAndPersist(emailId, {
+        // Reproceso = reemplazo: si el correo ya tenía tareas de la IA, se
+        // sustituyen en lugar de duplicarse.
+        replaceExisting: true,
+        // El worker respeta el criterio del modelo; forzar es cosa de la vía
+        // manual (`POST /emails/:id/to-task`).
+        forceActionable: false,
       });
 
+      this.logger.log(
+        `Resultado de IA para ${emailId}: isActionable=${result.isActionable}` +
+          (result.tasks.length ? `, ${result.tasks.length} tareas creadas` : ''),
+      );
     } catch (error) {
       this.logger.error(`Falló la clasificación del email ${emailId}`, error);
       throw error; // Para que BullMQ lo reintente si hay redelivery configurado

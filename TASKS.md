@@ -66,7 +66,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [x] 🔴 Generación de Tareas: crear entidades `Task` (con `priority`, `tags`, etc.) si es accionable — ✅ `prisma.task.createMany` dentro de una transacción junto al `update` del `Email`. Extrae también `dueDate`
 - [x] 🟡 Crear `Task` desde correo de forma idempotente (sin duplicar) — ✅ Guard por `Email.processedAt` + transacción atómica
 - [ ] 🟡 Capa determinista de ajuste de prioridad (heurísticas + `aiConfidence`) — _no existe: la prioridad viene tal cual del modelo. `aiConfidence` se persiste y se acota a [0,1], pero no ajusta nada_
-- [ ] 🟡 Endpoint manual `POST /emails/:id/to-task` — _no existe: no hay controlador de emails_
+- [x] 🟡 Endpoint manual `POST /emails/:id/to-task` — ✅ `EmailsModule`: 201 con las tareas creadas, 404 si el correo no es del usuario, 409 si ya tenía tareas (`"force": true` para insistir). Con `title` es manual puro (sin coste de IA); sin él, la IA analiza forzando `isActionable`. Comparte `EmailClassificationService` con el worker
 - [ ] 🟢 Panel de auditoría: ver por qué se asignó una prioridad — _no existe en el frontend_
 - [ ] 🟢 Tests de extracción con correos de ejemplo (fixtures) — _no existe ningún `.spec.ts` en el repo_
 

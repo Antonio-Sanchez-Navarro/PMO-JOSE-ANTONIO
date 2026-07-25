@@ -21,6 +21,24 @@ export interface EmailAnalysisResult {
 
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
 
+/**
+ * Vocabulario cerrado de categorías.
+ *
+ * Va como `enum` en el esquema, no como texto libre: cuando `category` era
+ * `type: string` la API aceptó salidas corruptas del modelo (fragmentos de la
+ * serialización de la herramienta dentro del valor). `priority`, que siempre
+ * fue `enum`, nunca se corrompió.
+ */
+const CATEGORIES = [
+  'PROJECT_MANAGEMENT',
+  'INVOICING',
+  'MEETING',
+  'INFORMATIONAL',
+  'OTHER',
+] as const;
+
+const FALLBACK_CATEGORY: (typeof CATEGORIES)[number] = 'OTHER';
+
 const TOOL_NAME = 'extract_email_tasks';
 
 /**
@@ -43,7 +61,8 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
       },
       category: {
         type: 'string',
-        description: 'Categoría: PROJECT_MANAGEMENT, INVOICING, MEETING, INFORMATIONAL, OTHER',
+        enum: [...CATEGORIES],
+        description: 'Categoría del correo, exactamente uno de los valores permitidos',
       },
       tasks: {
         type: 'array',
@@ -166,6 +185,15 @@ export class AiService {
     if (typeof raw.category !== 'string') {
       throw new Error('Campo "category" ausente o no textual');
     }
+    // Segunda barrera tras el `enum` del esquema: una categoría fuera del
+    // vocabulario degrada a OTHER en vez de contaminar la DB. No se lanza error
+    // porque el resto del análisis (las tareas) sigue siendo utilizable.
+    const category = (CATEGORIES as readonly string[]).includes(raw.category)
+      ? raw.category
+      : (this.logger.warn(
+          `Categoría fuera del vocabulario: ${JSON.stringify(raw.category)} → ${FALLBACK_CATEGORY}`,
+        ),
+        FALLBACK_CATEGORY);
     if (typeof raw.aiConfidence !== 'number' || Number.isNaN(raw.aiConfidence)) {
       throw new Error('Campo "aiConfidence" ausente o no numérico');
     }
@@ -175,7 +203,7 @@ export class AiService {
 
     return {
       isActionable: raw.isActionable,
-      category: raw.category,
+      category,
       // La confianza alimenta decisiones de negocio: la acotamos al rango válido.
       aiConfidence: Math.min(1, Math.max(0, raw.aiConfidence)),
       tasks: raw.tasks.map((task, index) => this.parseTask(task, index)),

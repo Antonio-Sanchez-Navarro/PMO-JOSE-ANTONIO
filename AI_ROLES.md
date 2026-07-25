@@ -51,8 +51,20 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
 
 ## Excepciones vigentes
 
-- **`POST /emails/:id/to-task`** (Sprint 3): es un controlador, pero lo
-  implementa **Claude** porque su lógica es la tubería de IA (reusar
-  `AiService` + creación idempotente de `Task`). Pendiente de confirmación:
-  si Gemini prefiere quedárselo, Claude expone el servicio y Gemini el
-  controlador.
+- **`modules/emails/`** (`POST /emails/:id/to-task`, Sprint 3): es capa REST,
+  pero lo implementa **Claude** — acordado con el usuario el 2026-07-25 — porque
+  su lógica es la tubería de IA. **Gemini: no editar este módulo.** Si el
+  frontend necesita otro campo en la respuesta, pídelo en vez de tocarlo.
+
+  El servicio compartido `modules/ai/email-classification.service.ts` es el
+  único sitio donde se analiza y persiste un correo; lo usan tanto el worker
+  como el endpoint. No dupliques esa lógica en `TasksService`.
+
+## Deuda técnica anotada
+
+- **Origen de la tarea**: hoy las tareas creadas a mano llevan la etiqueta
+  `'manual'` en `tags[]`, y el reproceso automático las respeta filtrando por
+  esa etiqueta (`MANUAL_TAG` en `email-classification.service.ts`). Es un apaño
+  para no meter una migración a mitad de sprint. Lo correcto es la columna
+  `Task.source` ('email' | 'whatsapp' | 'manual') que el Sprint 4 ya contempla
+  en "indicador de origen". **Al implementarla, sustituir el filtro por etiqueta.**
