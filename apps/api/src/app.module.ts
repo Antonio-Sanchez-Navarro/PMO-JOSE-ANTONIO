@@ -10,7 +10,7 @@ import { AiModule } from "./modules/ai/ai.module";
 import { DeadLetterModule } from "./common/bullmq/dead-letter.module";
 
 // Módulos de dominio (se implementan por sprint — ver TASKS.md):
-// import { TasksModule } from "./modules/tasks/tasks.module";
+import { TasksModule } from "./modules/tasks/tasks.module";
 // import { AiModule } from "./modules/ai/ai.module";
 // import { CopilotModule } from "./modules/copilot/copilot.module";
 // import { WhatsappModule } from "./modules/whatsapp/whatsapp.module";
@@ -25,6 +25,7 @@ import { DeadLetterModule } from "./common/bullmq/dead-letter.module";
     }),
     PrismaModule,
     CryptoModule,
+    TasksModule,
     HealthModule,
     AuthModule,
     GmailModule,

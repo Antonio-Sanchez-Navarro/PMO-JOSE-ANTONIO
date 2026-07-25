@@ -77,7 +77,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 4 — Dashboard Kanban + creación de tareas
 **Objetivo:** tablero interactivo con las 5 columnas y CRUD directo.
 
-- [ ] 🔴 CRUD Tasks (`GET/POST/PATCH/DELETE /tasks`)
+- [ ] 🔴 CRUD Tasks (`GET/POST/PATCH/DELETE /tasks`) — ✅ `GET` y `PATCH` implementados en `TasksController`
 - [ ] 🔴 Columnas: **Por hacer · En proceso · Pospuestas · Cumplidas · Atrasadas**
 - [ ] 🔴 Drag & drop con `@dnd-kit` + `PATCH /tasks/:id/move` (status+position)
 - [ ] 🔴 Job cron: marcar `OVERDUE` (dueDate vencido)

@@ -1,0 +1,32 @@
+import { Controller, Get, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { TasksService } from './tasks.service';
+import { UpdateTaskDto } from './dto/update-task.dto';
+import { AuthGuard } from '../auth/auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { CurrentUserContext } from '../auth/auth.types';
+
+@Controller('tasks')
+@UseGuards(AuthGuard)
+export class TasksController {
+  constructor(private readonly tasksService: TasksService) {}
+
+  @Get()
+  findAll(
+    @CurrentUser() user: CurrentUserContext,
+    @Query('skip') skip?: number,
+    @Query('take') take?: number,
+    @Query('status') status?: string,
+    @Query('priority') priority?: string,
+  ) {
+    return this.tasksService.findAll(user.userId, { skip, take, status, priority });
+  }
+
+  @Patch(':id')
+  update(
+    @CurrentUser() user: CurrentUserContext,
+    @Param('id') id: string, 
+    @Body() updateTaskDto: UpdateTaskDto
+  ) {
+    return this.tasksService.update(user.userId, id, updateTaskDto);
+  }
+}
