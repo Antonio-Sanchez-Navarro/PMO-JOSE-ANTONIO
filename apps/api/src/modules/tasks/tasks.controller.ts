@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Param, Body, Query, UseGuards, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -13,8 +13,8 @@ export class TasksController {
   @Get()
   findAll(
     @CurrentUser() user: CurrentUserContext,
-    @Query('skip') skip?: number,
-    @Query('take') take?: number,
+    @Query('skip', new DefaultValuePipe(0), ParseIntPipe) skip: number,
+    @Query('take', new DefaultValuePipe(50), ParseIntPipe) take: number,
     @Query('status') status?: string,
     @Query('priority') priority?: string,
   ) {

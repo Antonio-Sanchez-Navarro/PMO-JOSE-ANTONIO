@@ -8,6 +8,7 @@ import {
   useSensors,
   DragEndEvent,
   DragOverEvent,
+  DragStartEvent,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
@@ -18,6 +19,7 @@ import { fetchTasks, updateTaskStatus } from '../api/tasks.api';
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
 
   useEffect(() => {
     const loadTasks = async () => {
@@ -50,10 +52,18 @@ export const KanbanBoard: React.FC = () => {
     })
   );
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragStart = (event: DragStartEvent) => {
+    const activeId = String(event.active.id);
+    const task = tasks.find((t) => t.id === activeId);
+    if (task) {
+      setActiveTaskOrigStatus(task.status);
+    }
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
     if (!over) return;
-    
+
     const activeId = String(active.id);
     const overId = String(over.id);
 
@@ -62,43 +72,55 @@ export const KanbanBoard: React.FC = () => {
     setTasks((prev) => {
       const activeIndex = prev.findIndex((t) => t.id === activeId);
       const overIndex = prev.findIndex((t) => t.id === overId);
-      
       const isOverColumn = ['TODO', 'IN_PROGRESS', 'DONE'].includes(overId);
+
+      if (activeIndex === -1) return prev;
+      const activeTask = prev[activeIndex];
       
-      if (isOverColumn) {
-        // Soltado sobre una columna vacía o el área de la columna
+      const newStatus = isOverColumn ? (overId as TaskStatus) : (overIndex !== -1 ? prev[overIndex].status : activeTask.status);
+
+      if (activeTask.status !== newStatus) {
         const newTasks = [...prev];
-        newTasks[activeIndex] = {
-          ...newTasks[activeIndex],
-          status: overId as TaskStatus,
-        };
-        // Persistencia optimista
-        updateTaskStatus(activeId, overId as TaskStatus).catch(err => 
-          console.error("Error guardando el cambio de columna:", err)
-        );
+        newTasks[activeIndex] = { ...activeTask, status: newStatus };
         return newTasks;
       }
+      return prev;
+    });
+  };
 
-      if (activeIndex !== -1 && overIndex !== -1) {
-        // Soltado sobre otra tarea
-        const activeTask = prev[activeIndex];
-        const overTask = prev[overIndex];
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (over) {
+      const activeId = String(active.id);
+      const overId = String(over.id);
+      const isOverColumn = ['TODO', 'IN_PROGRESS', 'DONE'].includes(overId);
+
+      setTasks((prev) => {
+        const activeIndex = prev.findIndex((t) => t.id === activeId);
+        const overIndex = prev.findIndex((t) => t.id === overId);
         
         let newTasks = [...prev];
-        if (activeTask.status !== overTask.status) {
-          // Cambiar de columna
-          newTasks[activeIndex] = { ...activeTask, status: overTask.status };
-          // Persistencia optimista
-          updateTaskStatus(activeId, overTask.status as TaskStatus).catch(err => 
-            console.error("Error guardando el cambio de estado:", err)
+        
+        // Reordenamiento visual (si arrastramos dentro de otra tarea, ordenamos)
+        if (activeIndex !== overIndex && overIndex !== -1 && !isOverColumn) {
+          newTasks = arrayMove(newTasks, activeIndex, overIndex);
+        }
+
+        const finalTask = newTasks[activeIndex];
+        
+        // Si la columna cambió desde que empezamos el drag, hacemos el PATCH
+        if (finalTask && activeTaskOrigStatus && finalTask.status !== activeTaskOrigStatus) {
+          updateTaskStatus(activeId, finalTask.status).catch((err) =>
+            console.error("Error guardando el cambio de estado en BD:", err)
           );
         }
         
-        return arrayMove(newTasks, activeIndex, overIndex);
-      }
-      
-      return prev;
-    });
+        return newTasks;
+      });
+    }
+    
+    setActiveTaskOrigStatus(null);
   };
 
   if (loading) {
@@ -112,7 +134,13 @@ export const KanbanBoard: React.FC = () => {
   };
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext 
+      sensors={sensors} 
+      collisionDetection={closestCenter} 
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+    >
       <div className="flex gap-6 p-6 h-full overflow-x-auto">
         <KanbanColumn id="TODO" title="Por Hacer" tasks={tasksByStatus.TODO} />
         <KanbanColumn id="IN_PROGRESS" title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} />

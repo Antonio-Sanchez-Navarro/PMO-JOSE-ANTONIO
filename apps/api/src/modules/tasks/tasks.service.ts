@@ -20,7 +20,14 @@ export class TasksService {
         take: Number(take),
         where,
         // Prisma expects relation name 'sourceEmail' not 'email' based on schema
-        include: { sourceEmail: true }
+        include: { 
+          sourceEmail: {
+            select: {
+              subject: true,
+              from: true
+            }
+          } 
+        }
       }),
       this.prisma.task.count({ where }),
     ]);
