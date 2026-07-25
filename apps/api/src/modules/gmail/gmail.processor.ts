@@ -9,6 +9,12 @@ interface SyncHistoryJob {
   historyId?: string;
 }
 
+interface WatchInboxJob {
+  userId?: string;
+}
+
+type GmailJob = SyncHistoryJob & WatchInboxJob;
+
 @Processor('gmail-sync')
 export class GmailProcessor extends WorkerHost {
   private readonly logger = new Logger(GmailProcessor.name);
@@ -20,7 +26,27 @@ export class GmailProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<SyncHistoryJob, unknown, string>): Promise<unknown> {
+  async process(job: Job<GmailJob, unknown, string>): Promise<unknown> {
+    // La cola `gmail-sync` transporta dos tipos de trabajo.
+    if (job.name === 'watch-inbox') {
+      return this.handleWatchInbox(job);
+    }
+    return this.handleSyncHistory(job);
+  }
+
+  /** Activa las notificaciones push de Gmail tras el login (`users.watch`). */
+  private async handleWatchInbox(job: Job<GmailJob>): Promise<void> {
+    const { userId } = job.data;
+    if (!userId) {
+      this.logger.warn('Job watch-inbox descartado: falta userId');
+      return;
+    }
+
+    this.logger.log(`Activando watch de Gmail para el usuario ${userId}`);
+    await this.gmailService.watchInbox(userId);
+  }
+
+  private async handleSyncHistory(job: Job<GmailJob>): Promise<unknown> {
     this.logger.log(`Procesando tarea de sincronización para el job ${job.id}`);
 
     const { emailAddress, historyId } = job.data;

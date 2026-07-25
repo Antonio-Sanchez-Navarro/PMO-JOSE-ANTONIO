@@ -11,6 +11,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
 import { randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
@@ -30,6 +32,7 @@ export class AuthController {
     private readonly session: SessionService,
     private readonly users: UsersService,
     private readonly config: ConfigService,
+    @InjectQueue("gmail-sync") private readonly gmailQueue: Queue,
   ) {}
 
   /** Inicia el login: genera `state` anti-CSRF y redirige al consentimiento de Google. */
@@ -74,6 +77,27 @@ export class AuthController {
 
     const user = await this.authService.handleCallback(code);
     await this.session.issue(res, user);
+
+    // Activa las notificaciones push de Gmail para este usuario. Va por la cola
+    // (y no por una llamada directa) para no bloquear el redirect del login y
+    // para poder reintentar si la API de Google falla; además, inyectar
+    // GmailService aquí crearía una dependencia circular con GmailModule.
+    try {
+      await this.gmailQueue.add(
+        "watch-inbox",
+        { userId: user.id },
+        {
+          // Un solo `watch` pendiente por usuario, aunque inicie sesión varias veces.
+          jobId: `watch-inbox:${user.id}`,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 10_000 },
+          removeOnComplete: true,
+        },
+      );
+    } catch (err) {
+      // Si Redis no está disponible, el login debe completarse igual.
+      this.logger.warn(`No se pudo encolar watch-inbox para ${user.id}: ${(err as Error).message}`);
+    }
 
     return res.redirect(`${webUrl}/?login=success`);
   }
