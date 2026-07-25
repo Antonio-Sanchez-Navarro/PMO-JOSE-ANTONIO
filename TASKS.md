@@ -68,7 +68,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [ ] 🟡 Capa determinista de ajuste de prioridad (heurísticas + `aiConfidence`) — _no existe: la prioridad viene tal cual del modelo. `aiConfidence` se persiste y se acota a [0,1], pero no ajusta nada_
 - [x] 🟡 Endpoint manual `POST /emails/:id/to-task` — ✅ `EmailsModule`: 201 con las tareas creadas, 404 si el correo no es del usuario, 409 si ya tenía tareas (`"force": true` para insistir). Con `title` es manual puro (sin coste de IA); sin él, la IA analiza forzando `isActionable`. Comparte `EmailClassificationService` con el worker
 - [ ] 🟢 Panel de auditoría: ver por qué se asignó una prioridad — _no existe en el frontend_
-- [ ] 🟢 Tests de extracción con correos de ejemplo (fixtures) — _no existe ningún `.spec.ts` en el repo_
+- [x] 🟢 Tests de extracción con correos de ejemplo (fixtures) — ✅ Jest configurado (`jest.config.js` + `tsconfig.spec.json`) y 39 pruebas en 3 suites: `ai.service.spec.ts`, `email-classification.service.spec.ts`, `emails.service.spec.ts`. Fixtures en `modules/ai/__fixtures__/`, con capturas reales de las salidas corruptas del modelo como regresión. Sin DB, Redis ni llamadas a Anthropic; corren en ~4 s y ya van en CI
 
 **Entregable:** un correo relevante genera automáticamente una tarea con prioridad.
 

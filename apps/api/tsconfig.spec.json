@@ -1,0 +1,22 @@
+{
+  // Config de TypeScript solo para las pruebas.
+  //
+  // `isolatedModules: true` hace que ts-jest transpile fichero a fichero en vez
+  // de construir un programa completo. Es necesario, no una optimización: con
+  // type-check completo, los type definitions de `googleapis` (decenas de MB)
+  // agotan el heap de Node y jest muere con OOM antes de ejecutar nada.
+  //
+  // No se pierde cobertura de tipos: `npm run build` (nest build) sí hace el
+  // type-check completo, y la CI lo ejecuta.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "isolatedModules": true,
+    "declaration": false,
+    "incremental": false,
+    "sourceMap": false,
+    "noEmit": true,
+    "types": ["jest", "node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

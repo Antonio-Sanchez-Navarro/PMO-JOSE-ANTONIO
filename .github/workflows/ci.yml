@@ -26,3 +26,9 @@ jobs:
       
     - name: Build Projects
       run: npm run build
+
+    # Unitarios con dependencias simuladas: no necesitan Postgres, Redis ni la
+    # API de Anthropic. Van después del build porque es el build quien hace el
+    # type-check completo (los tests transpilan sin comprobar tipos).
+    - name: Run Tests
+      run: npm test --if-present
