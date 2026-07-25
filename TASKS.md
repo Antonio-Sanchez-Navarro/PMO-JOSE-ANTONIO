@@ -27,8 +27,8 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 1 — Autenticación Google (OAuth2)
 **Objetivo:** login con Google y almacenamiento seguro de tokens.
 
-- [ ] 🔴 Crear proyecto en Google Cloud Console + habilitar Gmail API — _acción del usuario_
-- [ ] 🔴 Configurar pantalla de consentimiento OAuth y credenciales — _acción del usuario_
+- [x] 🔴 Crear proyecto en Google Cloud Console + habilitar Gmail API — ✅ Completado por el usuario (credenciales en `.env`)
+- [x] 🔴 Configurar pantalla de consentimiento OAuth y credenciales — ✅ Completado por el usuario (credenciales en `.env`)
 - [x] 🔴 Backend: flujo `/auth/google` → `/auth/google/callback` — ✅ 302 a Google con scopes + state anti-CSRF
 - [x] 🔴 Cifrado de tokens (AES-256-GCM) en reposo — ✅ `CryptoService` (round-trip + integridad verificados)
 - [x] 🟡 Emisión de sesión JWT (httpOnly cookie) + refresh — ✅ `SessionService`: access 15 min + refresh 30 d, `POST /auth/refresh` y `/auth/logout`
@@ -52,23 +52,23 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [x] 🟡 Normalización y deduplicación (por `gmailMessageId`) — ✅ `upsert` sobre la clave única. _Verificado: reenviar el mismo webhook no duplica._
 - [x] 🟡 Persistir `Email` con `threadId`, labels y snippet — ✅ Ahora también `labels` y `bodyText`. _Verificado: 25/25 registros con etiquetas y cuerpo (media ~8 KB)._
 - [x] 🟡 Frontend: vista **Inbox** agrupada por hilo/etiqueta — ✅ `InboxPage` + `useInbox`: hilos desplegables por `threadId`, barra de filtro por etiqueta con conteos, píldoras por correo y marca de no leídos
-- [ ] 🟢 Reintentos y dead-letter en colas — _reintentos configurados (3 + backoff); falta la cola de dead-letter_
+- [x] 🟢 Reintentos y dead-letter en colas — ✅ Reintentos configurados y `DeadLetterModule` creado para mover fallos definitivos a cola `dead-letter`.
 
 **Entregable:** los correos nuevos aparecen en la app clasificados por hilo/etiqueta.
 
 ---
 
-## Sprint 3 — IA: extracción de tareas y prioridad automática
-**Objetivo:** convertir correos accionables en tareas priorizadas.
+## Sprint 3 — Análisis con IA y Generación de Tareas (Agent/Claude)
+**Objetivo:** procesar correos nuevos con el SDK de Anthropic (modelo de `CLAUDE_MODEL_CLASSIFY`, hoy `claude-sonnet-5`) para convertirlos en acciones.
 
-- [ ] 🔴 `AiModule` con cliente Anthropic Claude + config de modelos
-- [ ] 🔴 Prompt + **salida estructurada (JSON Schema)** para clasificar/extraer
-- [ ] 🔴 Job `classify-email`: categoría, `isActionable`, tareas, prioridad, due date
-- [ ] 🟡 Capa determinista de ajuste de prioridad (heurísticas + `aiConfidence`)
-- [ ] 🟡 Crear `Task` desde correo de forma idempotente (sin duplicar)
-- [ ] 🟡 Endpoint manual `POST /emails/:id/to-task`
-- [ ] 🟢 Panel de auditoría: ver por qué se asignó una prioridad
-- [ ] 🟢 Tests de extracción con correos de ejemplo (fixtures)
+- [x] 🔴 Módulo AI: `@anthropic-ai/sdk`, prompts y JSON Schemas (Zod o raw JSON) — ✅ `AiService` con salida estructurada vía tool use y `strict: true` (esquema con `additionalProperties: false`); el modelo se lee de `CLAUDE_MODEL_CLASSIFY`
+- [x] 🔴 Worker `classify-email`: Lee de la DB, envía a Claude y clasifica `isActionable` — ✅ `AiProcessor`; lo alimenta `GmailService.persistEmails`, que encola tras cada upsert
+- [x] 🔴 Generación de Tareas: crear entidades `Task` (con `priority`, `tags`, etc.) si es accionable — ✅ `prisma.task.createMany` dentro de una transacción junto al `update` del `Email`. Extrae también `dueDate`
+- [x] 🟡 Crear `Task` desde correo de forma idempotente (sin duplicar) — ✅ Guard por `Email.processedAt` + transacción atómica
+- [ ] 🟡 Capa determinista de ajuste de prioridad (heurísticas + `aiConfidence`) — _no existe: la prioridad viene tal cual del modelo. `aiConfidence` se persiste y se acota a [0,1], pero no ajusta nada_
+- [ ] 🟡 Endpoint manual `POST /emails/:id/to-task` — _no existe: no hay controlador de emails_
+- [ ] 🟢 Panel de auditoría: ver por qué se asignó una prioridad — _no existe en el frontend_
+- [ ] 🟢 Tests de extracción con correos de ejemplo (fixtures) — _no existe ningún `.spec.ts` en el repo_
 
 **Entregable:** un correo relevante genera automáticamente una tarea con prioridad.
 

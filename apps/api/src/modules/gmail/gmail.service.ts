@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { google, gmail_v1 } from 'googleapis';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { AuthService } from '../auth/auth.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
@@ -36,6 +38,7 @@ export class GmailService {
     private readonly auth: AuthService,
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    @InjectQueue('classify-email') private readonly classifyQueue: Queue,
   ) {}
 
   private async getGmailClient(userId: string): Promise<GmailClient> {
@@ -301,14 +304,11 @@ export class GmailService {
 
   /** Guarda los correos de forma idempotente (clave única `gmailMessageId`). */
   private async persistEmails(userId: string, emails: EmailSnippet[]): Promise<number> {
-    let processed = 0;
+    let processedCount = 0;
 
     for (const email of emails) {
       try {
-        const parsed = new Date(email.date);
-        const receivedAt = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-
-        await this.prisma.email.upsert({
+        const upsertedEmail = await this.prisma.email.upsert({
           where: { gmailMessageId: email.id },
           update: {
             threadId: email.threadId,
@@ -317,7 +317,7 @@ export class GmailService {
             snippet: email.snippet,
             bodyText: email.bodyText,
             labels: email.labels,
-            receivedAt,
+            receivedAt: new Date(email.date),
           },
           create: {
             gmailMessageId: email.id,
@@ -327,17 +327,21 @@ export class GmailService {
             snippet: email.snippet,
             bodyText: email.bodyText,
             labels: email.labels,
-            receivedAt,
+            receivedAt: new Date(email.date),
             userId,
           },
         });
-        processed++;
+
+        // Encolar clasificación por IA (Sprint 3)
+        await this.classifyQueue.add('classify', { emailId: upsertedEmail.id });
+
+        processedCount++;
       } catch (err) {
         this.logger.warn(`Error guardando correo ${email.id} en BD para usuario ${userId}`, err);
       }
     }
 
-    return processed;
+    return processedCount;
   }
 
   // ─── Suscripción push ──────────────────────────────────────────────────

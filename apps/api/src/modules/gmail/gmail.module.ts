@@ -10,9 +10,10 @@ import { AuthModule } from '../auth/auth.module';
   // AuthModule aporta el AuthGuard que protege el controlador.
   imports: [
     AuthModule,
-    BullModule.registerQueue({
-      name: 'gmail-sync',
-    }),
+    BullModule.registerQueue(
+      { name: 'gmail-sync' },
+      { name: 'classify-email' }
+    ),
   ],
   providers: [GmailService, GmailProcessor, PubSubAuthGuard],
   controllers: [GmailController],
