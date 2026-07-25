@@ -88,7 +88,8 @@ export class AuthController {
         { userId: user.id },
         {
           // Un solo `watch` pendiente por usuario, aunque inicie sesión varias veces.
-          jobId: `watch-inbox:${user.id}`,
+          // Sin `:` — BullMQ lo rechaza en los jobId.
+          jobId: `watch-inbox-${user.id}`,
           attempts: 3,
           backoff: { type: "exponential", delay: 10_000 },
           removeOnComplete: true,
