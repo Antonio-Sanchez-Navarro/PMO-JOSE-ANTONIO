@@ -60,6 +60,22 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
   único sitio donde se analiza y persiste un correo; lo usan tanto el worker
   como el endpoint. No dupliques esa lógica en `TasksService`.
 
+## Notas de operación
+
+- **`start:dev` lleva `--max-old-space-size=4096`** (vía `cross-env`, porque la
+  sintaxis `VAR=x cmd` no funciona en cmd.exe de Windows). No es capricho: los
+  type definitions de `googleapis` son enormes y el `tsc` en modo watch los
+  mantiene en memoria; con el heap por defecto (2 GB) el supervisor muere de OOM
+  tras ~45 min de sesión.
+
+  **El síntoma engaña**: muere el proceso supervisor, pero el hijo sobrevive.
+  La API sigue respondiendo 200 en `/health` y **el hot-reload deja de
+  funcionar en silencio**. Si guardas un cambio en el backend y no se refleja,
+  mira si el watcher sigue vivo antes de dudar de tu código.
+
+  Mismo motivo, distinto sitio: los tests transpilan sin type-check
+  (`isolatedModules` en `tsconfig.spec.json`) porque jest moría igual.
+
 ## Deuda técnica anotada
 
 - **Origen de la tarea**: hoy las tareas creadas a mano llevan la etiqueta
