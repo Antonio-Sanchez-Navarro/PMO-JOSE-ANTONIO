@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Task, TaskStatus } from '@prisma/client';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma, Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { adjustPriority } from '../ai/priority.rules';
+import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 
@@ -16,9 +18,95 @@ const COLUMN_ORDER: Prisma.TaskOrderByWithRelationInput[] = [
   { createdAt: 'asc' },
 ];
 
+/** Columnas de las que el barrido horario saca una tarea vencida. */
+const SWEEPABLE: TaskStatus[] = [TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.POSTPONED];
+
 @Injectable()
 export class TasksService {
+  private readonly logger = new Logger(TasksService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Crea una tarea desde el tablero y la deja al final de su columna.
+   *
+   * Al final y no al principio porque es lo que hace la UI optimista del
+   * frontend (`[...prev, newTask]`): si el servidor la colocara arriba, la
+   * tarjeta saltaría de sitio al confirmarse.
+   *
+   * Se aplican aquí las **mismas dos reglas que el barrido horario** —escalar la
+   * prioridad por cercanía del vencimiento y mandar a "Atrasadas" lo ya
+   * vencido— en vez de esperar a la siguiente pasada del cron. Si no, una tarea
+   * creada con fecha pasada se quedaría hasta una hora en la columna equivocada
+   * y luego se movería sola, que es más desconcertante que verla aparecer ya
+   * donde le toca.
+   */
+  async create(userId: string, dto: CreateTaskDto): Promise<Task> {
+    const dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
+    const requested = dto.status ?? TaskStatus.TODO;
+    const now = new Date();
+
+    const vencida = dueDate !== null && dueDate < now && SWEEPABLE.includes(requested);
+    const status = vencida ? TaskStatus.OVERDUE : requested;
+
+    // `aiConfidence` es null: esta tarea no la propuso el modelo, así que no hay
+    // confianza que ponderar. La fecha sigue mandando igual.
+    const decision = adjustPriority(
+      { priority: dto.priority ?? TaskPriority.MEDIUM, dueDate, aiConfidence: null },
+      now,
+    );
+    // El escalado no se aplica a lo que ya está cumplido.
+    const priority = status === TaskStatus.DONE ? (dto.priority ?? TaskPriority.MEDIUM) : decision.priority;
+
+    if (decision.adjusted && status !== TaskStatus.DONE) {
+      this.logger.log(`Prioridad al crear "${dto.title}": ${decision.reason}`);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const last = await tx.task.findFirst({
+        where: { userId, status },
+        orderBy: { position: 'desc' },
+        select: { position: true },
+      });
+
+      return tx.task.create({
+        data: {
+          userId,
+          title: dto.title,
+          description: dto.description,
+          status,
+          priority,
+          dueDate,
+          tags: dto.tags ?? [],
+          position: last ? last.position + 1 : 0,
+          source: TaskSource.MANUAL,
+        },
+      });
+    });
+  }
+
+  /**
+   * Borra una tarea del usuario.
+   *
+   * `deleteMany` filtrando por `userId` en vez de leer y luego borrar: resuelve
+   * la propiedad y el borrado en una sola consulta, sin ventana entre ambos.
+   *
+   * La columna queda con un hueco en `position` y no se renumera, igual que tras
+   * el barrido de vencidas: el orden no cambia y `PATCH /tasks/:id/move`
+   * reconstruye los índices al primer arrastre.
+   */
+  async remove(userId: string, id: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      // Los registros de tiempo apuntan a la tarea sin `onDelete: Cascade`, así
+      // que borrarla con fichajes asociados reventaría por clave foránea. Hoy no
+      // los crea nadie (Sprint 5), pero el borrado tiene que seguir funcionando
+      // cuando existan.
+      await tx.timeEntry.deleteMany({ where: { taskId: id, userId } });
+
+      const { count } = await tx.task.deleteMany({ where: { id, userId } });
+      if (count === 0) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
+    });
+  }
 
   async findAll(userId: string, params: { skip?: number; take?: number; status?: string; priority?: string; }) {
     const { skip = 0, take = 50, status, priority } = params;

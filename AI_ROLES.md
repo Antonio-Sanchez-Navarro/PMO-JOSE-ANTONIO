@@ -85,6 +85,21 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
   Para comprobar tipos con el servidor arriba: `npx tsc -p apps/api/tsconfig.spec.json`
   (lleva `noEmit`, no toca `dist`). Si ya pasó, basta con reiniciar `dev:api`.
 
+- **`POST /tasks` y `DELETE /tasks/:id`** (Sprint 4): son capa REST, pero los
+  implementa **Claude** — encargo del usuario el 2026-07-27 — porque comparten
+  reglas con el cron de vencidas y con la capa de prioridad. Quedan tocados
+  `tasks.controller.ts`, `tasks.service.ts`, `dto/create-task.dto.ts` y
+  `tasks.service.spec.ts`.
+
+  **Gemini**: el contrato está cerrado y lo que falta es tuyo — sustituir los
+  mocks `createTask` y `deleteTask` de `apps/web/.../api/tasks.api.ts` por
+  llamadas reales. `POST /tasks` devuelve **201 con la tarea, sin envoltorio**
+  (`{ id, title, ... }`, no `{ data }`) y `DELETE` devuelve **204 sin cuerpo**.
+  Ojo con dos cosas: la tarea creada puede volver con **otra prioridad** de la
+  que mandaste (la escala la fecha de vencimiento) y con **otro estado** que el
+  elegido (si la fecha ya pasó, nace en `OVERDUE`). Píntala con lo que devuelve
+  el servidor, no con lo que enviaste.
+
 - **El cron de vencidas vive en Redis, no en el proceso.** `OverdueModule`
   programa un job repetible de BullMQ (`overdue-sweep`) en vez de usar un
   `@Cron` de `@nestjs/schedule`: con varias instancias de la API, un cron en

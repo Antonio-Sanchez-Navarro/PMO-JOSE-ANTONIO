@@ -1,5 +1,20 @@
-import { Controller, Get, Patch, Param, Body, Query, UseGuards, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  UseGuards,
+  DefaultValuePipe,
+  ParseIntPipe,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { TasksService } from './tasks.service';
+import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -20,6 +35,15 @@ export class TasksController {
     @Query('priority') priority?: string,
   ) {
     return this.tasksService.findAll(user.userId, { skip, take, status, priority });
+  }
+
+  /**
+   * Crea una tarea. Devuelve 201 con la tarea creada, sin envoltorio: es lo que
+   * consume directamente la UI optimista del tablero.
+   */
+  @Post()
+  create(@CurrentUser() user: CurrentUserContext, @Body() createTaskDto: CreateTaskDto) {
+    return this.tasksService.create(user.userId, createTaskDto);
   }
 
   /**
@@ -44,5 +68,15 @@ export class TasksController {
     @Body() updateTaskDto: UpdateTaskDto
   ) {
     return this.tasksService.update(user.userId, id, updateTaskDto);
+  }
+
+  /**
+   * Borra una tarea. 204 sin cuerpo: el tablero ya la quitó de su estado antes
+   * de llamar, así que no tiene nada que leer de la respuesta.
+   */
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(@CurrentUser() user: CurrentUserContext, @Param('id') id: string) {
+    return this.tasksService.remove(user.userId, id);
   }
 }

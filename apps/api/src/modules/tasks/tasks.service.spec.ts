@@ -186,3 +186,114 @@ describe('TasksService.move', () => {
     expect(column('TODO')).toEqual(['r@0', 'p@1', 'q@2']);
   });
 });
+
+describe('TasksService.create', () => {
+  const HOUR_MS = 3_600_000;
+  const inHours = (h: number) => new Date(Date.now() + h * HOUR_MS).toISOString();
+
+  let prisma: any;
+  let tx: any;
+  let service: TasksService;
+
+  beforeEach(() => {
+    tx = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'nueva', ...data })),
+      },
+    };
+    prisma = { $transaction: jest.fn((cb: any) => cb(tx)) };
+    service = new TasksService(prisma as unknown as PrismaService);
+  });
+
+  /** El `data` con el que se llamó a `task.create`. */
+  const creada = () => tx.task.create.mock.calls[0][0].data;
+
+  it('aplica los valores por defecto del tablero', async () => {
+    await service.create(USER, { title: 'Llamar al proveedor' });
+
+    expect(creada()).toMatchObject({
+      userId: USER,
+      title: 'Llamar al proveedor',
+      status: 'TODO',
+      priority: 'MEDIUM',
+      dueDate: null,
+      tags: [],
+      position: 0,
+    });
+  });
+
+  it('marca la tarea como MANUAL para que el reproceso de correos no la borre', async () => {
+    await service.create(USER, { title: 'x' });
+
+    expect(creada().source).toBe('MANUAL');
+  });
+
+  it('la coloca al final de su columna', async () => {
+    tx.task.findFirst.mockResolvedValue({ position: 7 });
+
+    await service.create(USER, { title: 'x', status: 'IN_PROGRESS' as any });
+
+    expect(creada().position).toBe(8);
+    expect(tx.task.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: USER, status: 'IN_PROGRESS' } }),
+    );
+  });
+
+  it('escala la prioridad si la fecha aprieta', async () => {
+    await service.create(USER, { title: 'x', priority: 'LOW' as any, dueDate: inHours(3) });
+
+    expect(creada().priority).toBe('URGENT');
+  });
+
+  it('respeta la prioridad elegida si la fecha está lejos', async () => {
+    await service.create(USER, { title: 'x', priority: 'LOW' as any, dueDate: inHours(200) });
+
+    expect(creada().priority).toBe('LOW');
+  });
+
+  it('nace en OVERDUE si se crea con una fecha ya pasada', async () => {
+    await service.create(USER, { title: 'x', dueDate: inHours(-5) });
+
+    expect(creada()).toMatchObject({ status: 'OVERDUE', priority: 'URGENT' });
+  });
+
+  it('no reabre una tarea creada como cumplida aunque la fecha haya pasado', async () => {
+    await service.create(USER, { title: 'x', status: 'DONE' as any, priority: 'LOW' as any, dueDate: inHours(-5) });
+
+    expect(creada()).toMatchObject({ status: 'DONE', priority: 'LOW' });
+  });
+});
+
+describe('TasksService.remove', () => {
+  let prisma: any;
+  let tx: any;
+  let service: TasksService;
+
+  beforeEach(() => {
+    tx = {
+      timeEntry: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      task: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    };
+    prisma = { $transaction: jest.fn((cb: any) => cb(tx)) };
+    service = new TasksService(prisma as unknown as PrismaService);
+  });
+
+  it('borra filtrando por usuario, no solo por id', async () => {
+    await service.remove(USER, 'tarea-1');
+
+    expect(tx.task.deleteMany).toHaveBeenCalledWith({ where: { id: 'tarea-1', userId: USER } });
+  });
+
+  it('borra antes los registros de tiempo, que no tienen cascada en el schema', async () => {
+    await service.remove(USER, 'tarea-1');
+
+    expect(tx.timeEntry.deleteMany).toHaveBeenCalledWith({ where: { taskId: 'tarea-1', userId: USER } });
+  });
+
+  it('devuelve 404 si la tarea no existe o es de otro usuario', async () => {
+    tx.task.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.remove(USER, 'ajena')).rejects.toThrow(NotFoundException);
+  });
+});
