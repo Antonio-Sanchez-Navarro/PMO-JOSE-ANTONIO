@@ -6,27 +6,31 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Task } from '@prisma/client';
+import { Task, TaskStatus } from '@prisma/client';
+import { SessionService } from '../auth/session.service';
+import cookie from 'cookie';
+import { SESSION_COOKIE } from '../auth/auth.constants';
 
 /** Nombres de los eventos que emite el backend. Se importan desde los tests. */
 export const TASK_EVENTS = {
   created: 'task.created',
   updated: 'task.updated',
+  reordered: 'task.reordered',
   deleted: 'task.deleted',
 } as const;
+
+/** Orden final de una columna del tablero. */
+export interface ColumnOrder {
+  status: TaskStatus;
+  taskIds: string[];
+}
 
 /**
  * Emisión en tiempo real de los cambios del tablero.
  *
- * **Broadcast global y sin autenticar**, a propósito y de momento: es la base
- * mínima para que la UI deje de recargar. Antes de exponer esto fuera de local
- * faltan dos cosas:
- *
- * 1. **Salas por usuario.** Hoy todo suscriptor recibe los eventos de todos, así
- *    que las tareas de un usuario viajan a las pestañas de otro. Con un solo
- *    usuario en desarrollo no se nota; con dos es una fuga.
- * 2. **Autenticación del handshake.** El `AuthGuard` protege el REST, no el
- *    socket: aquí se conecta cualquiera que alcance el puerto.
+ * El handshake se autentica con la misma cookie de sesión que el REST y cada
+ * cliente entra en la sala de su usuario, así que los eventos no salen de su
+ * dueño. Un socket sin cookie válida se desconecta en el acto.
  *
  * El `cors.origin` se lee de `process.env` y no del `ConfigService` porque las
  * opciones del decorador se evalúan al cargar la clase, antes de que exista el
@@ -41,11 +45,41 @@ export const TASK_EVENTS = {
 export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(TasksGateway.name);
 
+  constructor(private readonly sessionService: SessionService) {}
+
   @WebSocketServer()
   server!: Server;
 
-  handleConnection(client: Socket) {
-    this.logger.log(`Cliente conectado al tablero: ${client.id}`);
+  async handleConnection(client: Socket) {
+    try {
+      const rawCookie = client.handshake.headers.cookie;
+      if (!rawCookie) {
+        this.logger.warn(`Conexión rechazada: sin cookies (client.id: ${client.id})`);
+        client.disconnect();
+        return;
+      }
+
+      const cookies = cookie.parse(rawCookie);
+      const token = cookies[SESSION_COOKIE];
+
+      if (!token) {
+        this.logger.warn(`Conexión rechazada: sin token de sesión (client.id: ${client.id})`);
+        client.disconnect();
+        return;
+      }
+
+      // `verifyAccess` y no `verify...` a secas: comprueba también el claim
+      // `typ`, así un token de refresco no sirve para abrir un socket.
+      const payload = await this.sessionService.verifyAccess(token);
+
+      // El id del usuario es `sub` (ver `SessionPayload`); el JWT no lleva
+      // ningún campo `userId`.
+      client.join(payload.sub);
+      this.logger.log(`Cliente conectado y unido a sala ${payload.sub} (client.id: ${client.id})`);
+    } catch (error) {
+      this.logger.error(`Conexión rechazada por sesión inválida (client.id: ${client.id})`, error);
+      client.disconnect();
+    }
   }
 
   handleDisconnect(client: Socket) {
@@ -62,14 +96,29 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * cliente la usa tal cual para reemplazar la tarjeta y para descartar lo que
    * no es suyo mientras el broadcast siga siendo global.
    *
-   * Un arrastre emite **solo la tarjeta movida**: la renumeración de sus
-   * hermanas no se anuncia. Quien hizo el arrastre ya recibe el orden completo
-   * en la respuesta de `PATCH /tasks/:id/move`; el resto de clientes ve la
-   * tarjeta cambiar de columna, pero el orden exacto de la columna les queda
-   * pendiente hasta la siguiente lectura.
+   * Un arrastre emite esto **y** un `task.reordered` justo después, en ese
+   * orden: primero la tarjeta con su columna nueva, luego el orden final de las
+   * columnas tocadas.
    */
   emitTaskUpdated(task: Task) {
     this.emit(TASK_EVENTS.updated, task);
+  }
+
+  /**
+   * Orden final de las columnas que tocó un arrastre, tal cual lo devuelve
+   * `PATCH /tasks/:id/move` en su campo `columns`.
+   *
+   * Existe porque mover una tarjeta renumera a todas las que van detrás, y con
+   * `task.updated` solo viajaba la movida: los demás clientes veían el cambio de
+   * columna pero conservaban el orden viejo de sus hermanas. Se manda la lista
+   * de ids y no cada fila renumerada —serían N eventos por arrastre— porque el
+   * cliente ya tiene esas tarjetas y solo necesita el orden.
+   *
+   * `userId` viaja al mismo nivel porque aquí no hay fila de la que sacarlo, y
+   * el filtro del cliente lo necesita igual.
+   */
+  emitTasksReordered(userId: string, columns: ColumnOrder[]) {
+    this.emit(TASK_EVENTS.reordered, { userId, columns });
   }
 
   /**
@@ -81,14 +130,25 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
+   * Encamina el evento a la sala del dueño. Todos los payloads llevan `userId`
+   * justo para esto; si alguno llegara sin él se difunde a todos, que es lo
+   * visible en vez de lo silencioso: un evento que no llega a nadie sería un
+   * fallo mudo, y así se nota y se corrige.
+   *
    * Emitir nunca debe tumbar la petición HTTP que lo provocó: la tarea ya está
    * escrita en la base de datos y el peor caso de un fallo aquí es que la UI
    * tarde en enterarse. El `server` puede además no existir todavía si algo
    * emite antes de que el adaptador arranque.
    */
-  private emit(event: string, payload: unknown) {
+  private emit(event: string, payload: { userId?: string } | unknown) {
     try {
-      this.server?.emit(event, payload);
+      const userId = (payload as { userId?: string })?.userId;
+      if (userId) {
+        this.server?.to(userId).emit(event, payload);
+      } else {
+        this.logger.warn(`${event} sin userId: se difunde a todos los clientes`);
+        this.server?.emit(event, payload);
+      }
     } catch (error) {
       this.logger.error(`No se pudo emitir ${event}`, error);
     }
