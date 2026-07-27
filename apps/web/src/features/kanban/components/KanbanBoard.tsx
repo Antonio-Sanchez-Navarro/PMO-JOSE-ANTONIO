@@ -72,7 +72,7 @@ export const KanbanBoard: React.FC = () => {
     setTasks((prev) => {
       const activeIndex = prev.findIndex((t) => t.id === activeId);
       const overIndex = prev.findIndex((t) => t.id === overId);
-      const isOverColumn = ['TODO', 'IN_PROGRESS', 'DONE'].includes(overId);
+      const isOverColumn = ['TODO', 'IN_PROGRESS', 'POSTPONED', 'DONE', 'OVERDUE'].includes(overId);
 
       if (activeIndex === -1) return prev;
       const activeTask = prev[activeIndex];
@@ -94,7 +94,7 @@ export const KanbanBoard: React.FC = () => {
     if (over) {
       const activeId = String(active.id);
       const overId = String(over.id);
-      const isOverColumn = ['TODO', 'IN_PROGRESS', 'DONE'].includes(overId);
+      const isOverColumn = ['TODO', 'IN_PROGRESS', 'POSTPONED', 'DONE', 'OVERDUE'].includes(overId);
 
       setTasks((prev) => {
         const activeIndex = prev.findIndex((t) => t.id === activeId);
@@ -156,7 +156,9 @@ export const KanbanBoard: React.FC = () => {
   const tasksByStatus = {
     TODO: tasks.filter((t) => t.status === 'TODO'),
     IN_PROGRESS: tasks.filter((t) => t.status === 'IN_PROGRESS'),
+    POSTPONED: tasks.filter((t) => t.status === 'POSTPONED'),
     DONE: tasks.filter((t) => t.status === 'DONE'),
+    OVERDUE: tasks.filter((t) => t.status === 'OVERDUE'),
   };
 
   return (
@@ -170,7 +172,9 @@ export const KanbanBoard: React.FC = () => {
       <div className="flex gap-6 p-6 h-full overflow-x-auto">
         <KanbanColumn id="TODO" title="Por Hacer" tasks={tasksByStatus.TODO} />
         <KanbanColumn id="IN_PROGRESS" title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} />
-        <KanbanColumn id="DONE" title="Completado" tasks={tasksByStatus.DONE} />
+        <KanbanColumn id="POSTPONED" title="Pospuestas" tasks={tasksByStatus.POSTPONED} />
+        <KanbanColumn id="DONE" title="Cumplidas" tasks={tasksByStatus.DONE} />
+        <KanbanColumn id="OVERDUE" title="Atrasadas" tasks={tasksByStatus.OVERDUE} />
       </div>
     </DndContext>
   );
