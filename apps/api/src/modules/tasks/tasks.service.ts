@@ -3,6 +3,7 @@ import { Prisma, Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/clie
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { adjustPriority } from '../ai/priority.rules';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { QueryTasksDto } from './dto/query-tasks.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 
@@ -108,18 +109,30 @@ export class TasksService {
     });
   }
 
-  async findAll(userId: string, params: { skip?: number; take?: number; status?: string; priority?: string; }) {
-    const { skip = 0, take = 50, status, priority } = params;
-    const where = { 
+  async findAll(userId: string, params: QueryTasksDto) {
+    const { skip = 0, take = 50, status, priority, search } = params;
+
+    const where: Prisma.TaskWhereInput = {
       userId,
-      ...(status && { status: status as any }), 
-      ...(priority && { priority: priority as any }) 
+      ...(status && { status }),
+      ...(priority && { priority }),
+      // `mode: 'insensitive'` es el ILIKE de Postgres. Sin índice adicional:
+      // con volúmenes de tablero (miles de filas) el escaneo secuencial es más
+      // rápido que mantener un GIN, y `contains` con comodín por delante no
+      // podría usar un índice B-tree de todas formas.
+      ...(search && {
+        OR: [
+          { title: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+        ],
+      }),
     };
 
     const [data, total] = await Promise.all([
       this.prisma.task.findMany({
-        skip: Number(skip),
-        take: Number(take),
+        // Ya llegan como número: los convierte el DTO de la query.
+        skip,
+        take,
         where,
         // Prisma expects relation name 'sourceEmail' not 'email' based on schema
         include: {

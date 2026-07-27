@@ -297,3 +297,77 @@ describe('TasksService.remove', () => {
     await expect(service.remove(USER, 'ajena')).rejects.toThrow(NotFoundException);
   });
 });
+
+describe('TasksService.findAll — filtros y búsqueda', () => {
+  let prisma: any;
+  let service: TasksService;
+
+  beforeEach(() => {
+    prisma = {
+      task: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+    service = new TasksService(prisma as unknown as PrismaService);
+  });
+
+  /** El `where` con el que se consultó la tabla. */
+  const where = () => prisma.task.findMany.mock.calls[0][0].where;
+
+  it('siempre acota al usuario', async () => {
+    await service.findAll(USER, {});
+
+    expect(where()).toEqual({ userId: USER });
+  });
+
+  it('cuenta con el mismo where que lista, para que el total case con el filtro', async () => {
+    await service.findAll(USER, { status: 'DONE' as any });
+
+    expect(prisma.task.count).toHaveBeenCalledWith({ where: where() });
+  });
+
+  it('filtra por status y por priority', async () => {
+    await service.findAll(USER, { status: 'IN_PROGRESS' as any, priority: 'HIGH' as any });
+
+    expect(where()).toMatchObject({ status: 'IN_PROGRESS', priority: 'HIGH' });
+  });
+
+  it('busca en título y descripción sin distinguir mayúsculas', async () => {
+    await service.findAll(USER, { search: 'cotización' });
+
+    expect(where().OR).toEqual([
+      { title: { contains: 'cotización', mode: 'insensitive' } },
+      { description: { contains: 'cotización', mode: 'insensitive' } },
+    ]);
+  });
+
+  it('combina búsqueda y filtros en la misma consulta', async () => {
+    await service.findAll(USER, { search: 'obra', status: 'TODO' as any });
+
+    expect(where()).toMatchObject({ userId: USER, status: 'TODO' });
+    expect(where().OR).toHaveLength(2);
+  });
+
+  it('ignora una búsqueda vacía en vez de filtrar por cadena vacía', async () => {
+    await service.findAll(USER, { search: '' });
+
+    expect(where()).toEqual({ userId: USER });
+  });
+
+  it('pagina con 0/50 por defecto', async () => {
+    await service.findAll(USER, {});
+
+    const args = prisma.task.findMany.mock.calls[0][0];
+    expect(args).toMatchObject({ skip: 0, take: 50 });
+  });
+
+  it('devuelve el total junto a la página pedida', async () => {
+    prisma.task.findMany.mockResolvedValue([{ id: 'a' }]);
+    prisma.task.count.mockResolvedValue(42);
+
+    const res = await service.findAll(USER, { skip: 10, take: 5 });
+
+    expect(res).toEqual({ data: [{ id: 'a' }], total: 42, skip: 10, take: 5 });
+  });
+});

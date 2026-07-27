@@ -8,13 +8,12 @@ import {
   Body,
   Query,
   UseGuards,
-  DefaultValuePipe,
-  ParseIntPipe,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { QueryTasksDto } from './dto/query-tasks.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -26,15 +25,17 @@ import type { CurrentUserContext } from '../auth/auth.types';
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
+  /**
+   * Lista las tareas del usuario con filtros opcionales.
+   *
+   * `?status=`, `?priority=`, `?search=` (título y descripción, sin distinguir
+   * mayúsculas) y paginación `?skip=`/`?take=`. La validación y los valores por
+   * defecto viven en `QueryTasksDto`, no en pipes sueltos por parámetro: así
+   * `?status=BASURA` se rechaza con 400 en vez de llegar a Prisma.
+   */
   @Get()
-  findAll(
-    @CurrentUser() user: CurrentUserContext,
-    @Query('skip', new DefaultValuePipe(0), ParseIntPipe) skip: number,
-    @Query('take', new DefaultValuePipe(50), ParseIntPipe) take: number,
-    @Query('status') status?: string,
-    @Query('priority') priority?: string,
-  ) {
-    return this.tasksService.findAll(user.userId, { skip, take, status, priority });
+  findAll(@CurrentUser() user: CurrentUserContext, @Query() query: QueryTasksDto) {
+    return this.tasksService.findAll(user.userId, query);
   }
 
   /**

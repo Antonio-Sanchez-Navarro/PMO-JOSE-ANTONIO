@@ -82,7 +82,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [x] 🔴 Drag & drop con `@dnd-kit` + `PATCH /tasks/:id/move` (status+position) — ✅ **Completado**: El frontend ahora consume el endpoint, implementa UI optimista y se reconcilia sin efecto boomerang usando `MoveTaskResponse`.
 - [x] 🔴 Job cron: marcar `OVERDUE` (dueDate vencido) — ✅ `OverdueModule`: job repetible de BullMQ (cola `overdue-sweep`, patrón en `OVERDUE_CRON`, por defecto cada hora en el minuto 5, más un barrido al arrancar). Mueve a `OVERDUE` las tareas vencidas en `TODO`/`IN_PROGRESS`/`POSTPONED` anexándolas al final de la columna; una transacción por usuario y relectura dentro para no pisar cambios del tablero. En la misma pasada **reevalúa la prioridad** con `adjustPriority` (Sprint 3), así que una tarea sube sola conforme se acerca su fecha. 16 pruebas en `overdue.service.spec.ts`
 - [ ] 🟡 Modal de creación/edición (React Hook Form + Zod) — _`TaskModal.tsx` ya existe, pero el `POST /tasks` que necesita no está implementado_
-- [ ] 🟡 Filtros (prioridad, etiqueta, fecha) y búsqueda
+- [ ] 🟡 Filtros (prioridad, etiqueta, fecha) y búsqueda — ✅ En la API: `GET /tasks?status=&priority=&search=&skip=&take=`. `search` busca en título y descripción con `mode: 'insensitive'` (ILIKE). La validación vive en `QueryTasksDto`, así que un enum inválido da 400 y no un 500 desde Prisma. _Faltan el filtro por etiqueta y por rango de fechas, y la UI de filtros (frontend)_
 - [ ] 🟡 Realtime: `socket.io` emite `task.*` → UI se actualiza sin recargar
 - [ ] 🟢 Badges de prioridad, indicador de origen (correo/WhatsApp/manual) — _la columna `Task.source` ya está en la API; falta pintarla en la tarjeta_
 
