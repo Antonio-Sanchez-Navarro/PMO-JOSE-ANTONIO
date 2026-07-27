@@ -24,6 +24,14 @@ enum TaskPriority {
   URGENT
 }
 
+/// De dónde salió la tarea. `EMAIL` es la única que el reproceso automático
+/// puede borrar y recrear; el resto son de una persona y no se tocan.
+enum TaskSource {
+  EMAIL
+  WHATSAPP
+  MANUAL
+}
+
 model User {
   id             String       @id @default(cuid())
   email          String       @unique
@@ -72,6 +80,9 @@ model Task {
   completedAt   DateTime?
   sourceEmail   Email?       @relation(fields: [sourceEmailId], references: [id])
   sourceEmailId String?
+  /// El default es `MANUAL` a propósito: si algún sitio olvida fijarlo, la
+  /// tarea queda protegida del borrado por reproceso en vez de expuesta.
+  source        TaskSource   @default(MANUAL)
   aiConfidence  Float?
   tags          String[]
   position      Int          @default(0)

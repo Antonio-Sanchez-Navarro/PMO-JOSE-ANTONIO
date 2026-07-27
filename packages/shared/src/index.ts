@@ -15,6 +15,14 @@ export enum TaskPriority {
   URGENT = "URGENT",
 }
 
+// De dónde salió la tarea. Solo las `EMAIL` las borra y recrea el reproceso
+// automático de la bandeja; las demás las puso una persona.
+export enum TaskSource {
+  EMAIL = "EMAIL",
+  WHATSAPP = "WHATSAPP",
+  MANUAL = "MANUAL",
+}
+
 export enum EmailCategory {
   CLIENTE = "cliente",
   INTERNO = "interno",
@@ -31,6 +39,7 @@ export interface Task {
   priority: TaskPriority;
   dueDate?: string | null;
   sourceEmailId?: string | null;
+  source: TaskSource;
   tags: string[];
   position: number;
   createdAt: string;

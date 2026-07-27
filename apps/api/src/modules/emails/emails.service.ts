@@ -1,10 +1,7 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Task, TaskPriority } from '@prisma/client';
+import { Task, TaskPriority, TaskSource } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import {
-  EmailClassificationService,
-  MANUAL_TAG,
-} from '../ai/email-classification.service';
+import { EmailClassificationService } from '../ai/email-classification.service';
 import { ToTaskDto } from './dto/to-task.dto';
 
 export interface ToTaskResult {
@@ -62,8 +59,8 @@ export class EmailsService {
           description: dto.description ?? email.snippet ?? '',
           priority: dto.priority ?? TaskPriority.MEDIUM,
           dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-          // Marca que protege esta tarea del borrado en un reproceso posterior.
-          tags: [MANUAL_TAG],
+          // Origen que protege esta tarea del borrado en un reproceso posterior.
+          source: TaskSource.MANUAL,
         },
       });
 

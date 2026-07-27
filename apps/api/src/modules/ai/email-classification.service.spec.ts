@@ -1,4 +1,5 @@
-import { EmailClassificationService, MANUAL_TAG } from './email-classification.service';
+import { TaskSource } from '@prisma/client';
+import { EmailClassificationService } from './email-classification.service';
 import { AiService } from './ai.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
@@ -105,18 +106,18 @@ describe('EmailClassificationService', () => {
       });
 
       expect(tx.task.deleteMany).toHaveBeenCalledWith({
-        where: { sourceEmailId: emailConFechaRelativa.id, NOT: { tags: { has: MANUAL_TAG } } },
+        where: { sourceEmailId: emailConFechaRelativa.id, source: TaskSource.EMAIL },
       });
     });
 
-    it('nunca borra las tareas marcadas como manuales', async () => {
+    it('acota el borrado al origen EMAIL: lo manual sobrevive al reproceso', async () => {
       await service.classifyAndPersist(emailConFechaRelativa.id, {
         replaceExisting: true,
         forceActionable: false,
       });
 
       const where = tx.task.deleteMany.mock.calls[0][0].where;
-      expect(where.NOT).toEqual({ tags: { has: MANUAL_TAG } });
+      expect(where.source).toBe(TaskSource.EMAIL);
     });
 
     it('no borra nada en la vía manual', async () => {
@@ -159,8 +160,9 @@ describe('EmailClassificationService', () => {
       const creada = tx.task.create.mock.calls[0][0].data;
       expect(creada.title).toBe(emailNoAccionable.subject);
       expect(creada.priority).toBe('MEDIUM');
-      // La marca es lo que la protege del borrado en un reproceso posterior.
-      expect(creada.tags).toContain(MANUAL_TAG);
+      // El origen es lo que la protege del borrado en un reproceso posterior:
+      // la creó una persona forzando, no el criterio del modelo.
+      expect(creada.source).toBe(TaskSource.MANUAL);
     });
 
     it('respeta las tareas del modelo cuando sí extrajo alguna', async () => {
@@ -198,5 +200,8 @@ describe('EmailClassificationService', () => {
     expect(creada.aiConfidence).toBe(0.9);
     expect(creada.sourceEmailId).toBe(emailConFechaRelativa.id);
     expect(creada.userId).toBe(emailConFechaRelativa.userId);
+    // Sin este marcado explícito el default del schema (MANUAL) blindaría las
+    // tareas de la IA y el reproceso dejaría de reemplazarlas.
+    expect(creada.source).toBe(TaskSource.EMAIL);
   });
 });

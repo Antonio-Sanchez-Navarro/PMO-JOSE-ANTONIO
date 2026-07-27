@@ -1,18 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, Task, TaskPriority } from '@prisma/client';
+import { Prisma, Task, TaskPriority, TaskSource } from '@prisma/client';
 import { AiService } from './ai.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-
-/**
- * Etiqueta que marca las tareas creadas a mano desde `POST /emails/:id/to-task`.
- *
- * El reproceso automático borra las tareas que generó la IA para ese correo
- * (ver `replaceExisting`); sin esta marca se llevaría por delante también las
- * que creó una persona. Es un apaño: lo correcto es una columna `source`
- * ('email' | 'whatsapp' | 'manual') en `Task`, que ya está planificada en el
- * Sprint 4 ("indicador de origen"). Cuando exista, sustituir este filtro.
- */
-export const MANUAL_TAG = 'manual';
 
 export interface ClassifyOptions {
   /**
@@ -79,11 +68,14 @@ export class EmailClassificationService {
           dueDate: task.dueDate,
           aiConfidence: analysis.aiConfidence,
           position: index,
+          source: TaskSource.EMAIL,
         }))
       : [];
 
     // El modelo no vio nada accionable pero una persona insiste: no la dejamos
-    // sin tarea. Se crea una desde el asunto, con la marca manual.
+    // sin tarea. Se crea una desde el asunto y se marca MANUAL, porque el
+    // criterio que la justifica es el de la persona, no el del modelo: un
+    // reproceso posterior no debe borrarla.
     const usedFallback = options.forceActionable && toCreate.length === 0;
     if (usedFallback) {
       toCreate = [
@@ -93,17 +85,19 @@ export class EmailClassificationService {
           title: email.subject?.trim() || 'Tarea desde correo sin asunto',
           description: email.snippet ?? '',
           priority: TaskPriority.MEDIUM,
-          tags: [MANUAL_TAG],
           aiConfidence: analysis.aiConfidence,
           position: 0,
+          source: TaskSource.MANUAL,
         },
       ];
     }
 
     const tasks = await this.prisma.$transaction(async (tx) => {
       if (options.replaceExisting) {
+        // Solo lo que generó la IA para este correo. Lo que puso una persona
+        // (MANUAL) o llegó por otro canal sobrevive al reproceso.
         const { count } = await tx.task.deleteMany({
-          where: { sourceEmailId: email.id, NOT: { tags: { has: MANUAL_TAG } } },
+          where: { sourceEmailId: email.id, source: TaskSource.EMAIL },
         });
         if (count > 0) {
           this.logger.log(`Reproceso: borradas ${count} tareas previas del email ${emailId}`);

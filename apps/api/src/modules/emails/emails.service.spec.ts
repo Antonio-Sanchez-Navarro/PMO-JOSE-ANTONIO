@@ -1,10 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { TaskSource } from '@prisma/client';
 import { EmailsService } from './emails.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import {
-  EmailClassificationService,
-  MANUAL_TAG,
-} from '../ai/email-classification.service';
+import { EmailClassificationService } from '../ai/email-classification.service';
 import { emailNoAccionable, emailSinTexto } from '../ai/__fixtures__/emails.fixture';
 
 const USER_ID = 'user-1';
@@ -93,7 +91,7 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
       const result = await service.convertToTask(USER_ID, emailNoAccionable.id, { title: 'A mano' });
 
       expect(result.mode).toBe('manual');
-      expect(prisma.task.create.mock.calls[0][0].data.tags).toEqual([MANUAL_TAG]);
+      expect(prisma.task.create.mock.calls[0][0].data.source).toBe(TaskSource.MANUAL);
     });
 
     it('aplica priority y dueDate del cuerpo', async () => {
