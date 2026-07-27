@@ -60,6 +60,65 @@ describe('EmailClassificationService', () => {
     );
   });
 
+  describe('classify — análisis sin escritura', () => {
+    it('no toca la base de datos: ni tareas ni marca de procesado', async () => {
+      await service.classify(emailConFechaRelativa.id, { forceActionable: false });
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.task.create).not.toHaveBeenCalled();
+      expect(tx.task.deleteMany).not.toHaveBeenCalled();
+      expect(tx.email.update).not.toHaveBeenCalled();
+    });
+
+    it('devuelve las tareas propuestas sin id, porque aún no existen', async () => {
+      const draft = await service.classify(emailConFechaRelativa.id, { forceActionable: false });
+
+      expect(draft.tasks).toHaveLength(1);
+      expect(draft.tasks[0]).not.toHaveProperty('id');
+      expect(draft.tasks[0].title).toBe('Enviar cotización');
+      expect(draft.emailId).toBe(emailConFechaRelativa.id);
+      expect(draft.aiConfidence).toBe(0.9);
+    });
+
+    it('la propuesta ya trae la prioridad escalada, no la del modelo', async () => {
+      ai.analyzeEmail.mockResolvedValue({
+        ...analisisConTarea,
+        tasks: [
+          {
+            ...analisisConTarea.tasks[0],
+            priority: 'LOW',
+            dueDate: new Date(Date.now() + 3 * 3_600_000),
+          },
+        ],
+      });
+
+      const draft = await service.classify(emailConFechaRelativa.id, { forceActionable: false });
+
+      // Si la cuarentena enseñara la prioridad cruda del modelo, el usuario
+      // aprobaría una cosa y se guardaría otra.
+      expect(draft.tasks[0].priority).toBe('URGENT');
+    });
+
+    it('sin forzar, un correo no accionable se devuelve vacío y honesto', async () => {
+      ai.analyzeEmail.mockResolvedValue(analisisSinTareas);
+
+      const draft = await service.classify(emailNoAccionable.id, { forceActionable: false });
+
+      expect(draft.isActionable).toBe(false);
+      expect(draft.tasks).toHaveLength(0);
+      expect(draft.usedFallback).toBe(false);
+    });
+
+    it('falla igual que la vía que persiste si no hay texto', async () => {
+      prisma.email.findUniqueOrThrow.mockResolvedValue(emailSinTexto);
+
+      await expect(
+        service.classify(emailSinTexto.id, { forceActionable: false }),
+      ).rejects.toThrow(/no tiene texto/i);
+      expect(ai.analyzeEmail).not.toHaveBeenCalled();
+    });
+  });
+
   it('falla si el correo no tiene texto que analizar', async () => {
     prisma.email.findUniqueOrThrow.mockResolvedValue(emailSinTexto);
 

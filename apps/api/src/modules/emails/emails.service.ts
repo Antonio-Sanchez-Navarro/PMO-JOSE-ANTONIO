@@ -13,6 +13,24 @@ export interface ToTaskResult {
   tasks: Task[];
 }
 
+/** Una tarea propuesta: todavía no existe en la base de datos, por eso no hay `id`. */
+export interface ProposedTask {
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  tags: string[];
+  dueDate: Date | null;
+}
+
+/** Lo que el modelo propone para un correo, sin haber escrito nada. */
+export interface ClassificationResult {
+  emailId: string;
+  category: string;
+  isActionable: boolean;
+  aiConfidence: number;
+  tasks: ProposedTask[];
+}
+
 @Injectable()
 export class EmailsService {
   private readonly logger = new Logger(EmailsService.name);
@@ -21,6 +39,55 @@ export class EmailsService {
     private readonly prisma: PrismaService,
     private readonly classification: EmailClassificationService,
   ) {}
+
+  /**
+   * Devuelve lo que la IA propone para un correo **sin crear nada**.
+   *
+   * Es el primer paso de la validación humana: la persona ve las tareas
+   * propuestas, las edita o las descarta, y solo entonces se crean con
+   * `to-task`. Por eso no hay 409 por duplicados aquí — mirar qué propondría el
+   * modelo no colisiona con nada — ni se marca el correo como procesado.
+   *
+   * No se fuerza `isActionable`: si el modelo no ve nada accionable, se dice y
+   * ya decidirá la persona. Forzar aquí sería inventarle una tarea a alguien
+   * que solo estaba mirando.
+   */
+  async classify(userId: string, emailId: string): Promise<ClassificationResult> {
+    const email = await this.prisma.email.findFirst({
+      where: { id: emailId, userId },
+      select: { id: true, bodyText: true, snippet: true },
+    });
+
+    if (!email) {
+      throw new NotFoundException(`No existe el correo ${emailId}`);
+    }
+
+    if (!email.bodyText && !email.snippet) {
+      throw new ConflictException(`El correo ${emailId} no tiene texto que analizar.`);
+    }
+
+    const draft = await this.classification.classify(email.id, { forceActionable: false });
+
+    this.logger.log(
+      `Clasificación en seco del correo ${emailId}: ${draft.tasks.length} tarea(s) propuesta(s)`,
+    );
+
+    return {
+      emailId: draft.emailId,
+      category: draft.category,
+      isActionable: draft.isActionable,
+      aiConfidence: draft.aiConfidence,
+      // `source` se queda fuera: al frontend le da igual de dónde salió el
+      // borrador, y lo que acabe creándose lo decide `to-task`.
+      tasks: draft.tasks.map(({ title, description, priority, tags, dueDate }) => ({
+        title,
+        description,
+        priority,
+        tags,
+        dueDate,
+      })),
+    };
+  }
 
   /**
    * Convierte un correo en tarea a petición de una persona.

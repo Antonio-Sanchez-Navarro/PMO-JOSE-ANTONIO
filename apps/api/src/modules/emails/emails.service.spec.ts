@@ -10,7 +10,7 @@ const USER_ID = 'user-1';
 describe('EmailsService — POST /emails/:id/to-task', () => {
   let service: EmailsService;
   let prisma: any;
-  let classification: { classifyAndPersist: jest.Mock };
+  let classification: { classifyAndPersist: jest.Mock; classify: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -27,6 +27,23 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
         category: 'OTHER',
         usedFallback: true,
         tasks: [{ id: 'task-1', title: emailNoAccionable.subject, priority: 'MEDIUM' }],
+      }),
+      classify: jest.fn().mockResolvedValue({
+        emailId: emailNoAccionable.id,
+        isActionable: true,
+        category: 'PROJECT_MANAGEMENT',
+        aiConfidence: 0.9,
+        usedFallback: false,
+        tasks: [
+          {
+            title: 'Enviar cotización',
+            description: 'ctx',
+            priority: 'URGENT',
+            tags: ['obra'],
+            dueDate: new Date('2026-08-01'),
+            source: TaskSource.EMAIL,
+          },
+        ],
       }),
     };
 
@@ -158,5 +175,103 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
 
       expect(prisma.task.update).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('EmailsService — POST /emails/:id/classify', () => {
+  let service: EmailsService;
+  let prisma: any;
+  let classification: { classifyAndPersist: jest.Mock; classify: jest.Mock };
+
+  const propuesta = {
+    emailId: emailNoAccionable.id,
+    isActionable: true,
+    category: 'PROJECT_MANAGEMENT',
+    aiConfidence: 0.9,
+    usedFallback: false,
+    tasks: [
+      {
+        title: 'Enviar cotización',
+        description: 'ctx',
+        priority: 'URGENT',
+        tags: ['obra'],
+        dueDate: new Date('2026-08-01'),
+        source: TaskSource.EMAIL,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    prisma = {
+      email: { findFirst: jest.fn().mockResolvedValue(emailNoAccionable) },
+      task: { count: jest.fn(), create: jest.fn(), update: jest.fn() },
+    };
+    classification = {
+      classifyAndPersist: jest.fn(),
+      classify: jest.fn().mockResolvedValue(propuesta),
+    };
+
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      classification as unknown as EmailClassificationService,
+    );
+  });
+
+  it('devuelve 404 si el correo no existe o no es del usuario', async () => {
+    prisma.email.findFirst.mockResolvedValue(null);
+
+    await expect(service.classify(USER_ID, 'otro-id')).rejects.toThrow(NotFoundException);
+    expect(classification.classify).not.toHaveBeenCalled();
+  });
+
+  it('filtra por userId además de por id', async () => {
+    await service.classify(USER_ID, emailNoAccionable.id);
+
+    expect(prisma.email.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: emailNoAccionable.id, userId: USER_ID } }),
+    );
+  });
+
+  it('rechaza con 409 el correo sin texto que analizar', async () => {
+    prisma.email.findFirst.mockResolvedValue(emailSinTexto);
+
+    await expect(service.classify(USER_ID, emailSinTexto.id)).rejects.toThrow(ConflictException);
+    expect(classification.classify).not.toHaveBeenCalled();
+  });
+
+  it('no persiste nada: ni crea tareas ni comprueba duplicados', async () => {
+    await service.classify(USER_ID, emailNoAccionable.id);
+
+    expect(prisma.task.create).not.toHaveBeenCalled();
+    // Mirar qué propondría el modelo no colisiona con las tareas que ya existan,
+    // así que aquí no hay 409 por duplicados.
+    expect(prisma.task.count).not.toHaveBeenCalled();
+    expect(classification.classifyAndPersist).not.toHaveBeenCalled();
+  });
+
+  it('no fuerza isActionable: si el modelo no ve nada, se dice', async () => {
+    await service.classify(USER_ID, emailNoAccionable.id);
+
+    expect(classification.classify).toHaveBeenCalledWith(emailNoAccionable.id, {
+      forceActionable: false,
+    });
+  });
+
+  it('devuelve la propuesta sin el origen interno de cada borrador', async () => {
+    const result = await service.classify(USER_ID, emailNoAccionable.id);
+
+    expect(result.emailId).toBe(emailNoAccionable.id);
+    expect(result.category).toBe('PROJECT_MANAGEMENT');
+    expect(result.aiConfidence).toBe(0.9);
+    expect(result.tasks).toEqual([
+      {
+        title: 'Enviar cotización',
+        description: 'ctx',
+        priority: 'URGENT',
+        tags: ['obra'],
+        dueDate: new Date('2026-08-01'),
+      },
+    ]);
+    expect(result.tasks[0]).not.toHaveProperty('source');
   });
 });

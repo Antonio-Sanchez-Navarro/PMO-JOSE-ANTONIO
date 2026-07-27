@@ -27,6 +27,32 @@ export interface ClassifyResult {
 }
 
 /**
+ * Una tarea tal como la propone el análisis, antes de existir en la base de
+ * datos. No tiene `id` porque todavía no es una fila: es lo que se le enseña a
+ * una persona para que lo apruebe, lo edite o lo tire.
+ */
+export interface TaskDraft {
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  tags: string[];
+  dueDate: Date | null;
+  /** `EMAIL` si la extrajo el modelo; `MANUAL` si es el respaldo del asunto. */
+  source: TaskSource;
+}
+
+/** Resultado del análisis sin tocar la base de datos. */
+export interface ClassificationDraft {
+  emailId: string;
+  isActionable: boolean;
+  category: string;
+  aiConfidence: number;
+  tasks: TaskDraft[];
+  /** `true` si el modelo no extrajo tareas y se generó una desde el asunto. */
+  usedFallback: boolean;
+}
+
+/**
  * Analiza un correo con la IA y persiste el resultado en una transacción.
  *
  * Vive aquí, y no en el worker, porque tiene dos consumidores que deben
@@ -42,58 +68,42 @@ export class EmailClassificationService {
     private readonly prisma: PrismaService,
   ) {}
 
+  /**
+   * Analiza el correo y devuelve lo que propondría, **sin escribir nada**.
+   *
+   * Es la mitad de arriba de `classifyAndPersist`. Existe porque el flujo de
+   * validación humana necesita enseñar la propuesta antes de que sea real: si
+   * el análisis y la escritura van juntos, cuando el frontend recibe la
+   * respuesta las tareas ya están creadas y no queda nada que aprobar.
+   *
+   * No marca el correo como procesado: clasificar para mirar no es haberlo
+   * despachado, y dejar `processedAt` aquí haría que el worker se lo saltara.
+   */
+  async classify(
+    emailId: string,
+    options: { forceActionable: boolean },
+  ): Promise<ClassificationDraft> {
+    const email = await this.prisma.email.findUniqueOrThrow({ where: { id: emailId } });
+    return this.analyze(email, options.forceActionable);
+  }
+
   async classifyAndPersist(emailId: string, options: ClassifyOptions): Promise<ClassifyResult> {
     const email = await this.prisma.email.findUniqueOrThrow({ where: { id: emailId } });
+    const draft = await this.analyze(email, options.forceActionable);
+    const { isActionable, category, aiConfidence, usedFallback } = draft;
 
-    const textToAnalyze = email.bodyText || email.snippet || '';
-    if (!textToAnalyze) {
-      throw new Error(`El email ${emailId} no tiene texto para analizar.`);
-    }
-
-    const analysis = await this.ai.analyzeEmail(
-      email.subject || '(Sin Asunto)',
-      textToAnalyze,
-      email.receivedAt,
-    );
-
-    const isActionable = analysis.isActionable || options.forceActionable;
-
-    let toCreate: Prisma.TaskCreateManyInput[] = isActionable
-      ? analysis.tasks.map((task, index) => ({
-          userId: email.userId,
-          sourceEmailId: email.id,
-          title: task.title,
-          description: task.description,
-          // La prioridad del modelo pasa por la capa determinista antes de
-          // persistirse: la fecha puede subirla, nunca bajarla.
-          priority: this.resolvePriority(task, analysis.aiConfidence, emailId),
-          tags: task.tags,
-          dueDate: task.dueDate,
-          aiConfidence: analysis.aiConfidence,
-          position: index,
-          source: TaskSource.EMAIL,
-        }))
-      : [];
-
-    // El modelo no vio nada accionable pero una persona insiste: no la dejamos
-    // sin tarea. Se crea una desde el asunto y se marca MANUAL, porque el
-    // criterio que la justifica es el de la persona, no el del modelo: un
-    // reproceso posterior no debe borrarla.
-    const usedFallback = options.forceActionable && toCreate.length === 0;
-    if (usedFallback) {
-      toCreate = [
-        {
-          userId: email.userId,
-          sourceEmailId: email.id,
-          title: email.subject?.trim() || 'Tarea desde correo sin asunto',
-          description: email.snippet ?? '',
-          priority: TaskPriority.MEDIUM,
-          aiConfidence: analysis.aiConfidence,
-          position: 0,
-          source: TaskSource.MANUAL,
-        },
-      ];
-    }
+    const toCreate: Prisma.TaskCreateManyInput[] = draft.tasks.map((task, index) => ({
+      userId: email.userId,
+      sourceEmailId: email.id,
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      tags: task.tags,
+      dueDate: task.dueDate,
+      aiConfidence,
+      position: index,
+      source: task.source,
+    }));
 
     const tasks = await this.prisma.$transaction(async (tx) => {
       if (options.replaceExisting) {
@@ -111,7 +121,7 @@ export class EmailClassificationService {
         where: { id: email.id },
         data: {
           isActionable,
-          category: analysis.category,
+          category,
           processedAt: new Date(),
         },
       });
@@ -122,7 +132,69 @@ export class EmailClassificationService {
       return Promise.all(toCreate.map((data) => tx.task.create({ data })));
     });
 
-    return { isActionable, category: analysis.category, tasks, usedFallback };
+    return { isActionable, category, tasks, usedFallback };
+  }
+
+  /**
+   * Lo común a las dos vías: pedirle el análisis al modelo y dejarlo listo para
+   * persistir, con la prioridad ya pasada por la capa determinista.
+   */
+  private async analyze(
+    email: { id: string; subject: string | null; snippet: string | null; bodyText: string | null; receivedAt: Date },
+    forceActionable: boolean,
+  ): Promise<ClassificationDraft> {
+    const textToAnalyze = email.bodyText || email.snippet || '';
+    if (!textToAnalyze) {
+      throw new Error(`El email ${email.id} no tiene texto para analizar.`);
+    }
+
+    const analysis = await this.ai.analyzeEmail(
+      email.subject || '(Sin Asunto)',
+      textToAnalyze,
+      email.receivedAt,
+    );
+
+    const isActionable = analysis.isActionable || forceActionable;
+
+    let tasks: TaskDraft[] = isActionable
+      ? analysis.tasks.map((task) => ({
+          title: task.title,
+          description: task.description,
+          // La prioridad del modelo pasa por la capa determinista antes de
+          // persistirse: la fecha puede subirla, nunca bajarla.
+          priority: this.resolvePriority(task, analysis.aiConfidence, email.id),
+          tags: task.tags,
+          dueDate: task.dueDate,
+          source: TaskSource.EMAIL,
+        }))
+      : [];
+
+    // El modelo no vio nada accionable pero una persona insiste: no la dejamos
+    // sin tarea. Se propone una desde el asunto y se marca MANUAL, porque el
+    // criterio que la justifica es el de la persona, no el del modelo: un
+    // reproceso posterior no debe borrarla.
+    const usedFallback = forceActionable && tasks.length === 0;
+    if (usedFallback) {
+      tasks = [
+        {
+          title: email.subject?.trim() || 'Tarea desde correo sin asunto',
+          description: email.snippet ?? '',
+          priority: TaskPriority.MEDIUM,
+          tags: [],
+          dueDate: null,
+          source: TaskSource.MANUAL,
+        },
+      ];
+    }
+
+    return {
+      emailId: email.id,
+      isActionable,
+      category: analysis.category,
+      aiConfidence: analysis.aiConfidence,
+      tasks,
+      usedFallback,
+    };
   }
 
   /**

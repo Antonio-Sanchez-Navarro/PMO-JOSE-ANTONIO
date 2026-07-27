@@ -5,8 +5,9 @@
 > Este campo lo cambia **solo Doc**. `TRABAJAR` = ponte con el encargo de abajo.
 > `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe.
 >
-> **Motivo de la pausa**: falta el `POST /emails/:id/classify` del backend. Ver
-> "Aviso antes de que empieces".
+> **Bloqueo resuelto el 2026-07-27**: el `POST /emails/:id/classify` que
+> faltaba ya está en la rama y verificado contra la app. Queda pendiente de que
+> **Doc** pase el Estado a `TRABAJAR`.
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí,
 no es un encargo. Cuando te digan "lee tu md", vuelve a este archivo y trabaja
@@ -26,38 +27,74 @@ sigue siendo Registro de Tiempos. Lo anterior quedó al final, bajo "Histórico"
   desplegable y aprobar o eliminar las subtareas propuestas antes de
   confirmarlas y lanzarlas a la base de datos y al tablero.
 
-## Contratos que ya existen
+## Contra qué trabajas
 
-- **Forma del JSON**: `EmailClassification` en `packages/shared/src/index.ts:50`
-  — `{ category, isActionable, summary, tasks[] }`, y cada tarea lleva
-  `{ title, description?, priority, dueDate?, confidence }`.
-- **Desplegable de categoría**: `EmailCategory` (`packages/shared/src/index.ts:26`)
-  — `cliente`, `interno`, `proveedor`, `administrativo`, `spam`. Ojo: los valores
-  van en minúscula, no como el nombre del miembro del enum.
-- **Endpoint actual**: `POST /emails/:id/to-task` → 201 con las tareas creadas,
-  404 si el correo no es del usuario, 409 si ya tenía tareas (`"force": true`
-  para insistir).
+### `POST /emails/:id/classify` — la propuesta, sin crear nada
 
-## Aviso antes de que empieces
+Es el que alimenta la cuarentena. Analiza el correo y devuelve lo que
+propondría **sin escribir una sola fila**: ni tareas, ni la marca de procesado
+del correo. Puedes llamarlo tantas veces como quieras (cuesta tokens, eso sí).
 
-**Hoy no hay nada que poner en cuarentena.** Tanto el worker como
-`POST /emails/:id/to-task` clasifican y **persisten las tareas en la misma
-transacción** (`EmailsService.convertToTask`, `apps/api/src/modules/emails/emails.service.ts:31`).
-Cuando el frontend recibe la respuesta, las tareas ya están escritas en la base
-de datos: no existe el momento intermedio en el que un humano pueda aprobarlas o
-descartarlas.
+- **200** con la propuesta. Es 200 y no 201 porque no nace ningún recurso.
+- **404** si el correo no existe o no es del usuario.
+- **409** si el correo no tiene texto que analizar.
 
-Para que el flujo que describe Doc sea posible falta antes una pieza de backend
-—mía— que devuelva la clasificación **sin escribir nada**, más un segundo paso
-que confirme solo lo que el usuario apruebe. En la práctica: un
-`POST /emails/:id/classify` que lea y devuelva `EmailClassification`, y un
-`to-task` que acepte las tareas ya editadas en vez de inferirlas.
+Cuerpo de la respuesta, tipado en `EmailClassification`
+(`packages/shared/src/index.ts`):
 
-Mientras eso no exista, la UI de cuarentena no tiene contra qué trabajar salvo
-mocks. Por eso el Estado de arriba está en `EN PAUSA`: en cuanto el endpoint
-esté en la rama, Doc lo pasa a `TRABAJAR`.
+```json
+{
+  "emailId": "cmrzlm1lc000hju1mu8rhe83u",
+  "category": "PROJECT_MANAGEMENT",
+  "isActionable": true,
+  "aiConfidence": 0.92,
+  "tasks": [
+    {
+      "title": "Confirmar respuesta del área contable sobre el Tipo de Cambio",
+      "description": "…",
+      "priority": "URGENT",
+      "tags": ["TC", "impuestos", "notaría"],
+      "dueDate": null
+    }
+  ]
+}
+```
 
-Las tres tareas del flujo están anotadas en `TASKS.md`, dentro del Sprint 3.
+Las tareas propuestas **no traen `id`**: todavía no existen. La `priority` ya
+viene pasada por la capa determinista, así que es la que se guardaría de verdad
+— píntala tal cual y no la recalcules.
+
+Si `isActionable` es `false`, `tasks` viene vacío y no se fuerza nada: el modelo
+no vio trabajo ahí. Enseña ese caso en vez de inventar una tarjeta.
+
+### Corrección importante sobre las categorías
+
+En la versión anterior de este archivo te dije que el desplegable saliera de
+`EmailCategory` con los valores `cliente`, `interno`, `proveedor`,
+`administrativo` y `spam`. **Eso era falso** y venía de un enum del Sprint 0 que
+no importaba nadie y que no coincidía con lo que el backend produce. Ya está
+corregido en `packages/shared`. Los valores reales son:
+
+`PROJECT_MANAGEMENT` · `INVOICING` · `MEETING` · `INFORMATIONAL` · `OTHER`
+
+Una categoría fuera de esa lista degrada a `OTHER` en el backend, así que el
+desplegable puede asumir esos cinco y nada más. La misma corrección afecta al
+resto de `EmailClassification`: el `summary` que declaraba no lo produce el
+modelo, y la confianza es una sola por análisis (`aiConfidence`), no una por
+tarea.
+
+### `POST /emails/:id/to-task` — el paso que sí crea
+
+- **201** con las tareas creadas, 404 si el correo no es del usuario, 409 si ya
+  tenía tareas (`"force": true` para insistir).
+
+**Ojo con una cosa**: hoy este endpoint vuelve a llamar al modelo y crea lo que
+él diga; todavía **no acepta las tareas ya editadas por el usuario**. Ese
+segundo paso es mío y está anotado en `TASKS.md`. Hasta que lo tenga, la
+aprobación de la cuarentena no puede respetar las ediciones: coordina con Doc si
+quieres montar la UI completa antes o esperar.
+
+Las tres tareas del flujo están en `TASKS.md`, dentro del Sprint 3.
 
 ---
 

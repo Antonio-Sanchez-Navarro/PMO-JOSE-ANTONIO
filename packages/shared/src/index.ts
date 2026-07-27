@@ -23,12 +23,23 @@ export enum TaskSource {
   MANUAL = "MANUAL",
 }
 
+/**
+ * Vocabulario de categorías que devuelve el análisis de correo.
+ *
+ * Son exactamente los valores del `enum` del esquema de la herramienta en
+ * `AiService`: si los dos se separan, el modelo devuelve categorías que el
+ * frontend no sabe pintar. Una categoría fuera de la lista degrada a `OTHER`.
+ *
+ * Corregido el 2026-07-27: hasta entonces esto declaraba `cliente`, `interno`,
+ * `proveedor`, `administrativo` y `spam`, que no los emitía nadie — quedaron de
+ * un borrador del Sprint 0 y ningún archivo llegó a importarlos.
+ */
 export enum EmailCategory {
-  CLIENTE = "cliente",
-  INTERNO = "interno",
-  PROVEEDOR = "proveedor",
-  ADMINISTRATIVO = "administrativo",
-  SPAM = "spam",
+  PROJECT_MANAGEMENT = "PROJECT_MANAGEMENT",
+  INVOICING = "INVOICING",
+  MEETING = "MEETING",
+  INFORMATIONAL = "INFORMATIONAL",
+  OTHER = "OTHER",
 }
 
 export interface Task {
@@ -46,18 +57,35 @@ export interface Task {
   updatedAt: string;
 }
 
-// Salida estructurada esperada del módulo de IA al clasificar un correo.
+/**
+ * Una tarea propuesta por el análisis. No tiene `id` porque todavía no existe
+ * en la base de datos: es lo que se le enseña a una persona para que lo
+ * apruebe, lo edite o lo descarte.
+ */
+export interface ProposedTask {
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  tags: string[];
+  /** ISO 8601, o `null` si el correo no menciona fecha límite. */
+  dueDate?: string | null;
+}
+
+/**
+ * Lo que devuelve `POST /emails/:id/classify`: el análisis del correo **sin
+ * que se haya escrito nada**. Es el payload de la cuarentena de validación.
+ *
+ * Corregido el 2026-07-27 para que describa lo que la API devuelve de verdad.
+ * La versión anterior declaraba un `summary` que el modelo nunca ha producido y
+ * una `confidence` por tarea, cuando la confianza es una sola por análisis.
+ */
 export interface EmailClassification {
+  emailId: string;
   category: EmailCategory;
   isActionable: boolean;
-  summary: string;
-  tasks: Array<{
-    title: string;
-    description?: string;
-    priority: TaskPriority;
-    dueDate?: string | null;
-    confidence: number;
-  }>;
+  /** Confianza del análisis completo, entre 0 y 1. */
+  aiConfidence: number;
+  tasks: ProposedTask[];
 }
 
 export const KANBAN_COLUMNS: { status: TaskStatus; label: string }[] = [
