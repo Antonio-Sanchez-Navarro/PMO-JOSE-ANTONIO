@@ -163,16 +163,27 @@ export const KanbanBoard: React.FC = () => {
               .then((response) => {
                 setTasks((currentTasks) => {
                   let updatedTasks = [...currentTasks];
+                  let hasChanged = false;
+
                   for (const col of response.columns) {
-                    const tasksInCol = updatedTasks.filter((t) => col.taskIds.includes(t.id));
-                    updatedTasks = updatedTasks.filter((t) => !col.taskIds.includes(t.id));
-                    
-                    tasksInCol.sort((a, b) => col.taskIds.indexOf(a.id) - col.taskIds.indexOf(b.id));
-                    tasksInCol.forEach((t) => (t.status = col.status));
-                    
-                    updatedTasks.push(...tasksInCol);
+                    const localTasksInCol = updatedTasks.filter((t) => t.status === col.status);
+                    const localIds = localTasksInCol.map(t => t.id).join(',');
+                    const remoteIds = col.taskIds.join(',');
+
+                    // Solo reordenar si el backend y nuestro estado optimista no coinciden.
+                    if (localIds !== remoteIds) {
+                      hasChanged = true;
+                      const tasksInCol = updatedTasks.filter((t) => col.taskIds.includes(t.id));
+                      updatedTasks = updatedTasks.filter((t) => !col.taskIds.includes(t.id));
+                      
+                      tasksInCol.sort((a, b) => col.taskIds.indexOf(a.id) - col.taskIds.indexOf(b.id));
+                      tasksInCol.forEach((t) => (t.status = col.status));
+                      
+                      updatedTasks.push(...tasksInCol);
+                    }
                   }
-                  return updatedTasks;
+                  
+                  return hasChanged ? updatedTasks : currentTasks;
                 });
               })
               .catch((err) =>

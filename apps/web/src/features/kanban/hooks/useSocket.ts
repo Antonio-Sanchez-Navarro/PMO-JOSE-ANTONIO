@@ -33,6 +33,18 @@ export const useSocket = ({
 }: UseSocketProps) => {
   const socketRef = useRef<Socket | null>(null);
 
+  const savedOnTaskCreated = useRef(onTaskCreated);
+  const savedOnTaskUpdated = useRef(onTaskUpdated);
+  const savedOnTaskDeleted = useRef(onTaskDeleted);
+  const savedOnTasksReordered = useRef(onTasksReordered);
+
+  useEffect(() => {
+    savedOnTaskCreated.current = onTaskCreated;
+    savedOnTaskUpdated.current = onTaskUpdated;
+    savedOnTaskDeleted.current = onTaskDeleted;
+    savedOnTasksReordered.current = onTasksReordered;
+  });
+
   useEffect(() => {
     // Vite proxy no proxifica WebSockets por defecto, así que conectamos al host backend.
     // withCredentials asegura que enviemos la cookie pmo_session para que el backend nos asigne nuestra sala.
@@ -48,19 +60,18 @@ export const useSocket = ({
       console.log('🔗 Conectado a WebSocket', socket.id);
     });
 
-    if (onTaskCreated) socket.on(TASK_EVENTS.created, onTaskCreated);
-    if (onTaskUpdated) socket.on(TASK_EVENTS.updated, onTaskUpdated);
-    if (onTaskDeleted) socket.on(TASK_EVENTS.deleted, onTaskDeleted);
-    if (onTasksReordered) socket.on(TASK_EVENTS.reordered, onTasksReordered);
+    socket.on(TASK_EVENTS.created, (data) => savedOnTaskCreated.current?.(data));
+    socket.on(TASK_EVENTS.updated, (data) => savedOnTaskUpdated.current?.(data));
+    socket.on(TASK_EVENTS.deleted, (data) => savedOnTaskDeleted.current?.(data));
+    socket.on(TASK_EVENTS.reordered, (data) => savedOnTasksReordered.current?.(data));
 
     return () => {
-      if (onTaskCreated) socket.off(TASK_EVENTS.created, onTaskCreated);
-      if (onTaskUpdated) socket.off(TASK_EVENTS.updated, onTaskUpdated);
-      if (onTaskDeleted) socket.off(TASK_EVENTS.deleted, onTaskDeleted);
-      if (onTasksReordered) socket.off(TASK_EVENTS.reordered, onTasksReordered);
       socket.disconnect();
+      if (globalSocket === socket) {
+        globalSocket = null;
+      }
     };
-  }, [onTaskCreated, onTaskUpdated, onTaskDeleted, onTasksReordered]);
+  }, []); // <-- Solo montar una vez
 
   return { socket: socketRef.current };
 };
