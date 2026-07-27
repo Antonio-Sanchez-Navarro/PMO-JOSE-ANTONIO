@@ -85,11 +85,18 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
   Para comprobar tipos con el servidor arriba: `npx tsc -p apps/api/tsconfig.spec.json`
   (lleva `noEmit`, no toca `dist`). Si ya pasó, basta con reiniciar `dev:api`.
 
+- **El cron de vencidas vive en Redis, no en el proceso.** `OverdueModule`
+  programa un job repetible de BullMQ (`overdue-sweep`) en vez de usar un
+  `@Cron` de `@nestjs/schedule`: con varias instancias de la API, un cron en
+  proceso correría en todas a la vez. Si hacen falta más tareas programadas,
+  seguir el mismo patrón (`overdue.scheduler.ts` como plantilla).
+
+  El barrido es **de ida**: una tarea que pasa a `OVERDUE` pierde de qué columna
+  venía. Si el usuario aplaza la fecha, saca la tarjeta arrastrándola.
+
 ## Deuda técnica anotada
 
-- **Origen de la tarea**: hoy las tareas creadas a mano llevan la etiqueta
-  `'manual'` en `tags[]`, y el reproceso automático las respeta filtrando por
-  esa etiqueta (`MANUAL_TAG` en `email-classification.service.ts`). Es un apaño
-  para no meter una migración a mitad de sprint. Lo correcto es la columna
-  `Task.source` ('email' | 'whatsapp' | 'manual') que el Sprint 4 ya contempla
-  en "indicador de origen". **Al implementarla, sustituir el filtro por etiqueta.**
+- ~~**Origen de la tarea**: etiqueta `'manual'` en `tags[]` como apaño~~ —
+  **saldada el 2026-07-27**: existe la columna `Task.source`
+  (`EMAIL` | `WHATSAPP` | `MANUAL`) y el reproceso automático filtra por ella.
+  Falta solo pintar el indicador en la tarjeta del tablero (Gemini).

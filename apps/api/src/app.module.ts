@@ -8,6 +8,7 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { GmailModule } from "./modules/gmail/gmail.module";
 import { AiModule } from "./modules/ai/ai.module";
 import { EmailsModule } from "./modules/emails/emails.module";
+import { OverdueModule } from "./modules/overdue/overdue.module";
 import { DeadLetterModule } from "./common/bullmq/dead-letter.module";
 
 // Módulos de dominio (se implementan por sprint — ver TASKS.md):
@@ -32,6 +33,7 @@ import { TasksModule } from "./modules/tasks/tasks.module";
     GmailModule,
     AiModule,
     EmailsModule,
+    OverdueModule,
     DeadLetterModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],

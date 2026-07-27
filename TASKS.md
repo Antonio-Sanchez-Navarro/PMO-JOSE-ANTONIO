@@ -78,13 +78,13 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 **Objetivo:** tablero interactivo con las 5 columnas y CRUD directo.
 
 - [ ] 🔴 CRUD Tasks (`GET/POST/PATCH/DELETE /tasks`) — ✅ `GET` y `PATCH` implementados en `TasksController`; `GET` ordena por `status` (orden del enum) y `position`. Faltan `POST` y `DELETE`
-- [ ] 🔴 Columnas: **Por hacer · En proceso · Pospuestas · Cumplidas · Atrasadas**
+- [x] 🔴 Columnas: **Por hacer · En proceso · Pospuestas · Cumplidas · Atrasadas** — ✅ Las cinco columnas están en `KanbanBoard`
 - [x] 🔴 Drag & drop con `@dnd-kit` + `PATCH /tasks/:id/move` (status+position) — ✅ **Completado**: El frontend ahora consume el endpoint, implementa UI optimista y se reconcilia sin efecto boomerang usando `MoveTaskResponse`.
-- [ ] 🔴 Job cron: marcar `OVERDUE` (dueDate vencido)
-- [ ] 🟡 Modal de creación/edición (React Hook Form + Zod)
+- [x] 🔴 Job cron: marcar `OVERDUE` (dueDate vencido) — ✅ `OverdueModule`: job repetible de BullMQ (cola `overdue-sweep`, patrón en `OVERDUE_CRON`, por defecto cada hora en el minuto 5, más un barrido al arrancar). Mueve a `OVERDUE` las tareas vencidas en `TODO`/`IN_PROGRESS`/`POSTPONED` anexándolas al final de la columna; una transacción por usuario y relectura dentro para no pisar cambios del tablero. 9 pruebas en `overdue.service.spec.ts`
+- [ ] 🟡 Modal de creación/edición (React Hook Form + Zod) — _`TaskModal.tsx` ya existe, pero el `POST /tasks` que necesita no está implementado_
 - [ ] 🟡 Filtros (prioridad, etiqueta, fecha) y búsqueda
 - [ ] 🟡 Realtime: `socket.io` emite `task.*` → UI se actualiza sin recargar
-- [ ] 🟢 Badges de prioridad, indicador de origen (correo/WhatsApp/manual)
+- [ ] 🟢 Badges de prioridad, indicador de origen (correo/WhatsApp/manual) — _la columna `Task.source` ya está en la API; falta pintarla en la tarjeta_
 
 **Entregable:** tablero Kanban funcional, con creación directa y movimiento por columnas.
 
