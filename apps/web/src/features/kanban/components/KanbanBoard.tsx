@@ -14,7 +14,7 @@ import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus } from '../types';
 import { MOCK_TASKS } from './mockTasks';
-import { fetchTasks, updateTaskStatus } from '../api/tasks.api';
+import { fetchTasks, moveTask } from '../api/tasks.api';
 
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -107,13 +107,39 @@ export const KanbanBoard: React.FC = () => {
           newTasks = arrayMove(newTasks, activeIndex, overIndex);
         }
 
-        const finalTask = newTasks[activeIndex];
+        const finalTask = newTasks.find((t) => t.id === activeId);
         
-        // Si la columna cambió desde que empezamos el drag, hacemos el PATCH
-        if (finalTask && activeTaskOrigStatus && finalTask.status !== activeTaskOrigStatus) {
-          updateTaskStatus(activeId, finalTask.status).catch((err) =>
-            console.error("Error guardando el cambio de estado en BD:", err)
-          );
+        if (finalTask) {
+          const tasksInFinalColumn = newTasks.filter(t => t.status === finalTask.status);
+          const positionInColumn = tasksInFinalColumn.findIndex(t => t.id === activeId);
+
+          const originalTasksInColumn = prev.filter(t => t.status === (activeTaskOrigStatus || finalTask.status));
+          const origPositionInColumn = originalTasksInColumn.findIndex(t => t.id === activeId);
+
+          const hasChangedColumn = activeTaskOrigStatus && finalTask.status !== activeTaskOrigStatus;
+          const hasChangedPosition = positionInColumn !== origPositionInColumn;
+          
+          if (hasChangedColumn || hasChangedPosition) {
+            moveTask(activeId, finalTask.status, positionInColumn)
+              .then((response) => {
+                setTasks((currentTasks) => {
+                  let updatedTasks = [...currentTasks];
+                  for (const col of response.columns) {
+                    const tasksInCol = updatedTasks.filter((t) => col.taskIds.includes(t.id));
+                    updatedTasks = updatedTasks.filter((t) => !col.taskIds.includes(t.id));
+                    
+                    tasksInCol.sort((a, b) => col.taskIds.indexOf(a.id) - col.taskIds.indexOf(b.id));
+                    tasksInCol.forEach((t) => (t.status = col.status));
+                    
+                    updatedTasks.push(...tasksInCol);
+                  }
+                  return updatedTasks;
+                });
+              })
+              .catch((err) =>
+                console.error("Error guardando el movimiento de tarea en BD:", err)
+              );
+          }
         }
         
         return newTasks;

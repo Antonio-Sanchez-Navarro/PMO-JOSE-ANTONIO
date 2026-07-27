@@ -28,3 +28,27 @@ export const updateTaskStatus = async (id: string, newStatus: TaskStatus): Promi
   }
   return response.json();
 };
+
+export interface MoveTaskResponse {
+  task: Task;
+  columns: {
+    status: TaskStatus;
+    taskIds: string[];
+  }[];
+}
+
+export const moveTask = async (id: string, status: TaskStatus, position: number): Promise<MoveTaskResponse> => {
+  const response = await fetch(`${API_BASE}/${id}/move`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ status, position }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to move task');
+  }
+
+  const json = await response.json();
+  return json;
+};
