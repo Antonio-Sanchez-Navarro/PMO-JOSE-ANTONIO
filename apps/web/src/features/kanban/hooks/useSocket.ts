@@ -14,7 +14,21 @@ export interface ColumnOrder {
   taskIds: string[];
 }
 
+/**
+ * Un único socket por pestaña, compartido por todos los que usen el hook.
+ *
+ * No es una optimización: es lo que hace que funcione la supresión del eco. El
+ * cliente manda su `socket.id` en `X-Socket-Id` y el backend emite con
+ * `.except(ese id)`. Si la pestaña tiene dos sockets vivos, el excluido es uno
+ * y **el otro recibe el cambio y lo aplica**: vuelve el efecto boomerang. Pasaba
+ * de verdad —dos sockets en la misma sala, comprobado en el log del backend—
+ * porque en desarrollo React monta el componente dos veces (StrictMode) y el
+ * HMR vuelve a ejecutar el efecto, y cada pasada abría una conexión nueva.
+ */
 let globalSocket: Socket | null = null;
+
+/** Cuántos componentes están usando el socket compartido. */
+let subscribers = 0;
 
 export const getSocketId = () => globalSocket?.id;
 
@@ -46,30 +60,56 @@ export const useSocket = ({
   });
 
   useEffect(() => {
-    // Vite proxy no proxifica WebSockets por defecto, así que conectamos al host backend.
-    // withCredentials asegura que enviemos la cookie pmo_session para que el backend nos asigne nuestra sala.
-    const socket = io('http://localhost:3000', {
-      withCredentials: true,
-      transports: ['websocket', 'polling'],
-    });
+    subscribers += 1;
 
+    if (!globalSocket) {
+      // Vite proxy no proxifica WebSockets por defecto, así que conectamos al host backend.
+      // withCredentials asegura que enviemos la cookie pmo_session para que el backend nos asigne nuestra sala.
+      globalSocket = io('http://localhost:3000', {
+        withCredentials: true,
+        transports: ['websocket', 'polling'],
+      });
+
+      globalSocket.on('connect', () => {
+        console.log('🔗 Conectado a WebSocket', globalSocket?.id);
+      });
+    }
+
+    const socket = globalSocket;
     socketRef.current = socket;
-    globalSocket = socket;
 
-    socket.on('connect', () => {
-      console.log('🔗 Conectado a WebSocket', socket.id);
-    });
+    // Con referencia a la función, para poder quitar **solo** estos manejadores
+    // al desmontar: un `socket.off(evento)` a secas dejaría sordo al resto de
+    // componentes que compartan el socket.
+    const onCreated = (data: Task) => savedOnTaskCreated.current?.(data);
+    const onUpdated = (data: Task) => savedOnTaskUpdated.current?.(data);
+    const onDeleted = (data: { id: string; status: TaskStatus; userId: string }) =>
+      savedOnTaskDeleted.current?.(data);
+    const onReordered = (data: { userId: string; columns: ColumnOrder[] }) =>
+      savedOnTasksReordered.current?.(data);
 
-    socket.on(TASK_EVENTS.created, (data) => savedOnTaskCreated.current?.(data));
-    socket.on(TASK_EVENTS.updated, (data) => savedOnTaskUpdated.current?.(data));
-    socket.on(TASK_EVENTS.deleted, (data) => savedOnTaskDeleted.current?.(data));
-    socket.on(TASK_EVENTS.reordered, (data) => savedOnTasksReordered.current?.(data));
+    socket.on(TASK_EVENTS.created, onCreated);
+    socket.on(TASK_EVENTS.updated, onUpdated);
+    socket.on(TASK_EVENTS.deleted, onDeleted);
+    socket.on(TASK_EVENTS.reordered, onReordered);
 
     return () => {
-      socket.disconnect();
-      if (globalSocket === socket) {
-        globalSocket = null;
-      }
+      socket.off(TASK_EVENTS.created, onCreated);
+      socket.off(TASK_EVENTS.updated, onUpdated);
+      socket.off(TASK_EVENTS.deleted, onDeleted);
+      socket.off(TASK_EVENTS.reordered, onReordered);
+
+      subscribers -= 1;
+
+      // El cierre se aplaza un tick: en desarrollo React desmonta y vuelve a
+      // montar de inmediato, y desconectar en medio abriría una conexión nueva
+      // en el siguiente montaje —justo lo que provocaba dos sockets vivos—.
+      setTimeout(() => {
+        if (subscribers === 0 && globalSocket === socket) {
+          socket.disconnect();
+          globalSocket = null;
+        }
+      }, 0);
     };
   }, []); // <-- Solo montar una vez
 

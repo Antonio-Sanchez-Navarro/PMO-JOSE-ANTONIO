@@ -180,6 +180,14 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // pestaña *suya*: no cruza salas, porque el `except` se aplica sobre la
       // del usuario.
       const except = this.validSocketId(exceptSocketId);
+
+      // Deja rastro de a quién se excluyó. Sin esto, un `X-Socket-Id` que no
+      // llega es indistinguible de uno que llega mal: en ambos casos el cliente
+      // recibe su propio eco y el síntoma es el mismo (efecto boomerang).
+      this.logger.debug(
+        `${event} → sala ${userId}` + (except ? ` excepto ${except}` : ' (sin exclusión: falta X-Socket-Id)'),
+      );
+
       if (except) {
         room?.except(except).emit(event, payload);
       } else {
