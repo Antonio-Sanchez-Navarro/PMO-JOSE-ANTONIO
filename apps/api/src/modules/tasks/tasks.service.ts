@@ -5,6 +5,7 @@ import { adjustPriority } from '../ai/priority.rules';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { TasksGateway } from './tasks.gateway';
 import { MoveTaskDto } from './dto/move-task.dto';
 
 /**
@@ -26,7 +27,10 @@ const SWEEPABLE: TaskStatus[] = [TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskSt
 export class TasksService {
   private readonly logger = new Logger(TasksService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gateway: TasksGateway,
+  ) {}
 
   /**
    * Crea una tarea desde el tablero y la deja al final de su columna.
@@ -63,7 +67,7 @@ export class TasksService {
       this.logger.log(`Prioridad al crear "${dto.title}": ${decision.reason}`);
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const task = await this.prisma.$transaction(async (tx) => {
       const last = await tx.task.findFirst({
         where: { userId, status },
         orderBy: { position: 'desc' },
@@ -84,29 +88,46 @@ export class TasksService {
         },
       });
     });
+
+    // Fuera de la transacción: solo se anuncia lo que ya está confirmado en la
+    // base de datos. Emitir dentro haría que un rollback dejara a los clientes
+    // con una tarjeta que no existe.
+    this.gateway.emitTaskCreated(task);
+
+    return task;
   }
 
   /**
    * Borra una tarea del usuario.
    *
-   * `deleteMany` filtrando por `userId` en vez de leer y luego borrar: resuelve
-   * la propiedad y el borrado en una sola consulta, sin ventana entre ambos.
+   * La lectura de propiedad va dentro de la transacción, así que no hay ventana
+   * entre comprobar y borrar. Se lee además de qué columna era: el evento
+   * `task.deleted` la lleva para que el tablero sepa dónde quitar la tarjeta sin
+   * recorrer las cinco.
    *
    * La columna queda con un hueco en `position` y no se renumera, igual que tras
    * el barrido de vencidas: el orden no cambia y `PATCH /tasks/:id/move`
    * reconstruye los índices al primer arrastre.
    */
   async remove(userId: string, id: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    const deleted = await this.prisma.$transaction(async (tx) => {
+      const task = await tx.task.findFirst({
+        where: { id, userId },
+        select: { id: true, status: true, userId: true },
+      });
+      if (!task) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
+
       // Los registros de tiempo apuntan a la tarea sin `onDelete: Cascade`, así
       // que borrarla con fichajes asociados reventaría por clave foránea. Hoy no
       // los crea nadie (Sprint 5), pero el borrado tiene que seguir funcionando
       // cuando existan.
       await tx.timeEntry.deleteMany({ where: { taskId: id, userId } });
+      await tx.task.delete({ where: { id } });
 
-      const { count } = await tx.task.deleteMany({ where: { id, userId } });
-      if (count === 0) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
+      return task;
     });
+
+    this.gateway.emitTaskDeleted(deleted);
   }
 
   async findAll(userId: string, params: QueryTasksDto) {

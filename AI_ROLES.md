@@ -100,6 +100,26 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
   elegido (si la fecha ya pasó, nace en `OVERDUE`). Píntala con lo que devuelve
   el servidor, no con lo que enviaste.
 
+- **`TasksGateway` (socket.io)** — encargo del usuario el 2026-07-27, mismo
+  motivo: emite desde `TasksService`. El gateway (`tasks.gateway.ts`) es de
+  Claude; el cliente de sockets del tablero es de Gemini.
+
+  Contrato actual, en `ws://localhost:3000` (namespace por defecto):
+
+  | Evento | Payload |
+  |---|---|
+  | `task.created` | la tarea completa, tal cual la devuelve `POST /tasks` |
+  | `task.deleted` | `{ id, status, userId }` — `status` es la columna de la que hay que quitar la tarjeta |
+
+  **Aún no hay eventos para `PATCH /tasks/:id` ni para el movimiento**: el drag
+  and drop sigue reconciliándose con la respuesta de `PATCH /tasks/:id/move`.
+
+  ⚠️ **El broadcast es global y sin autenticar.** Todo cliente conectado recibe
+  los eventos de todos los usuarios, y el `AuthGuard` no cubre el handshake del
+  socket. Vale para desarrollo con un usuario; antes de exponerlo hacen falta
+  salas por usuario y autenticación del handshake. Por eso el payload lleva
+  `userId`: mientras tanto, **el frontend debe descartar lo que no sea suyo**.
+
 - **El cron de vencidas vive en Redis, no en el proceso.** `OverdueModule`
   programa un job repetible de BullMQ (`overdue-sweep`) en vez de usar un
   `@Cron` de `@nestjs/schedule`: con varias instancias de la API, un cron en
