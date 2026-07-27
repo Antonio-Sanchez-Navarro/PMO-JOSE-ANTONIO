@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, Task, TaskPriority, TaskSource } from '@prisma/client';
 import { AiService } from './ai.service';
+import { adjustPriority } from './priority.rules';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 export interface ClassifyOptions {
@@ -63,7 +64,9 @@ export class EmailClassificationService {
           sourceEmailId: email.id,
           title: task.title,
           description: task.description,
-          priority: task.priority,
+          // La prioridad del modelo pasa por la capa determinista antes de
+          // persistirse: la fecha puede subirla, nunca bajarla.
+          priority: this.resolvePriority(task, analysis.aiConfidence, emailId),
           tags: task.tags,
           dueDate: task.dueDate,
           aiConfidence: analysis.aiConfidence,
@@ -120,5 +123,31 @@ export class EmailClassificationService {
     });
 
     return { isActionable, category: analysis.category, tasks, usedFallback };
+  }
+
+  /**
+   * Aplica la capa determinista y deja constancia del ajuste.
+   *
+   * El log es, de momento, el único rastro de por qué una tarea acabó en
+   * `URGENT`: la columna para persistir el motivo llega con el panel de
+   * auditoría del Sprint 3, que sigue pendiente.
+   */
+  private resolvePriority(
+    task: { title: string; priority: TaskPriority; dueDate: Date | null },
+    aiConfidence: number,
+    emailId: string,
+  ): TaskPriority {
+    const decision = adjustPriority(
+      { priority: task.priority, dueDate: task.dueDate, aiConfidence },
+      // `new Date()` explícito: la función es pura y el instante entra por
+      // parámetro para que las pruebas no dependan del reloj.
+      new Date(),
+    );
+
+    if (decision.adjusted) {
+      this.logger.log(`Prioridad ajustada en "${task.title}" (email ${emailId}): ${decision.reason}`);
+    }
+
+    return decision.priority;
   }
 }

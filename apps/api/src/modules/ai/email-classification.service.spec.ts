@@ -204,4 +204,45 @@ describe('EmailClassificationService', () => {
     // tareas de la IA y el reproceso dejaría de reemplazarlas.
     expect(creada.source).toBe(TaskSource.EMAIL);
   });
+
+  // El detalle de las reglas se prueba en `priority.rules.spec.ts`; aquí solo
+  // se comprueba que lo que se persiste pasa por ellas.
+  describe('capa determinista de prioridad', () => {
+    const conFecha = (priority: string, dueDate: Date | null) => ({
+      ...analisisConTarea,
+      tasks: [{ ...analisisConTarea.tasks[0], priority, dueDate }],
+    });
+
+    const priorityPersistida = () => tx.task.create.mock.calls[0][0].data.priority;
+
+    const clasificar = () =>
+      service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: true,
+        forceActionable: false,
+      });
+
+    it('persiste la prioridad escalada, no la del modelo', async () => {
+      ai.analyzeEmail.mockResolvedValue(conFecha('LOW', new Date(Date.now() + 3 * 3_600_000)));
+
+      await clasificar();
+
+      expect(priorityPersistida()).toBe('URGENT');
+    });
+
+    it('deja intacta la prioridad del modelo si no hay fecha', async () => {
+      ai.analyzeEmail.mockResolvedValue(conFecha('LOW', null));
+
+      await clasificar();
+
+      expect(priorityPersistida()).toBe('LOW');
+    });
+
+    it('no rebaja lo que dijo el modelo', async () => {
+      ai.analyzeEmail.mockResolvedValue(conFecha('URGENT', new Date(Date.now() + 400 * 3_600_000)));
+
+      await clasificar();
+
+      expect(priorityPersistida()).toBe('URGENT');
+    });
+  });
 });
