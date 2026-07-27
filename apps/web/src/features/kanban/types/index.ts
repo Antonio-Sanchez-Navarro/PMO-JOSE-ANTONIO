@@ -1,5 +1,6 @@
-export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'POSTPONED' | 'DONE' | 'OVERDUE';
-export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
+import { TaskStatus, TaskPriority, TaskSource } from '@pmo/shared';
+
+export { TaskStatus, TaskPriority, TaskSource };
 
 export interface Task {
   id: string;
