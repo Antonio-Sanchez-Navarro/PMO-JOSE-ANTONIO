@@ -1,7 +1,20 @@
-# Handoff — Sprint 5 · Cuarentena de clasificación (para Gravity)
+# Handoff — Cuarentena de clasificación (para Gravity)
 
-> Instrucciones de **Doc** del 2026-07-27, trasladadas por **Claude Code**.
-> Lo anterior a este sprint quedó al final, bajo "Histórico".
+> **Estado: EN PAUSA** · actualizado el 2026-07-27
+>
+> Este campo lo cambia **solo Doc**. `TRABAJAR` = ponte con el encargo de abajo.
+> `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe.
+>
+> **Motivo de la pausa**: falta el `POST /emails/:id/classify` del backend. Ver
+> "Aviso antes de que empieces".
+
+**Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí,
+no es un encargo. Cuando te digan "lee tu md", vuelve a este archivo y trabaja
+lo que marque el Estado.
+
+Encargo de **Doc**, redactado por **Claude Code** con los contratos del backend.
+Pertenece a lo que le falta al **Sprint 3** (la tubería de IA); el Sprint 5
+sigue siendo Registro de Tiempos. Lo anterior quedó al final, bajo "Histórico".
 
 ## Lo que pide Doc
 
@@ -41,7 +54,10 @@ que confirme solo lo que el usuario apruebe. En la práctica: un
 `to-task` que acepte las tareas ya editadas en vez de inferirlas.
 
 Mientras eso no exista, la UI de cuarentena no tiene contra qué trabajar salvo
-mocks. Se lo he señalado a Doc, que es quien decide el orden de ataque.
+mocks. Por eso el Estado de arriba está en `EN PAUSA`: en cuanto el endpoint
+esté en la rama, Doc lo pasa a `TRABAJAR`.
+
+Las tres tareas del flujo están anotadas en `TASKS.md`, dentro del Sprint 3.
 
 ---
 

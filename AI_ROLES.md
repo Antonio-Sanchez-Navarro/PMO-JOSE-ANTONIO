@@ -18,6 +18,24 @@ Reglas fijadas por el usuario el 2026-07-27.
 que es quien reparte el trabajo. A Doc no se le mandan fragmentos para que los
 refactorice: el código lo escriben Gravity y Claude Code.
 
+### Canal único con Gravity — `HANDOFF.md`
+
+Regla fijada por el usuario el 2026-07-27, para no repartir el trabajo por
+canales distintos:
+
+- **Todas las instrucciones para Gravity van escritas en `HANDOFF.md`.** Ese
+  archivo es su única fuente. Nada de encargos por chat, por captura ni de
+  palabra: si no está en el `.md`, no existe.
+- **A Gravity solo se le dice una cosa: «lee tu md».** Ni el encargo ni los
+  matices se repiten fuera del archivo.
+- **Doc marca el arranque y el alto.** La cabecera de `HANDOFF.md` lleva un
+  campo **Estado** que solo Doc cambia: `TRABAJAR` cuando Gravity debe ponerse,
+  `EN PAUSA` cuando toca esperar porque el trabajo depende de otra pieza. Doc
+  decide según lo que el equipo tenga entre manos.
+- **Quien escribe el encargo en el archivo es quien tiene el detalle técnico**
+  (normalmente Claude Code, con los contratos del backend ya resueltos), pero el
+  estado lo pone Doc.
+
 ---
 
 ## Dominio de Claude Code — backend profundo

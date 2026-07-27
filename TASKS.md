@@ -61,12 +61,20 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 3 — Análisis con IA y Generación de Tareas (Agent/Claude)
 **Objetivo:** procesar correos nuevos con el SDK de Anthropic (modelo de `CLAUDE_MODEL_CLASSIFY`, hoy `claude-sonnet-5`) para convertirlos en acciones.
 
+> **Reetiquetado el 2026-07-27.** Lo que Doc abrió como «Sprint 5 · Pipeline de
+> IA» es en realidad lo que le falta a **este** sprint: la validación humana
+> sobre una tubería que ya está construida. El Sprint 5 **sigue siendo Registro
+> de Tiempos** y no se aparca. Decisión del usuario.
+
 - [x] 🔴 Módulo AI: `@anthropic-ai/sdk`, prompts y JSON Schemas (Zod o raw JSON) — ✅ `AiService` con salida estructurada vía tool use y `strict: true` (esquema con `additionalProperties: false`); el modelo se lee de `CLAUDE_MODEL_CLASSIFY`
 - [x] 🔴 Worker `classify-email`: Lee de la DB, envía a Claude y clasifica `isActionable` — ✅ `AiProcessor`; lo alimenta `GmailService.persistEmails`, que encola tras cada upsert
 - [x] 🔴 Generación de Tareas: crear entidades `Task` (con `priority`, `tags`, etc.) si es accionable — ✅ `prisma.task.createMany` dentro de una transacción junto al `update` del `Email`. Extrae también `dueDate`
 - [x] 🟡 Crear `Task` desde correo de forma idempotente (sin duplicar) — ✅ Guard por `Email.processedAt` + transacción atómica
 - [x] 🟡 Capa determinista de ajuste de prioridad (heurísticas + `aiConfidence`) — ✅ `priority.rules.ts`: función pura que ajusta **solo por fecha de vencimiento** (<24 h ⇒ `URGENT`, <72 h ⇒ `HIGH`) y **nunca baja** lo que dijo el modelo. Una tarea ya vencida cuenta como <24 h. Se aplica en `EmailClassificationService` antes de persistir y cada ajuste se registra en el log con su motivo. 15 pruebas en `priority.rules.spec.ts` + 3 de integración. _Con `aiConfidence < 0.5` se escala igual porque el único disparador es la fecha, que es un dato del calendario y no una interpretación del modelo; el umbral queda explícito por si se añaden otras señales_
 - [x] 🟡 Endpoint manual `POST /emails/:id/to-task` — ✅ `EmailsModule`: 201 con las tareas creadas, 404 si el correo no es del usuario, 409 si ya tenía tareas (`"force": true` para insistir). Con `title` es manual puro (sin coste de IA); sin él, la IA analiza forzando `isActionable`. Comparte `EmailClassificationService` con el worker
+- [ ] 🔴 `POST /emails/:id/classify`: devolver la `EmailClassification` **sin persistir** (Claude Code) — _requisito del flujo human in the loop. Hoy no existe el momento intermedio: `EmailsService.convertToTask` clasifica y escribe en la misma transacción, así que cuando el frontend recibe la respuesta las tareas ya están en la base de datos y no hay nada que aprobar ni descartar_
+- [ ] 🔴 Cuarentena de clasificación: modal de validación humana antes de crear las tareas (Gravity) — _revisar, editar el título, cambiar la categoría y aprobar o descartar cada subtarea propuesta. Encargo detallado en `HANDOFF.md`_
+- [ ] 🟡 `POST /emails/:id/to-task` que acepte las tareas **ya editadas** por el usuario en vez de inferirlas (Claude Code) — _segundo paso del mismo flujo_
 - [ ] 🟢 Panel de auditoría: ver por qué se asignó una prioridad — _no existe en el frontend_
 - [x] 🟢 Tests de extracción con correos de ejemplo (fixtures) — ✅ Jest configurado (`jest.config.js` + `tsconfig.spec.json`) y 39 pruebas en 3 suites: `ai.service.spec.ts`, `email-classification.service.spec.ts`, `emails.service.spec.ts`. Fixtures en `modules/ai/__fixtures__/`, con capturas reales de las salidas corruptas del modelo como regresión. Sin DB, Redis ni llamadas a Anthropic; corren en ~4 s y ya van en CI
 
