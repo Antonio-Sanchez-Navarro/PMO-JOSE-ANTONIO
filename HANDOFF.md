@@ -1,81 +1,86 @@
-# Handoff Document - Sprint 2 (Frontend)
+# Handoff — Sprint 5 · Cuarentena de clasificación (para Gravity)
 
-¡Hola Claude! Aquí Gemini (desde la terminal de Backend). He preparado la infraestructura en NestJS para la bandeja de entrada (Inbox). Tu misión ahora es consumir este endpoint desde el Frontend (React + Vite) y construir la interfaz gráfica de la bandeja de entrada.
+> Instrucciones de **Doc** del 2026-07-27, trasladadas por **Claude Code**.
+> Lo anterior a este sprint quedó al final, bajo "Histórico".
 
-## Endpoints Disponibles
+## Lo que pide Doc
 
-### 1. `GET /auth/me`
-Ya está implementado desde el Sprint 1. Te permite verificar la sesión activa del usuario.
-- **Autenticación**: Requiere la cookie `pmo_session` (gestionada automáticamente por el navegador).
-- **Respuesta Exitosa (200 OK)**:
-  ```json
-  {
-    "id": "cuid...",
-    "email": "usuario@gmail.com",
-    "name": "Nombre Usuario",
-    "role": "owner",
-    "hasGoogleTokens": true
-  }
-  ```
+**Componente de cuarentena (UI).** Un modal o drawer de validación.
 
-> ⚠️ **Corrección**: una versión previa de este documento hablaba de una cookie
-> `session_id`. Esa implementación fue reemplazada al consolidar el Sprint 1.
-> El esquema vigente son **dos** cookies httpOnly con `path: "/"`:
->
-> | Cookie | Contenido | Vigencia |
-> |---|---|---|
-> | `pmo_session` | JWT de acceso (`typ: "access"`) | 15 min |
-> | `pmo_refresh` | JWT de refresco (`typ: "refresh"`) | 30 días |
->
-> Cuando el acceso expira, la API responde 401 y el frontend renueva con
-> `POST /auth/refresh`; `POST /auth/logout` borra ambas. El claim `typ` impide
-> que un refresh se use como token de acceso.
+- **Flujo**: cuando se reciba el JSON de la IA, el componente se abre
+  automáticamente para que el usuario actúe como *human in the loop*.
+- **Interacción**: revisar, editar el título, cambiar la categoría en un
+  desplegable y aprobar o eliminar las subtareas propuestas antes de
+  confirmarlas y lanzarlas a la base de datos y al tablero.
 
-### 2. `GET /api/gmail/inbox`
-Nuevo endpoint del Sprint 2 para obtener los correos de la bandeja de entrada.
-- **URL Base Sugerida en Dev**: `http://localhost:3000/gmail/inbox` (Asegúrate de prefijarlo o usar el proxy configurado en Vite).
-- **Query Params (Opcional)**: `?maxResults=20` (por defecto trae 20 correos).
-- **Autenticación**: Requiere la cookie de sesión `pmo_session` (enviar peticiones con `credentials: 'include'`).
-- **Contrato interno**: el `AuthGuard` deja el usuario en `req.user` como
-  `{ userId, email }` — usa `user.userId`, **no** `user.id` (ver `auth.types.ts`).
-- **Esquema de Respuesta JSON (200 OK)**:
-  Devuelve un array de objetos tipo `EmailSnippet`:
+## Contratos que ya existen
 
-  ```typescript
-  [
-    {
-      "id": "18f0a...",
-      "threadId": "18f0a...",
-      "snippet": "Hola, te escribo para confirmar la reunión del viernes...",
-      "from": "Juan Perez <juan@example.com>",
-      "subject": "Reunión de Proyecto",
-      "date": "Fri, 24 Jul 2026 15:30:00 -0500"
-    },
-    // ... más correos
-  ]
-  ```
+- **Forma del JSON**: `EmailClassification` en `packages/shared/src/index.ts:50`
+  — `{ category, isActionable, summary, tasks[] }`, y cada tarea lleva
+  `{ title, description?, priority, dueDate?, confidence }`.
+- **Desplegable de categoría**: `EmailCategory` (`packages/shared/src/index.ts:26`)
+  — `cliente`, `interno`, `proveedor`, `administrativo`, `spam`. Ojo: los valores
+  van en minúscula, no como el nombre del miembro del enum.
+- **Endpoint actual**: `POST /emails/:id/to-task` → 201 con las tareas creadas,
+  404 si el correo no es del usuario, 409 si ya tenía tareas (`"force": true`
+  para insistir).
 
-## Tu Misión (Terminal Claude)
-1. **Verificar Sesión**: Utiliza el endpoint `/auth/me` para determinar si el usuario está logueado y guárdalo en tu estado global o hook (e.g., `useSession`).
-2. **Pantalla de Inbox**: Crea la vista principal (e.g. `apps/web/src/pages/Inbox.tsx`) que haga fetch a `/api/gmail/inbox` al montar el componente (con React Query o `useEffect`).
-3. **UI/UX**: Renderiza la lista de correos usando TailwindCSS, basándote en la interfaz de un cliente de correo moderno (remitente, asunto, snippet truncado y fecha formateada de forma legible).
+## Aviso antes de que empieces
 
-> **Nota**: El backend ya se encarga de renovar los tokens con Google de manera silenciosa si han expirado al llamar a este endpoint. ¡Solo tienes que consumir los datos!
+**Hoy no hay nada que poner en cuarentena.** Tanto el worker como
+`POST /emails/:id/to-task` clasifican y **persisten las tareas en la misma
+transacción** (`EmailsService.convertToTask`, `apps/api/src/modules/emails/emails.service.ts:31`).
+Cuando el frontend recibe la respuesta, las tareas ya están escritas en la base
+de datos: no existe el momento intermedio en el que un humano pueda aprobarlas o
+descartarlas.
+
+Para que el flujo que describe Doc sea posible falta antes una pieza de backend
+—mía— que devuelva la clasificación **sin escribir nada**, más un segundo paso
+que confirme solo lo que el usuario apruebe. En la práctica: un
+`POST /emails/:id/classify` que lea y devuelva `EmailClassification`, y un
+`to-task` que acepte las tareas ya editadas en vez de inferirlas.
+
+Mientras eso no exista, la UI de cuarentena no tiene contra qué trabajar salvo
+mocks. Se lo he señalado a Doc, que es quien decide el orden de ataque.
 
 ---
 
-## Estado tras la iteración de Frontend (terminal Claude)
+# Histórico
 
-- **Frontend entregado**: `apps/web/src/features/inbox/` — `InboxPage` + hook
-  `useInbox`, con agrupación por `threadId` (hilos desplegables) y estados de
-  carga / error / vacío. Verificado en el navegador con correos reales.
-- **Refresco de tokens centralizado**: la lógica vive solo en
-  `AuthService.getAuthorizedClient(userId)`. `GmailService` la consume; ya no
-  duplica el descifrado ni el listener `tokens`. Si necesitas llamar a otra API
-  de Google, usa ese método en lugar de construir un `OAuth2Client` propio.
-- **Nota de tipos**: `googleapis-common` ancla su propia copia de
-  `google-auth-library`, así que pasar nuestro `OAuth2Client` a `google.gmail()`
-  exige un cast acotado. Está documentado en `gmail.service.ts`.
-- **Pendiente para agrupar por etiqueta**: `GET /gmail/inbox` todavía no devuelve
-  `labels`. En cuanto los incluyas en `EmailSnippet`, el frontend puede agrupar
-  por etiqueta además de por hilo.
+## Sprint 2 — Inbox (entregado)
+
+Endpoints que se consumieron y siguen vigentes:
+
+### `GET /auth/me`
+- **Autenticación**: cookie `pmo_session` (la gestiona el navegador).
+- **Respuesta (200)**: `{ id, email, name, role, hasGoogleTokens }`.
+
+Esquema de sesión vigente: **dos** cookies httpOnly con `path: "/"`.
+
+| Cookie | Contenido | Vigencia |
+|---|---|---|
+| `pmo_session` | JWT de acceso (`typ: "access"`) | 15 min |
+| `pmo_refresh` | JWT de refresco (`typ: "refresh"`) | 30 días |
+
+Cuando el acceso expira la API responde 401 y el frontend renueva con
+`POST /auth/refresh`; `POST /auth/logout` borra ambas. El claim `typ` impide que
+un refresh se use como token de acceso.
+
+### `GET /gmail/inbox`
+- **Query**: `?maxResults=20` (por defecto 20).
+- **Autenticación**: cookie `pmo_session` (peticiones con `credentials: 'include'`).
+- **Contrato interno**: el `AuthGuard` deja el usuario en `req.user` como
+  `{ userId, email }` — usa `user.userId`, **no** `user.id` (ver `auth.types.ts`).
+- **Respuesta (200)**: array de `EmailSnippet`
+  (`{ id, threadId, snippet, from, subject, date }`).
+
+Entregado: `apps/web/src/features/inbox/` — `InboxPage` + hook `useInbox`, con
+agrupación por `threadId` y estados de carga / error / vacío.
+
+**Refresco de tokens centralizado**: la lógica vive solo en
+`AuthService.getAuthorizedClient(userId)`. Si hace falta llamar a otra API de
+Google, usar ese método en lugar de construir un `OAuth2Client` propio.
+
+**Nota de tipos**: `googleapis-common` ancla su propia copia de
+`google-auth-library`, así que pasar nuestro `OAuth2Client` a `google.gmail()`
+exige un cast acotado. Está documentado en `gmail.service.ts`.
