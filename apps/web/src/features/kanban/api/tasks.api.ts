@@ -53,23 +53,29 @@ export const moveTask = async (id: string, status: TaskStatus, position: number)
   return json;
 };
 
-// MOCK: Crear Tarea
 export const createTask = async (data: any): Promise<Task> => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({
-        id: `t-${Date.now()}`,
-        ...data,
-      });
-    }, 1000);
+  const response = await fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(data),
   });
+
+  if (!response.ok) {
+    throw new Error('Failed to create task');
+  }
+
+  const json = await response.json();
+  return json.data || json; // Retorna el body o data
 };
 
-// MOCK: Eliminar Tarea
 export const deleteTask = async (id: string): Promise<void> => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve();
-    }, 500);
+  const response = await fetch(`${API_BASE}/${id}`, {
+    method: 'DELETE',
+    credentials: 'include',
   });
+
+  if (!response.ok) {
+    throw new Error('Failed to delete task');
+  }
 };

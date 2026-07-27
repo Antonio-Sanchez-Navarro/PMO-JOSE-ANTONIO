@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Toaster, toast } from 'sonner';
 import {
   DndContext,
   closestCenter,
@@ -166,25 +167,37 @@ export const KanbanBoard: React.FC = () => {
   const handleCreateTask = async (data: any) => {
     try {
       const newTask = await createTask(data);
+      // Actualizamos usando el objeto que retorna el servidor (con reglas de negocio aplicadas)
       setTasks((prev) => [...prev, newTask]);
       setIsModalOpen(false);
+      toast.success('Tarea creada exitosamente');
     } catch (error) {
-      console.error('Error al crear tarea (mock):', error);
+      console.error('Error al crear tarea:', error);
+      toast.error('No se pudo crear la tarea');
     }
   };
 
   const handleDeleteTask = async (id: string) => {
+    const taskToRestore = tasks.find(t => t.id === id);
+    if (!taskToRestore) return;
+
     // UI optimista: removemos localmente primero
     setTasks((prev) => prev.filter(t => t.id !== id));
+    
     try {
       await deleteTask(id);
+      toast.success('Tarea eliminada');
     } catch (error) {
-      console.error('Error al eliminar tarea (mock):', error);
+      console.error('Error al eliminar tarea:', error);
+      toast.error('Error al eliminar la tarea. Revirtiendo...');
+      // Rollback: restauramos la tarea
+      setTasks((prev) => [...prev, taskToRestore]);
     }
   };
 
   return (
     <div className="flex flex-col h-full">
+      <Toaster position="bottom-right" />
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
         <h2 className="text-xl font-bold text-slate-800 dark:text-white">Tablero Kanban</h2>
         <button 
