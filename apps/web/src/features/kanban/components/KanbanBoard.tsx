@@ -155,59 +155,67 @@ export const KanbanBoard: React.FC = () => {
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     
-    if (over) {
-      const activeId = String(active.id);
-      const overId = String(over.id);
-      const isOverColumn = Object.values(TaskStatus).includes(overId as TaskStatus);
+    if (!over) {
+      setActiveTaskOrigStatus(null);
+      return;
+    }
 
-      setTasks((prev) => {
-        const activeIndex = prev.findIndex((t) => t.id === activeId);
-        const overIndex = prev.findIndex((t) => t.id === overId);
-        
-        let newTasks = [...prev];
-        
-        // Reordenamiento visual (si arrastramos dentro de otra tarea, ordenamos)
-        if (activeIndex !== overIndex && overIndex !== -1 && !isOverColumn) {
-          newTasks = arrayMove(newTasks, activeIndex, overIndex);
-        }
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    const isOverColumn = Object.values(TaskStatus).includes(overId as TaskStatus);
 
-        const finalTask = newTasks.find((t) => t.id === activeId);
-        
-        if (finalTask) {
-          const tasksInFinalColumn = newTasks.filter(t => t.status === finalTask.status);
-          const positionInColumn = tasksInFinalColumn.findIndex(t => t.id === activeId);
+    const activeIndex = tasks.findIndex((t) => t.id === activeId);
+    const overIndex = tasks.findIndex((t) => t.id === overId);
+    
+    if (activeIndex === -1) {
+      setActiveTaskOrigStatus(null);
+      return;
+    }
 
-          const originalTasksInColumn = prev.filter(t => t.status === (activeTaskOrigStatus || finalTask.status));
-          const origPositionInColumn = originalTasksInColumn.findIndex(t => t.id === activeId);
+    let newTasks = [...tasks];
+    
+    // Reordenamiento visual (si arrastramos dentro de otra tarea, ordenamos)
+    if (activeIndex !== overIndex && overIndex !== -1 && !isOverColumn) {
+      newTasks = arrayMove(newTasks, activeIndex, overIndex);
+    }
 
-          const hasChangedColumn = activeTaskOrigStatus && finalTask.status !== activeTaskOrigStatus;
-          const hasChangedPosition = positionInColumn !== origPositionInColumn;
-          
-          if (hasChangedColumn || hasChangedPosition) {
-            moveTask(activeId, finalTask.status, positionInColumn)
-              .then((response) => {
-                setTasks((currentTasks) => {
-                  let updatedTasks = [...currentTasks];
-                  for (const col of response.columns) {
-                    const tasksInCol = updatedTasks.filter((t) => col.taskIds.includes(t.id));
-                    updatedTasks = updatedTasks.filter((t) => !col.taskIds.includes(t.id));
-                    
-                    tasksInCol.sort((a, b) => col.taskIds.indexOf(a.id) - col.taskIds.indexOf(b.id));
-                    tasksInCol.forEach((t) => (t.status = col.status));
-                    
-                    updatedTasks.push(...tasksInCol);
-                  }
-                  return updatedTasks;
-                });
-              })
-              .catch((err) =>
-                console.error("Error guardando el movimiento de tarea en BD:", err)
-              );
-          }
-        }
-        
-        return newTasks;
-      });
+    const finalTask = newTasks.find((t) => t.id === activeId);
+    
+    if (finalTask) {
+      const tasksInFinalColumn = newTasks.filter(t => t.status === finalTask.status);
+      const positionInColumn = tasksInFinalColumn.findIndex(t => t.id === activeId);
+
+      const originalTasksInColumn = tasks.filter(t => t.status === (activeTaskOrigStatus || finalTask.status));
+      const origPositionInColumn = originalTasksInColumn.findIndex(t => t.id === activeId);
+
+      const hasChangedColumn = activeTaskOrigStatus && finalTask.status !== activeTaskOrigStatus;
+      const hasChangedPosition = positionInColumn !== origPositionInColumn;
+      
+      setTasks(newTasks);
+
+      if (hasChangedColumn || hasChangedPosition) {
+        moveTask(activeId, finalTask.status, positionInColumn)
+          .then((response) => {
+            setTasks((currentTasks) => {
+              let updatedTasks = [...currentTasks];
+              for (const col of response.columns) {
+                const tasksInCol = updatedTasks.filter((t) => col.taskIds.includes(t.id));
+                updatedTasks = updatedTasks.filter((t) => !col.taskIds.includes(t.id));
+                
+                tasksInCol.sort((a, b) => col.taskIds.indexOf(a.id) - col.taskIds.indexOf(b.id));
+                tasksInCol.forEach((t) => (t.status = col.status));
+                
+                updatedTasks.push(...tasksInCol);
+              }
+              return updatedTasks;
+            });
+          })
+          .catch((err) =>
+            console.error("Error guardando el movimiento de tarea en BD:", err)
+          );
+      }
+    } else {
+      setTasks(newTasks);
     }
     
     setActiveTaskOrigStatus(null);
