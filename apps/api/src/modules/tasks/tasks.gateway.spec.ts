@@ -138,3 +138,73 @@ describe('TasksGateway — handshake y salas', () => {
     expect(client.join).not.toHaveBeenCalled();
   });
 });
+
+describe('TasksGateway — supresión del eco', () => {
+  let gateway: TasksGateway;
+  let emitSala: jest.Mock;
+  let emitExcepto: jest.Mock;
+  let except: jest.Mock;
+  let to: jest.Mock;
+
+  beforeEach(() => {
+    const session = { verifyAccess: jest.fn() };
+    gateway = new TasksGateway(session as unknown as SessionService);
+    emitSala = jest.fn();
+    emitExcepto = jest.fn();
+    except = jest.fn().mockReturnValue({ emit: emitExcepto });
+    to = jest.fn().mockReturnValue({ emit: emitSala, except });
+    gateway.server = { emit: jest.fn(), to } as any;
+  });
+
+  it('excluye al socket que provocó el cambio', () => {
+    gateway.emitTaskUpdated(tarea, 'socket-abc');
+
+    expect(to).toHaveBeenCalledWith('u1');
+    expect(except).toHaveBeenCalledWith('socket-abc');
+    expect(emitExcepto).toHaveBeenCalledWith(TASK_EVENTS.updated, tarea);
+    // La emisión sin exclusión no debe dispararse también.
+    expect(emitSala).not.toHaveBeenCalled();
+  });
+
+  it('excluye también en el reordenamiento, que es donde se nota el rebote', () => {
+    gateway.emitTasksReordered('u1', [{ status: 'TODO' as any, taskIds: ['a'] }], 'socket-abc');
+
+    expect(except).toHaveBeenCalledWith('socket-abc');
+    expect(emitExcepto).toHaveBeenCalledWith(TASK_EVENTS.reordered, {
+      userId: 'u1',
+      columns: [{ status: 'TODO', taskIds: ['a'] }],
+    });
+  });
+
+  it('emite a toda la sala si no hay socket que excluir', () => {
+    gateway.emitTaskUpdated(tarea);
+
+    expect(except).not.toHaveBeenCalled();
+    expect(emitSala).toHaveBeenCalledWith(TASK_EVENTS.updated, tarea);
+  });
+
+  it('trata una cabecera vacía como ausencia de socket', () => {
+    gateway.emitTaskUpdated(tarea, '   ');
+
+    expect(except).not.toHaveBeenCalled();
+    expect(emitSala).toHaveBeenCalled();
+  });
+
+  it('descarta un id absurdamente largo en vez de usarlo de nombre de sala', () => {
+    gateway.emitTaskUpdated(tarea, 'x'.repeat(200));
+
+    expect(except).not.toHaveBeenCalled();
+    expect(emitSala).toHaveBeenCalled();
+  });
+
+  it('el borrado también respeta la exclusión', () => {
+    gateway.emitTaskDeleted(tarea, 'socket-abc');
+
+    expect(except).toHaveBeenCalledWith('socket-abc');
+    expect(emitExcepto).toHaveBeenCalledWith(TASK_EVENTS.deleted, {
+      id: 't1',
+      status: 'TODO',
+      userId: 'u1',
+    });
+  });
+});

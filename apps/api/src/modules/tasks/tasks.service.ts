@@ -46,7 +46,7 @@ export class TasksService {
    * y luego se movería sola, que es más desconcertante que verla aparecer ya
    * donde le toca.
    */
-  async create(userId: string, dto: CreateTaskDto): Promise<Task> {
+  async create(userId: string, dto: CreateTaskDto, socketId?: string): Promise<Task> {
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
     const requested = dto.status ?? TaskStatus.TODO;
     const now = new Date();
@@ -92,7 +92,7 @@ export class TasksService {
     // Fuera de la transacción: solo se anuncia lo que ya está confirmado en la
     // base de datos. Emitir dentro haría que un rollback dejara a los clientes
     // con una tarjeta que no existe.
-    this.gateway.emitTaskCreated(task);
+    this.gateway.emitTaskCreated(task, socketId);
 
     return task;
   }
@@ -109,7 +109,7 @@ export class TasksService {
    * el barrido de vencidas: el orden no cambia y `PATCH /tasks/:id/move`
    * reconstruye los índices al primer arrastre.
    */
-  async remove(userId: string, id: string): Promise<void> {
+  async remove(userId: string, id: string, socketId?: string): Promise<void> {
     const deleted = await this.prisma.$transaction(async (tx) => {
       const task = await tx.task.findFirst({
         where: { id, userId },
@@ -127,7 +127,7 @@ export class TasksService {
       return task;
     });
 
-    this.gateway.emitTaskDeleted(deleted);
+    this.gateway.emitTaskDeleted(deleted, socketId);
   }
 
   async findAll(userId: string, params: QueryTasksDto) {
@@ -189,7 +189,7 @@ export class TasksService {
    * lanzar consultas concurrentes sobre el cliente de una transacción
    * interactiva. Con columnas de decenas de tarjetas el coste es irrelevante.
    */
-  async move(userId: string, id: string, dto: MoveTaskDto) {
+  async move(userId: string, id: string, dto: MoveTaskDto, socketId?: string) {
     const result = await this.prisma.$transaction(async (tx) => {
       const task = await tx.task.findFirst({ where: { id, userId } });
       if (!task) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
@@ -252,13 +252,13 @@ export class TasksService {
     // columna nueva, luego el orden final de las columnas tocadas. Al revés, un
     // cliente que aplicara el reordenamiento antes de conocer el cambio de
     // columna se encontraría un id que aún no tiene en esa lista.
-    this.gateway.emitTaskUpdated(result.task);
-    this.gateway.emitTasksReordered(userId, result.columns);
+    this.gateway.emitTaskUpdated(result.task, socketId);
+    this.gateway.emitTasksReordered(userId, result.columns, socketId);
 
     return result;
   }
 
-  async update(userId: string, id: string, updateTaskDto: UpdateTaskDto) {
+  async update(userId: string, id: string, updateTaskDto: UpdateTaskDto, socketId?: string) {
     const task = await this.prisma.task.findFirst({ where: { id, userId } });
     if (!task) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
 
@@ -267,7 +267,7 @@ export class TasksService {
       data: updateTaskDto,
     });
 
-    this.gateway.emitTaskUpdated(updated);
+    this.gateway.emitTaskUpdated(updated, socketId);
 
     return updated;
   }

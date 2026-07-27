@@ -10,12 +10,14 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Headers,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
+import { SOCKET_ID_HEADER } from './tasks.gateway';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserContext } from '../auth/auth.types';
@@ -43,8 +45,12 @@ export class TasksController {
    * consume directamente la UI optimista del tablero.
    */
   @Post()
-  create(@CurrentUser() user: CurrentUserContext, @Body() createTaskDto: CreateTaskDto) {
-    return this.tasksService.create(user.userId, createTaskDto);
+  create(
+    @CurrentUser() user: CurrentUserContext, 
+    @Body() createTaskDto: CreateTaskDto,
+    @Headers(SOCKET_ID_HEADER) socketId?: string
+  ) {
+    return this.tasksService.create(user.userId, createTaskDto, socketId);
   }
 
   /**
@@ -58,17 +64,19 @@ export class TasksController {
     @CurrentUser() user: CurrentUserContext,
     @Param('id') id: string,
     @Body() moveTaskDto: MoveTaskDto,
+    @Headers(SOCKET_ID_HEADER) socketId?: string
   ) {
-    return this.tasksService.move(user.userId, id, moveTaskDto);
+    return this.tasksService.move(user.userId, id, moveTaskDto, socketId);
   }
 
   @Patch(':id')
   update(
     @CurrentUser() user: CurrentUserContext,
     @Param('id') id: string, 
-    @Body() updateTaskDto: UpdateTaskDto
+    @Body() updateTaskDto: UpdateTaskDto,
+    @Headers(SOCKET_ID_HEADER) socketId?: string
   ) {
-    return this.tasksService.update(user.userId, id, updateTaskDto);
+    return this.tasksService.update(user.userId, id, updateTaskDto, socketId);
   }
 
   /**
@@ -77,7 +85,11 @@ export class TasksController {
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@CurrentUser() user: CurrentUserContext, @Param('id') id: string) {
-    return this.tasksService.remove(user.userId, id);
+  remove(
+    @CurrentUser() user: CurrentUserContext, 
+    @Param('id') id: string,
+    @Headers(SOCKET_ID_HEADER) socketId?: string
+  ) {
+    return this.tasksService.remove(user.userId, id, socketId);
   }
 }

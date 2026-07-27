@@ -76,6 +76,19 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
   Mismo motivo, distinto sitio: los tests transpilan sin type-check
   (`isolatedModules` en `tsconfig.spec.json`) porque jest moría igual.
 
+- **Un solo `dev:api` a la vez.** Dos `nest start --watch` en paralelo escriben
+  los dos en `apps/api/dist` y se pisan: el 2026-07-27 el `dist` del
+  `TasksService` se quedó en una versión anterior a su fuente y el backend
+  parecía ignorar una cabecera que sí estaba implementada. **El síntoma engaña**
+  porque el código fuente es correcto y los tests pasan; solo falla contra el
+  servidor.
+
+  Antes de dudar de tu código, comprueba cuántos watchers hay:
+  `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` y busca `nest.js`.
+  Si hay más de uno: mátalos todos, borra `apps/api/dist`, y arranca uno solo.
+  Recuerda que el hijo sobrevive al padre, así que hay que matar también el
+  proceso que ocupa el puerto 3000.
+
 - **No ejecutes `nest build` con el watcher levantado.** `npm run build` y
   `npm run dev:api` escriben los dos en `apps/api/dist`. Si coinciden, el
   watcher recompila sin errores ("Found 0 errors") y acto seguido su hijo muere
@@ -134,6 +147,24 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
   El `userId` sigue en todos los payloads: ya no es el filtro de seguridad
   —eso lo resuelven las salas— pero le sirve al cliente para descartar restos si
   cambia de sesión sin recargar.
+
+  **Sin eco al que provoca el cambio** (acordado el 2026-07-27, contra el efecto
+  boomerang del drag and drop). El cliente manda su `socket.id` en la cabecera
+  **`X-Socket-Id`** en `POST`, `PATCH`, `PATCH /:id/move` y `DELETE`, y el
+  backend emite con `server.to(userId).except(socketId)`: quien originó el
+  cambio no lo recibe de vuelta —su UI ya lo pintó de forma optimista y
+  reconcilió con la respuesta HTTP— y las demás pestañas del usuario sí.
+
+  Se usa el `socket.id` y no un `clientId` propio porque socket.io ya mete cada
+  socket en una sala con su id, así que `except` sale gratis; un id inventado
+  obligaría a unir cada socket a otra sala en el handshake. Va en cabecera y no
+  en el cuerpo porque es metadato de transporte: vale para los cuatro verbos sin
+  tocar un solo DTO.
+
+  Sin la cabecera, el evento llega a todas las pestañas (es lo que hace el cron,
+  que no tiene socket de origen). Ojo con una cosa: **el `socket.id` cambia en
+  cada reconexión**, así que hay que leerlo en el momento de la petición
+  (`socket.id`), no guardarlo al montar el componente.
 
 - **El cron de vencidas vive en Redis, no en el proceso.** `OverdueModule`
   programa un job repetible de BullMQ (`overdue-sweep`) en vez de usar un

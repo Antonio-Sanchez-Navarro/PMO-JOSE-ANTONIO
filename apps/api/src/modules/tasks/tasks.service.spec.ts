@@ -419,18 +419,17 @@ describe('TasksService — emisión de eventos realtime', () => {
   it('anuncia la tarea creada, con el id que le puso la base de datos', async () => {
     const creada = await service.create(USER, { title: 'Nueva' });
 
-    expect(events.emitTaskCreated).toHaveBeenCalledWith(creada);
+    expect(events.emitTaskCreated).toHaveBeenCalledWith(creada, undefined);
     expect(creada.id).toBe('nueva');
   });
 
   it('anuncia el borrado con la columna en la que estaba la tarjeta', async () => {
     await service.remove(USER, 'tarea-1');
 
-    expect(events.emitTaskDeleted).toHaveBeenCalledWith({
-      id: 'tarea-1',
-      status: 'IN_PROGRESS',
-      userId: USER,
-    });
+    expect(events.emitTaskDeleted).toHaveBeenCalledWith(
+      { id: 'tarea-1', status: 'IN_PROGRESS', userId: USER },
+      undefined,
+    );
   });
 
   it('no anuncia nada si la creación falla', async () => {
@@ -463,9 +462,12 @@ describe('TasksService — task.updated', () => {
 
     const actualizada = await service.update(USER, 'tarea-1', { status: 'DONE' as any });
 
-    expect(events.emitTaskUpdated).toHaveBeenCalledWith(actualizada);
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(actualizada, undefined);
     // La emitida es la de después del update, no la que se leyó para validar.
-    expect(events.emitTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ status: 'DONE' }));
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'DONE' }),
+      undefined,
+    );
   });
 
   it('el payload del PATCH lleva userId, que es el filtro de seguridad del cliente', async () => {
@@ -508,7 +510,7 @@ describe('TasksService — task.updated', () => {
     const result = await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
 
     expect(events.emitTaskUpdated).toHaveBeenCalledTimes(1);
-    expect(events.emitTaskUpdated).toHaveBeenCalledWith(result.task);
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(result.task, undefined);
     expect((events.emitTaskUpdated as jest.Mock).mock.calls[0][0].status).toBe('IN_PROGRESS');
   });
 
@@ -539,9 +541,11 @@ describe('TasksService — task.reordered', () => {
 
     await service.move(USER, 'a', { status: 'TODO' as any, position: 2 });
 
-    expect(events.emitTasksReordered).toHaveBeenCalledWith(USER, [
-      { status: 'TODO', taskIds: ['b', 'c', 'a'] },
-    ]);
+    expect(events.emitTasksReordered).toHaveBeenCalledWith(
+      USER,
+      [{ status: 'TODO', taskIds: ['b', 'c', 'a'] }],
+      undefined,
+    );
   });
 
   it('anuncia las dos columnas cuando la tarjeta cambia de columna', async () => {
@@ -552,7 +556,7 @@ describe('TasksService — task.reordered', () => {
     const result = await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
 
     // El mismo `columns` que devuelve el endpoint: una sola fuente de verdad.
-    expect(events.emitTasksReordered).toHaveBeenCalledWith(USER, result.columns);
+    expect(events.emitTasksReordered).toHaveBeenCalledWith(USER, result.columns, undefined);
     expect(result.columns).toHaveLength(2);
   });
 
@@ -594,5 +598,81 @@ describe('TasksService — task.reordered', () => {
     await service.update(USER, 'a', { status: 'DONE' as any });
 
     expect(events.emitTasksReordered).not.toHaveBeenCalled();
+  });
+});
+
+describe('TasksService — el socket que origina el cambio no recibe su eco', () => {
+  const SOCKET = 'socket-del-que-arrastra';
+
+  it('pasa el socket al arrastrar, en los dos eventos', async () => {
+    const { prisma } = makePrisma([
+      { id: 'a', status: 'TODO', position: 0 },
+      { id: 'b', status: 'TODO', position: 1 },
+    ]);
+    const events = gateway();
+    const service = new TasksService(prisma, events);
+
+    await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 }, SOCKET);
+
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(expect.anything(), SOCKET);
+    expect(events.emitTasksReordered).toHaveBeenCalledWith(USER, expect.anything(), SOCKET);
+  });
+
+  it('sin cabecera, el evento va a toda la sala', async () => {
+    const { prisma } = makePrisma([{ id: 'a', status: 'TODO', position: 0 }]);
+    const events = gateway();
+    const service = new TasksService(prisma, events);
+
+    await service.move(USER, 'a', { status: 'DONE' as any, position: 0 });
+
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(expect.anything(), undefined);
+  });
+
+  it('pasa el socket al crear', async () => {
+    const tx: any = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'n', ...data })),
+      },
+    };
+    const prisma: any = { $transaction: jest.fn((cb: any) => cb(tx)) };
+    const events = gateway();
+    const service = new TasksService(prisma as unknown as PrismaService, events);
+
+    await service.create(USER, { title: 'x' }, SOCKET);
+
+    expect(events.emitTaskCreated).toHaveBeenCalledWith(expect.anything(), SOCKET);
+  });
+
+  it('pasa el socket al borrar', async () => {
+    const tx: any = {
+      timeEntry: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      task: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'a', status: 'TODO', userId: USER }),
+        delete: jest.fn().mockResolvedValue({ id: 'a' }),
+      },
+    };
+    const prisma: any = { $transaction: jest.fn((cb: any) => cb(tx)) };
+    const events = gateway();
+    const service = new TasksService(prisma as unknown as PrismaService, events);
+
+    await service.remove(USER, 'a', SOCKET);
+
+    expect(events.emitTaskDeleted).toHaveBeenCalledWith(expect.anything(), SOCKET);
+  });
+
+  it('pasa el socket al editar', async () => {
+    const prisma: any = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'a', userId: USER }),
+        update: jest.fn().mockResolvedValue({ id: 'a', userId: USER }),
+      },
+    };
+    const events = gateway();
+    const service = new TasksService(prisma as unknown as PrismaService, events);
+
+    await service.update(USER, 'a', { status: 'DONE' as any }, SOCKET);
+
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(expect.anything(), SOCKET);
   });
 });

@@ -26,6 +26,21 @@ export interface ColumnOrder {
 }
 
 /**
+ * Cabecera con la que el cliente se identifica para no recibir el eco de su
+ * propio cambio (ver `TasksGateway.emit`).
+ *
+ * Va en cabecera y no en el cuerpo porque es metadato de transporte: sirve igual
+ * para `POST`, `PATCH`, el movimiento y `DELETE` sin tocar ningún DTO.
+ */
+export const SOCKET_ID_HEADER = 'x-socket-id';
+
+/**
+ * Un `socket.id` de socket.io son 20 caracteres; el tope deja margen de sobra y
+ * evita que una cabecera absurda acabe de nombre de sala.
+ */
+const MAX_SOCKET_ID_LENGTH = 64;
+
+/**
  * Emisión en tiempo real de los cambios del tablero.
  *
  * El handshake se autentica con la misma cookie de sesión que el REST y cada
@@ -86,8 +101,8 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`Cliente desconectado: ${client.id}`);
   }
 
-  emitTaskCreated(task: Task) {
-    this.emit(TASK_EVENTS.created, task);
+  emitTaskCreated(task: Task, exceptSocketId?: string) {
+    this.emit(TASK_EVENTS.created, task, exceptSocketId);
   }
 
   /**
@@ -100,8 +115,8 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * orden: primero la tarjeta con su columna nueva, luego el orden final de las
    * columnas tocadas.
    */
-  emitTaskUpdated(task: Task) {
-    this.emit(TASK_EVENTS.updated, task);
+  emitTaskUpdated(task: Task, exceptSocketId?: string) {
+    this.emit(TASK_EVENTS.updated, task, exceptSocketId);
   }
 
   /**
@@ -117,16 +132,20 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * `userId` viaja al mismo nivel porque aquí no hay fila de la que sacarlo, y
    * el filtro del cliente lo necesita igual.
    */
-  emitTasksReordered(userId: string, columns: ColumnOrder[]) {
-    this.emit(TASK_EVENTS.reordered, { userId, columns });
+  emitTasksReordered(userId: string, columns: ColumnOrder[], exceptSocketId?: string) {
+    this.emit(TASK_EVENTS.reordered, { userId, columns }, exceptSocketId);
   }
 
   /**
    * Se manda la tarea entera y no solo el id: el tablero necesita la columna
    * para saber de cuál quitarla sin recorrer las cinco.
    */
-  emitTaskDeleted(task: Pick<Task, 'id' | 'status' | 'userId'>) {
-    this.emit(TASK_EVENTS.deleted, { id: task.id, status: task.status, userId: task.userId });
+  emitTaskDeleted(task: Pick<Task, 'id' | 'status' | 'userId'>, exceptSocketId?: string) {
+    this.emit(
+      TASK_EVENTS.deleted,
+      { id: task.id, status: task.status, userId: task.userId },
+      exceptSocketId,
+    );
   }
 
   /**
@@ -140,17 +159,42 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * tarde en enterarse. El `server` puede además no existir todavía si algo
    * emite antes de que el adaptador arranque.
    */
-  private emit(event: string, payload: { userId?: string } | unknown) {
+  private emit(event: string, payload: { userId?: string } | unknown, exceptSocketId?: string) {
     try {
       const userId = (payload as { userId?: string })?.userId;
-      if (userId) {
-        this.server?.to(userId).emit(event, payload);
-      } else {
+      if (!userId) {
         this.logger.warn(`${event} sin userId: se difunde a todos los clientes`);
         this.server?.emit(event, payload);
+        return;
+      }
+
+      const room = this.server?.to(userId);
+
+      // Sin eco al que provocó el cambio: su UI ya lo pintó de forma optimista y
+      // reconcilió con la respuesta HTTP, así que reaplicarlo le hace dar el
+      // salto de goma elástica. El resto de pestañas del mismo usuario sí lo
+      // recibe.
+      //
+      // Cada socket está en una sala con su propio id, así que `except` sale
+      // gratis. Un id inventado por el cliente solo puede silenciar a otra
+      // pestaña *suya*: no cruza salas, porque el `except` se aplica sobre la
+      // del usuario.
+      const except = this.validSocketId(exceptSocketId);
+      if (except) {
+        room?.except(except).emit(event, payload);
+      } else {
+        room?.emit(event, payload);
       }
     } catch (error) {
       this.logger.error(`No se pudo emitir ${event}`, error);
     }
+  }
+
+  /** Descarta cabeceras vacías o absurdas antes de usarlas como nombre de sala. */
+  private validSocketId(socketId?: string): string | undefined {
+    if (typeof socketId !== 'string') return undefined;
+    const trimmed = socketId.trim();
+    if (!trimmed || trimmed.length > MAX_SOCKET_ID_LENGTH) return undefined;
+    return trimmed;
   }
 }
