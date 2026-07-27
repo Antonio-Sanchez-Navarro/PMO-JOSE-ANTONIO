@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, TaskStatus } from '@prisma/client';
+import { Prisma, Task, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { adjustPriority, HIGH_WINDOW_HOURS } from '../ai/priority.rules';
+import { TasksGateway } from '../tasks/tasks.gateway';
 
 /**
  * Estados desde los que una tarea puede caer a `OVERDUE`.
@@ -36,7 +37,10 @@ export interface OverdueSweepResult {
 export class OverdueService {
   private readonly logger = new Logger(OverdueService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gateway: TasksGateway,
+  ) {}
 
   /**
    * Pasada de mantenimiento del tablero. Hace dos cosas sobre la misma lectura:
@@ -89,6 +93,14 @@ export class OverdueService {
         const result = await this.sweepUser(userId, ids, now, horizon);
         moved += result.moved;
         escalated += result.escalated;
+
+        // Con la transacción ya cerrada: el tablero se entera de los cambios del
+        // cron sin recargar. Una tarjeta por evento, que es lo que el frontend
+        // sabe aplicar; a este ritmo (una pasada por hora) el volumen es
+        // irrelevante.
+        for (const task of result.updated) {
+          this.gateway.emitTaskUpdated(task);
+        }
       } catch (error) {
         this.logger.error(`Falló el barrido del usuario ${userId}`, error);
       }
@@ -122,7 +134,7 @@ export class OverdueService {
         orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }],
       });
 
-      if (tasks.length === 0) return { moved: 0, escalated: 0 };
+      if (tasks.length === 0) return { moved: 0, escalated: 0, updated: [] as Task[] };
 
       const vence = (task: (typeof tasks)[number]) =>
         task.dueDate !== null && task.dueDate < now && SWEEPABLE.includes(task.status);
@@ -140,6 +152,7 @@ export class OverdueService {
 
       let moved = 0;
       let escalated = 0;
+      const updated: Task[] = [];
 
       // Secuencial, no `Promise.all`: Prisma desaconseja consultas concurrentes
       // sobre el cliente de una transacción interactiva (mismo criterio que
@@ -165,13 +178,13 @@ export class OverdueService {
         // mantiene barato el barrido cuando no ha cambiado nada.
         if (Object.keys(data).length === 0) continue;
 
-        await tx.task.update({ where: { id: task.id }, data });
+        updated.push(await tx.task.update({ where: { id: task.id }, data }));
 
         if (data.status) moved++;
         if (data.priority) escalated++;
       }
 
-      return { moved, escalated };
+      return { moved, escalated, updated };
     });
   }
 }

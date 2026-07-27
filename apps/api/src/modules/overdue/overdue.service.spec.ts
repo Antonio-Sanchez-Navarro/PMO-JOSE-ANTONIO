@@ -1,5 +1,6 @@
 import { TaskPriority, TaskStatus } from '@prisma/client';
 import { OverdueService } from './overdue.service';
+import { TasksGateway } from '../tasks/tasks.gateway';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 const NOW = new Date('2026-07-27T12:00:00.000Z');
@@ -66,10 +67,12 @@ const writes = (prisma: any) =>
 describe('OverdueService — barrido y reevaluación del tablero', () => {
   let service: OverdueService;
   let prisma: any;
+  let events: any;
 
   beforeEach(() => {
     prisma = makePrisma();
-    service = new OverdueService(prisma as unknown as PrismaService);
+    events = { emitTaskUpdated: jest.fn(), emitTaskCreated: jest.fn(), emitTaskDeleted: jest.fn() };
+    service = new OverdueService(prisma as unknown as PrismaService, events as unknown as TasksGateway);
   });
 
   describe('horizonte del escaneo', () => {
@@ -252,5 +255,68 @@ describe('OverdueService — barrido y reevaluación del tablero', () => {
 
       expect(result).toMatchObject({ candidates: 2, moved: 1, users: 2 });
     });
+  });
+});
+
+describe('OverdueService — anuncio de los cambios del cron', () => {
+  let service: OverdueService;
+  let prisma: any;
+  let events: any;
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    events = { emitTaskUpdated: jest.fn(), emitTaskCreated: jest.fn(), emitTaskDeleted: jest.fn() };
+    service = new OverdueService(prisma as unknown as PrismaService, events as unknown as TasksGateway);
+  });
+
+  it('emite una tarea por cada fila que tocó', async () => {
+    scan(prisma, [
+      { id: 't1', dueDate: inHours(-3), priority: TaskPriority.LOW },
+      { id: 't2', dueDate: inHours(3), priority: TaskPriority.LOW },
+    ]);
+
+    await service.sweep(NOW);
+
+    expect(events.emitTaskUpdated).toHaveBeenCalledTimes(2);
+    const emitidas = events.emitTaskUpdated.mock.calls.map(([t]: any) => t.id);
+    expect(emitidas.sort()).toEqual(['t1', 't2']);
+  });
+
+  it('emite la fila ya actualizada, no la que se leyó', async () => {
+    scan(prisma, [{ id: 't1', dueDate: inHours(-3), priority: TaskPriority.LOW }]);
+
+    await service.sweep(NOW);
+
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't1', status: TaskStatus.OVERDUE, priority: TaskPriority.URGENT }),
+    );
+  });
+
+  it('no anuncia nada cuando no hubo cambios', async () => {
+    scan(prisma, [
+      { id: 't1', status: TaskStatus.OVERDUE, dueDate: inHours(-30), priority: TaskPriority.URGENT },
+    ]);
+
+    await service.sweep(NOW);
+
+    expect(events.emitTaskUpdated).not.toHaveBeenCalled();
+  });
+
+  it('no anuncia los cambios de un usuario cuya transacción falló', async () => {
+    prisma.task.findMany
+      .mockResolvedValueOnce([
+        { id: 't1', userId: 'u1' },
+        { id: 't2', userId: 'u2' },
+      ])
+      .mockResolvedValue([row({ id: 't2', dueDate: inHours(-1), priority: TaskPriority.LOW })]);
+    prisma.$transaction
+      .mockRejectedValueOnce(new Error('deadlock'))
+      .mockImplementation((cb: any) => cb(prisma));
+
+    await service.sweep(NOW);
+
+    // Solo el segundo usuario llegó a escribir.
+    expect(events.emitTaskUpdated).toHaveBeenCalledTimes(1);
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ id: 't2' }));
   });
 });

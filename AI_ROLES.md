@@ -106,13 +106,21 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
 
   Contrato actual, en `ws://localhost:3000` (namespace por defecto):
 
-  | Evento | Payload |
-  |---|---|
-  | `task.created` | la tarea completa, tal cual la devuelve `POST /tasks` |
-  | `task.deleted` | `{ id, status, userId }` — `status` es la columna de la que hay que quitar la tarjeta |
+  | Evento | Payload | Lo dispara |
+  |---|---|---|
+  | `task.created` | la tarea completa, tal cual la devuelve `POST /tasks` | `POST /tasks` |
+  | `task.updated` | la tarea completa, ya actualizada | `PATCH /tasks/:id`, `PATCH /tasks/:id/move` y el barrido horario |
+  | `task.deleted` | `{ id, status, userId }` — `status` es la columna de la que hay que quitar la tarjeta | `DELETE /tasks/:id` |
 
-  **Aún no hay eventos para `PATCH /tasks/:id` ni para el movimiento**: el drag
-  and drop sigue reconciliándose con la respuesta de `PATCH /tasks/:id/move`.
+  El barrido emite `task.updated` por cada tarjeta que toca, así que el tablero
+  ve pasar solas las tareas a "Atrasadas" y subir de prioridad sin recargar.
+
+  ⚠️ **Un arrastre emite solo la tarjeta movida, no la renumeración de sus
+  hermanas.** Quien arrastró recibe el orden completo en la respuesta de
+  `PATCH /tasks/:id/move`; los demás clientes ven la tarjeta cambiar de columna,
+  pero el orden exacto dentro de esa columna les queda desactualizado hasta la
+  siguiente lectura. Si molesta, la solución es emitir el `columns` del endpoint
+  como un evento aparte — pídelo y lo añado.
 
   ⚠️ **El broadcast es global y sin autenticar.** Todo cliente conectado recibe
   los eventos de todos los usuarios, y el `AuthGuard` no cubre el handshake del

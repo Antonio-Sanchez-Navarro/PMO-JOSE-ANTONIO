@@ -8,6 +8,8 @@ import { AuthModule } from '../auth/auth.module';
   imports: [AuthModule],
   controllers: [TasksController],
   providers: [TasksService, TasksGateway],
-  exports: [TasksService],
+  // El gateway sale del módulo porque el barrido de vencidas también anuncia
+  // sus cambios: es el tercer sitio donde una tarea se modifica.
+  exports: [TasksService, TasksGateway],
 })
 export class TasksModule {}

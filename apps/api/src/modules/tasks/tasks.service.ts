@@ -190,7 +190,7 @@ export class TasksService {
    * interactiva. Con columnas de decenas de tarjetas el coste es irrelevante.
    */
   async move(userId: string, id: string, dto: MoveTaskDto) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const task = await tx.task.findFirst({ where: { id, userId } });
       if (!task) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
 
@@ -247,15 +247,27 @@ export class TasksService {
 
       return { task: moved, columns };
     });
+
+    // Solo la tarjeta movida, y con la transacción ya cerrada. La renumeración
+    // de sus hermanas no se anuncia: quien arrastró recibe el orden completo en
+    // `columns`, y para el resto de clientes lo que importa es que la tarjeta
+    // cambió de columna.
+    this.gateway.emitTaskUpdated(result.task);
+
+    return result;
   }
 
   async update(userId: string, id: string, updateTaskDto: UpdateTaskDto) {
     const task = await this.prisma.task.findFirst({ where: { id, userId } });
     if (!task) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
 
-    return this.prisma.task.update({
+    const updated = await this.prisma.task.update({
       where: { id },
       data: updateTaskDto,
     });
+
+    this.gateway.emitTaskUpdated(updated);
+
+    return updated;
   }
 }

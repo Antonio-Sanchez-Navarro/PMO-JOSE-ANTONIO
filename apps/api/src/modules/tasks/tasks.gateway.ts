@@ -11,6 +11,7 @@ import { Task } from '@prisma/client';
 /** Nombres de los eventos que emite el backend. Se importan desde los tests. */
 export const TASK_EVENTS = {
   created: 'task.created',
+  updated: 'task.updated',
   deleted: 'task.deleted',
 } as const;
 
@@ -53,6 +54,22 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   emitTaskCreated(task: Task) {
     this.emit(TASK_EVENTS.created, task);
+  }
+
+  /**
+   * Cambio en una tarea ya existente: edición, arrastre entre columnas o
+   * reevaluación del cron. Va la fila entera —`userId` incluido— porque el
+   * cliente la usa tal cual para reemplazar la tarjeta y para descartar lo que
+   * no es suyo mientras el broadcast siga siendo global.
+   *
+   * Un arrastre emite **solo la tarjeta movida**: la renumeración de sus
+   * hermanas no se anuncia. Quien hizo el arrastre ya recibe el orden completo
+   * en la respuesta de `PATCH /tasks/:id/move`; el resto de clientes ve la
+   * tarjeta cambiar de columna, pero el orden exacto de la columna les queda
+   * pendiente hasta la siguiente lectura.
+   */
+  emitTaskUpdated(task: Task) {
+    this.emit(TASK_EVENTS.updated, task);
   }
 
   /**

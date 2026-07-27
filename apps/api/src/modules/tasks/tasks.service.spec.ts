@@ -12,6 +12,7 @@ const USER = 'user-1';
 const gateway = () =>
   ({
     emitTaskCreated: jest.fn(),
+    emitTaskUpdated: jest.fn(),
     emitTaskDeleted: jest.fn(),
   }) as unknown as TasksGateway;
 
@@ -445,5 +446,79 @@ describe('TasksService — emisión de eventos realtime', () => {
 
     await expect(service.remove(USER, 'ajena')).rejects.toThrow(NotFoundException);
     expect(events.emitTaskDeleted).not.toHaveBeenCalled();
+  });
+});
+
+describe('TasksService — task.updated', () => {
+  it('anuncia la tarea tras un PATCH, con la fila ya escrita', async () => {
+    const prisma: any = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'tarea-1', userId: USER }),
+        update: jest.fn().mockResolvedValue({ id: 'tarea-1', userId: USER, status: 'DONE' }),
+      },
+    };
+    const events = gateway();
+    const service = new TasksService(prisma as unknown as PrismaService, events);
+
+    const actualizada = await service.update(USER, 'tarea-1', { status: 'DONE' as any });
+
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(actualizada);
+    // La emitida es la de después del update, no la que se leyó para validar.
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ status: 'DONE' }));
+  });
+
+  it('el payload del PATCH lleva userId, que es el filtro de seguridad del cliente', async () => {
+    const prisma: any = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'tarea-1', userId: USER }),
+        update: jest.fn().mockResolvedValue({ id: 'tarea-1', userId: USER }),
+      },
+    };
+    const events = gateway();
+    const service = new TasksService(prisma as unknown as PrismaService, events);
+
+    await service.update(USER, 'tarea-1', { status: 'DONE' as any });
+
+    expect((events.emitTaskUpdated as jest.Mock).mock.calls[0][0].userId).toBe(USER);
+  });
+
+  it('no anuncia un PATCH que devolvió 404', async () => {
+    const prisma: any = {
+      task: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
+    };
+    const events = gateway();
+    const service = new TasksService(prisma as unknown as PrismaService, events);
+
+    await expect(service.update(USER, 'ajena', { status: 'DONE' as any })).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(events.emitTaskUpdated).not.toHaveBeenCalled();
+    expect(prisma.task.update).not.toHaveBeenCalled();
+  });
+
+  it('anuncia la tarjeta arrastrada, ya con su columna nueva', async () => {
+    const { prisma } = makePrisma([
+      { id: 'a', status: 'TODO', position: 0 },
+      { id: 'b', status: 'TODO', position: 1 },
+    ]);
+    const events = gateway();
+    const service = new TasksService(prisma, events);
+
+    const result = await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
+
+    expect(events.emitTaskUpdated).toHaveBeenCalledTimes(1);
+    expect(events.emitTaskUpdated).toHaveBeenCalledWith(result.task);
+    expect((events.emitTaskUpdated as jest.Mock).mock.calls[0][0].status).toBe('IN_PROGRESS');
+  });
+
+  it('no anuncia un arrastre rechazado por no ser del usuario', async () => {
+    const { prisma } = makePrisma([{ id: 'a', status: 'TODO', position: 0 }]);
+    const events = gateway();
+    const service = new TasksService(prisma, events);
+
+    await expect(
+      service.move('otro-usuario', 'a', { status: 'DONE' as any, position: 0 }),
+    ).rejects.toThrow(NotFoundException);
+    expect(events.emitTaskUpdated).not.toHaveBeenCalled();
   });
 });
