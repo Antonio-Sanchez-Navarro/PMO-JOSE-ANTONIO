@@ -15,11 +15,13 @@ import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus } from '../types';
 import { MOCK_TASKS } from './mockTasks';
 import { fetchTasks, moveTask } from '../api/tasks.api';
+import { TaskModal } from './TaskModal';
 
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     const loadTasks = async () => {
@@ -161,21 +163,44 @@ export const KanbanBoard: React.FC = () => {
     OVERDUE: tasks.filter((t) => t.status === 'OVERDUE'),
   };
 
+  const handleCreateTask = (data: any) => {
+    console.log('Payload de Nueva Tarea (Mock):', data);
+    setIsModalOpen(false);
+  };
+
   return (
-    <DndContext 
-      sensors={sensors} 
-      collisionDetection={closestCenter} 
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="flex gap-6 p-6 h-full overflow-x-auto">
-        <KanbanColumn id="TODO" title="Por Hacer" tasks={tasksByStatus.TODO} />
-        <KanbanColumn id="IN_PROGRESS" title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} />
-        <KanbanColumn id="POSTPONED" title="Pospuestas" tasks={tasksByStatus.POSTPONED} />
-        <KanbanColumn id="DONE" title="Cumplidas" tasks={tasksByStatus.DONE} />
-        <KanbanColumn id="OVERDUE" title="Atrasadas" tasks={tasksByStatus.OVERDUE} />
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+        <h2 className="text-xl font-bold text-slate-800 dark:text-white">Tablero Kanban</h2>
+        <button 
+          onClick={() => setIsModalOpen(true)}
+          className="px-4 py-2 text-sm font-medium text-white transition-colors bg-blue-600 rounded-md hover:bg-blue-700"
+        >
+          + Nueva Tarea
+        </button>
       </div>
-    </DndContext>
+
+      <DndContext 
+        sensors={sensors} 
+        collisionDetection={closestCenter} 
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="flex gap-6 p-6 overflow-x-auto grow">
+          <KanbanColumn id="TODO" title="Por Hacer" tasks={tasksByStatus.TODO} />
+          <KanbanColumn id="IN_PROGRESS" title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} />
+          <KanbanColumn id="POSTPONED" title="Pospuestas" tasks={tasksByStatus.POSTPONED} />
+          <KanbanColumn id="DONE" title="Cumplidas" tasks={tasksByStatus.DONE} />
+          <KanbanColumn id="OVERDUE" title="Atrasadas" tasks={tasksByStatus.OVERDUE} />
+        </div>
+      </DndContext>
+
+      <TaskModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        onSubmit={handleCreateTask} 
+      />
+    </div>
   );
 };
