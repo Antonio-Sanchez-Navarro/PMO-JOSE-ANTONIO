@@ -1,16 +1,29 @@
 import { Task } from '@prisma/client';
 import { TASK_EVENTS, TasksGateway } from './tasks.gateway';
+import { SessionService } from '../auth/session.service';
 
 const tarea = { id: 't1', userId: 'u1', status: 'TODO', title: 'x' } as unknown as Task;
+
+/** Socket simulado con lo que usa el gateway del handshake. */
+const socketCon = (cookie?: string) => ({
+  id: 'socket-1',
+  handshake: { headers: cookie === undefined ? {} : { cookie } },
+  join: jest.fn(),
+  disconnect: jest.fn(),
+});
 
 describe('TasksGateway', () => {
   let gateway: TasksGateway;
   let emit: jest.Mock;
+  let to: jest.Mock;
+  let session: { verifyAccess: jest.Mock };
 
   beforeEach(() => {
-    gateway = new TasksGateway();
+    session = { verifyAccess: jest.fn().mockResolvedValue({ sub: 'u1', email: 'a@b.c', typ: 'access' }) };
+    gateway = new TasksGateway(session as unknown as SessionService);
     emit = jest.fn();
-    gateway.server = { emit } as any;
+    to = jest.fn().mockReturnValue({ emit });
+    gateway.server = { emit, to } as any;
   });
 
   it('emite cada cambio con su nombre de evento', () => {
@@ -39,6 +52,25 @@ describe('TasksGateway', () => {
     expect(emit.mock.calls[0][1].userId).toBe('u1');
   });
 
+  describe('task.reordered', () => {
+    const columnas = [{ status: 'TODO' as any, taskIds: ['b', 'a', 'c'] }];
+
+    it('manda el orden de las columnas tocadas', () => {
+      gateway.emitTasksReordered('u1', columnas);
+
+      expect(emit).toHaveBeenCalledWith(TASK_EVENTS.reordered, {
+        userId: 'u1',
+        columns: columnas,
+      });
+    });
+
+    it('lleva userId aunque aquí no haya fila de la que sacarlo', () => {
+      gateway.emitTasksReordered('u1', columnas);
+
+      expect(emit.mock.calls[0][1].userId).toBe('u1');
+    });
+  });
+
   describe('resiliencia', () => {
     // La tarea ya está escrita cuando se emite: un fallo del socket no puede
     // convertir una petición correcta en un 500.
@@ -55,5 +87,54 @@ describe('TasksGateway', () => {
 
       expect(() => gateway.emitTaskUpdated(tarea)).not.toThrow();
     });
+  });
+});
+
+describe('TasksGateway — handshake y salas', () => {
+  let gateway: TasksGateway;
+  let session: { verifyAccess: jest.Mock };
+
+  beforeEach(() => {
+    session = { verifyAccess: jest.fn().mockResolvedValue({ sub: 'u1', email: 'a@b.c', typ: 'access' }) };
+    gateway = new TasksGateway(session as unknown as SessionService);
+    gateway.server = { emit: jest.fn(), to: jest.fn().mockReturnValue({ emit: jest.fn() }) } as any;
+  });
+
+  it('mete al cliente en la sala de su usuario, que es `sub` del JWT', async () => {
+    const client = socketCon('pmo_session=un-token');
+
+    await gateway.handleConnection(client as any);
+
+    expect(session.verifyAccess).toHaveBeenCalledWith('un-token');
+    expect(client.join).toHaveBeenCalledWith('u1');
+    expect(client.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un socket sin cookies', async () => {
+    const client = socketCon();
+
+    await gateway.handleConnection(client as any);
+
+    expect(client.disconnect).toHaveBeenCalled();
+    expect(client.join).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un socket con cookies pero sin la de sesión', async () => {
+    const client = socketCon('otra=cosa');
+
+    await gateway.handleConnection(client as any);
+
+    expect(client.disconnect).toHaveBeenCalled();
+    expect(session.verifyAccess).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un token inválido o caducado', async () => {
+    session.verifyAccess.mockRejectedValue(new Error('jwt expired'));
+    const client = socketCon('pmo_session=caducado');
+
+    await gateway.handleConnection(client as any);
+
+    expect(client.disconnect).toHaveBeenCalled();
+    expect(client.join).not.toHaveBeenCalled();
   });
 });

@@ -110,23 +110,30 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
   |---|---|---|
   | `task.created` | la tarea completa, tal cual la devuelve `POST /tasks` | `POST /tasks` |
   | `task.updated` | la tarea completa, ya actualizada | `PATCH /tasks/:id`, `PATCH /tasks/:id/move` y el barrido horario |
+  | `task.reordered` | `{ userId, columns: [{ status, taskIds }] }` — el mismo `columns` que devuelve el endpoint de movimiento | `PATCH /tasks/:id/move` |
   | `task.deleted` | `{ id, status, userId }` — `status` es la columna de la que hay que quitar la tarjeta | `DELETE /tasks/:id` |
 
   El barrido emite `task.updated` por cada tarjeta que toca, así que el tablero
   ve pasar solas las tareas a "Atrasadas" y subir de prioridad sin recargar.
 
-  ⚠️ **Un arrastre emite solo la tarjeta movida, no la renumeración de sus
-  hermanas.** Quien arrastró recibe el orden completo en la respuesta de
-  `PATCH /tasks/:id/move`; los demás clientes ven la tarjeta cambiar de columna,
-  pero el orden exacto dentro de esa columna les queda desactualizado hasta la
-  siguiente lectura. Si molesta, la solución es emitir el `columns` del endpoint
-  como un evento aparte — pídelo y lo añado.
+  **Un arrastre emite dos eventos, en este orden**: `task.updated` con la
+  tarjeta movida y su columna nueva, y después `task.reordered` con el orden
+  final de las columnas tocadas. Aplícalos en ese orden — al revés, el
+  reordenamiento llegaría con un id que la columna todavía no tiene.
 
-  ⚠️ **El broadcast es global y sin autenticar.** Todo cliente conectado recibe
-  los eventos de todos los usuarios, y el `AuthGuard` no cubre el handshake del
-  socket. Vale para desarrollo con un usuario; antes de exponerlo hacen falta
-  salas por usuario y autenticación del handshake. Por eso el payload lleva
-  `userId`: mientras tanto, **el frontend debe descartar lo que no sea suyo**.
+  **Handshake autenticado y salas por usuario.** El socket se valida con la
+  misma cookie `pmo_session` que el REST (`SessionService.verifyAccess`, que
+  exige `typ: access`, así que un token de refresco no abre socket) y cada
+  cliente entra en la sala de su `userId`. Un socket sin cookie válida se
+  desconecta en el acto, y los eventos se encaminan con `server.to(userId)`.
+
+  El cliente **debe conectar con las cookies del navegador**: con socket.io-client
+  eso es `io(URL, { withCredentials: true })`. Sin ello la conexión se abre y se
+  cierra sola, que es el síntoma a mirar antes de dudar del backend.
+
+  El `userId` sigue en todos los payloads: ya no es el filtro de seguridad
+  —eso lo resuelven las salas— pero le sirve al cliente para descartar restos si
+  cambia de sesión sin recargar.
 
 - **El cron de vencidas vive en Redis, no en el proceso.** `OverdueModule`
   programa un job repetible de BullMQ (`overdue-sweep`) en vez de usar un

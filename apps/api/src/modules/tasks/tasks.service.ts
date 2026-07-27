@@ -248,11 +248,12 @@ export class TasksService {
       return { task: moved, columns };
     });
 
-    // Solo la tarjeta movida, y con la transacción ya cerrada. La renumeración
-    // de sus hermanas no se anuncia: quien arrastró recibe el orden completo en
-    // `columns`, y para el resto de clientes lo que importa es que la tarjeta
-    // cambió de columna.
+    // Con la transacción ya cerrada, y en este orden: primero la tarjeta con su
+    // columna nueva, luego el orden final de las columnas tocadas. Al revés, un
+    // cliente que aplicara el reordenamiento antes de conocer el cambio de
+    // columna se encontraría un id que aún no tiene en esa lista.
     this.gateway.emitTaskUpdated(result.task);
+    this.gateway.emitTasksReordered(userId, result.columns);
 
     return result;
   }

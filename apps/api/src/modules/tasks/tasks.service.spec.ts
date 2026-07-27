@@ -13,6 +13,7 @@ const gateway = () =>
   ({
     emitTaskCreated: jest.fn(),
     emitTaskUpdated: jest.fn(),
+    emitTasksReordered: jest.fn(),
     emitTaskDeleted: jest.fn(),
   }) as unknown as TasksGateway;
 
@@ -520,5 +521,78 @@ describe('TasksService — task.updated', () => {
       service.move('otro-usuario', 'a', { status: 'DONE' as any, position: 0 }),
     ).rejects.toThrow(NotFoundException);
     expect(events.emitTaskUpdated).not.toHaveBeenCalled();
+  });
+});
+
+describe('TasksService — task.reordered', () => {
+  const TABLERO = [
+    { id: 'a', status: 'TODO', position: 0 },
+    { id: 'b', status: 'TODO', position: 1 },
+    { id: 'c', status: 'TODO', position: 2 },
+    { id: 'x', status: 'IN_PROGRESS', position: 0 },
+  ];
+
+  it('anuncia el orden final de la columna tras un arrastre interno', async () => {
+    const { prisma } = makePrisma(TABLERO);
+    const events = gateway();
+    const service = new TasksService(prisma, events);
+
+    await service.move(USER, 'a', { status: 'TODO' as any, position: 2 });
+
+    expect(events.emitTasksReordered).toHaveBeenCalledWith(USER, [
+      { status: 'TODO', taskIds: ['b', 'c', 'a'] },
+    ]);
+  });
+
+  it('anuncia las dos columnas cuando la tarjeta cambia de columna', async () => {
+    const { prisma } = makePrisma(TABLERO);
+    const events = gateway();
+    const service = new TasksService(prisma, events);
+
+    const result = await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
+
+    // El mismo `columns` que devuelve el endpoint: una sola fuente de verdad.
+    expect(events.emitTasksReordered).toHaveBeenCalledWith(USER, result.columns);
+    expect(result.columns).toHaveLength(2);
+  });
+
+  it('emite primero la tarjeta y después el orden', async () => {
+    const { prisma } = makePrisma(TABLERO);
+    const events = gateway();
+    const service = new TasksService(prisma, events);
+
+    await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
+
+    // Al revés, un cliente aplicaría el orden con un id que aún no tiene en esa
+    // columna.
+    const orden = (events.emitTaskUpdated as jest.Mock).mock.invocationCallOrder[0];
+    const reorden = (events.emitTasksReordered as jest.Mock).mock.invocationCallOrder[0];
+    expect(orden).toBeLessThan(reorden);
+  });
+
+  it('no anuncia orden alguno si el arrastre se rechazó', async () => {
+    const { prisma } = makePrisma(TABLERO);
+    const events = gateway();
+    const service = new TasksService(prisma, events);
+
+    await expect(
+      service.move('otro-usuario', 'a', { status: 'DONE' as any, position: 0 }),
+    ).rejects.toThrow(NotFoundException);
+    expect(events.emitTasksReordered).not.toHaveBeenCalled();
+  });
+
+  it('el resto de operaciones no reordena nada', async () => {
+    const prisma: any = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'a', userId: USER }),
+        update: jest.fn().mockResolvedValue({ id: 'a', userId: USER }),
+      },
+    };
+    const events = gateway();
+    const service = new TasksService(prisma as unknown as PrismaService, events);
+
+    await service.update(USER, 'a', { status: 'DONE' as any });
+
+    expect(events.emitTasksReordered).not.toHaveBeenCalled();
   });
 });
