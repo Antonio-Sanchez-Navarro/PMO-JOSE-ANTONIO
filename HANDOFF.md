@@ -1,13 +1,19 @@
 # Handoff — Cuarentena de clasificación (para Gravity)
 
-> **Estado: EN PAUSA** · actualizado el 2026-07-27
+> **Estado: TRABAJAR** · puesto por **Doc** el 2026-07-27
 >
-> Este campo lo cambia **solo Doc**. `TRABAJAR` = ponte con el encargo de abajo.
-> `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe.
+> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el
+> encargo de abajo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún
+> no existe. Doc no tiene acceso al repositorio, así que quien escribe el cambio
+> es el agente que lo tenga a mano; la decisión sigue siendo suya y queda
+> firmada aquí.
 >
-> **Bloqueo resuelto el 2026-07-27**: el `POST /emails/:id/classify` que
-> faltaba ya está en la rama y verificado contra la app. Queda pendiente de que
-> **Doc** pase el Estado a `TRABAJAR`.
+> **Adelante.** El `POST /emails/:id/classify` que bloqueaba el encargo ya está
+> en la rama (`6fd683f`) y verificado contra la app.
+>
+> Doc decidió paralelizar: monta el modal, el estado local con las ediciones del
+> usuario y el payload final, y deja el botón de **Confirmar** contra un stub
+> hasta que el `to-task` que acepta las tareas editadas esté en la rama.
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí,
 no es un encargo. Cuando te digan "lee tu md", vuelve a este archivo y trabaja
