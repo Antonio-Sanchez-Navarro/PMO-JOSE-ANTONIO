@@ -1,9 +1,22 @@
-import { Task, TaskStatus } from '../types';
+import { Task, TaskStatus, TaskPriority } from '../types';
 
 const API_BASE = '/api/tasks'; // Usamos el proxy configurado en vite.config.ts
 
-export const fetchTasks = async (): Promise<Task[]> => {
-  const response = await fetch(API_BASE, {
+export interface FetchTasksFilters {
+  search?: string;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+}
+
+export const fetchTasks = async (filters?: FetchTasksFilters): Promise<Task[]> => {
+  const params = new URLSearchParams();
+  if (filters?.search) params.append('search', filters.search);
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.priority) params.append('priority', filters.priority);
+
+  const queryString = params.toString() ? `?${params.toString()}` : '';
+
+  const response = await fetch(`${API_BASE}${queryString}`, {
     credentials: 'include'
   });
   

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   DndContext,
@@ -15,34 +15,70 @@ import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus } from '../types';
 import { MOCK_TASKS } from './mockTasks';
-import { fetchTasks, moveTask, createTask, deleteTask } from '../api/tasks.api';
+import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters } from '../api/tasks.api';
 import { TaskModal } from './TaskModal';
+import { useSocket } from '../hooks/useSocket';
+import { TaskPriority } from '../types';
 
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  const [searchFilter, setSearchFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | ''>('');
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | ''>('');
+
+  const loadTasks = useCallback(async () => {
+    setLoading(true);
+    try {
+      const filters: FetchTasksFilters = {};
+      if (searchFilter) filters.search = searchFilter;
+      if (statusFilter) filters.status = statusFilter;
+      if (priorityFilter) filters.priority = priorityFilter;
+
+      const data = await fetchTasks(filters);
+      setTasks(data || []);
+    } catch (error) {
+      console.error("Error al cargar tareas, usando mock de respaldo:", error);
+      setTasks(MOCK_TASKS);
+    } finally {
+      setLoading(false);
+    }
+  }, [searchFilter, statusFilter, priorityFilter]);
 
   useEffect(() => {
-    const loadTasks = async () => {
-      try {
-        const data = await fetchTasks();
-        if (data && data.length > 0) {
-          setTasks(data);
-        } else {
-          // Fallback a mock data si viene vacío
-          setTasks(MOCK_TASKS);
-        }
-      } catch (error) {
-        console.error("Error al cargar tareas, usando mock de respaldo:", error);
-        setTasks(MOCK_TASKS);
-      } finally {
-        setLoading(false);
-      }
-    };
     loadTasks();
-  }, []);
+  }, [loadTasks]);
+
+  useSocket({
+    onTaskCreated: (task) => {
+      setTasks((prev) => {
+        if (prev.some((t) => t.id === task.id)) return prev;
+        return [...prev, task];
+      });
+    },
+    onTaskUpdated: (task) => {
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
+    },
+    onTaskDeleted: (payload) => {
+      setTasks((prev) => prev.filter((t) => t.id !== payload.id));
+    },
+    onTasksReordered: (payload) => {
+      setTasks((currentTasks) => {
+        let updatedTasks = [...currentTasks];
+        for (const col of payload.columns) {
+          const tasksInCol = updatedTasks.filter((t) => col.taskIds.includes(t.id));
+          updatedTasks = updatedTasks.filter((t) => !col.taskIds.includes(t.id));
+          tasksInCol.sort((a, b) => col.taskIds.indexOf(a.id) - col.taskIds.indexOf(b.id));
+          tasksInCol.forEach((t) => (t.status = col.status));
+          updatedTasks.push(...tasksInCol);
+        }
+        return updatedTasks;
+      });
+    }
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -198,14 +234,48 @@ export const KanbanBoard: React.FC = () => {
   return (
     <div className="flex flex-col h-full">
       <Toaster position="bottom-right" />
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-        <h2 className="text-xl font-bold text-slate-800 dark:text-white">Tablero Kanban</h2>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="px-4 py-2 text-sm font-medium text-white transition-colors bg-blue-600 rounded-md hover:bg-blue-700"
-        >
-          + Nueva Tarea
-        </button>
+      <div className="flex flex-col md:flex-row items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 gap-4">
+        <h2 className="text-xl font-bold text-slate-800 dark:text-white whitespace-nowrap">Tablero Kanban</h2>
+        
+        <div className="flex flex-col sm:flex-row gap-3 w-full justify-end items-center">
+          <input
+            type="text"
+            placeholder="Buscar tareas..."
+            className="px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-600 dark:text-white w-full sm:w-64"
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+          />
+          <select
+            className="px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as TaskStatus | '')}
+          >
+            <option value="">Todos los Estados</option>
+            <option value={TaskStatus.TODO}>Por Hacer</option>
+            <option value={TaskStatus.IN_PROGRESS}>En Progreso</option>
+            <option value={TaskStatus.POSTPONED}>Pospuestas</option>
+            <option value={TaskStatus.DONE}>Cumplidas</option>
+            <option value={TaskStatus.OVERDUE}>Atrasadas</option>
+          </select>
+          <select
+            className="px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+            value={priorityFilter}
+            onChange={(e) => setPriorityFilter(e.target.value as TaskPriority | '')}
+          >
+            <option value="">Todas las Prioridades</option>
+            <option value={TaskPriority.LOW}>Baja</option>
+            <option value={TaskPriority.MEDIUM}>Media</option>
+            <option value={TaskPriority.HIGH}>Alta</option>
+            <option value={TaskPriority.URGENT}>Urgente</option>
+          </select>
+
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="px-4 py-2 text-sm font-medium text-white transition-colors bg-blue-600 rounded-md hover:bg-blue-700 whitespace-nowrap"
+          >
+            + Nueva Tarea
+          </button>
+        </div>
       </div>
 
       <DndContext 
