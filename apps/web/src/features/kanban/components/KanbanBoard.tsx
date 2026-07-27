@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   DndContext,
-  closestCenter,
+  closestCorners,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -278,9 +278,17 @@ export const KanbanBoard: React.FC = () => {
         </div>
       </div>
 
-      <DndContext 
-        sensors={sensors} 
-        collisionDetection={closestCenter} 
+      {/*
+        `closestCorners` y no `closestCenter`: con este último una columna vacía
+        solo aporta el centro de su contenedor, que queda lejos del punto donde
+        se suelta, y casi siempre gana el centro de una tarjeta de otra columna.
+        El drop no registraba cambio de estado y la tarjeta volvía a su sitio,
+        sin error: en "Por Hacer", "Pospuestas" y "Cumplidas" —las tres vacías—
+        era imposible soltar nada.
+      */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
