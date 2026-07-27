@@ -1,8 +1,31 @@
-import { TaskStatus } from '@prisma/client';
+import { TaskPriority, TaskStatus } from '@prisma/client';
 import { OverdueService } from './overdue.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 const NOW = new Date('2026-07-27T12:00:00.000Z');
+const HOUR_MS = 3_600_000;
+
+/** Fecha a `h` horas de `NOW` (negativa = ya vencida). */
+const inHours = (h: number) => new Date(NOW.getTime() + h * HOUR_MS);
+
+type TaskRow = {
+  id: string;
+  title?: string;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  dueDate?: Date | null;
+  aiConfidence?: number | null;
+};
+
+/** Fila con los valores por defecto que devuelve la relectura del servicio. */
+const row = (t: TaskRow) => ({
+  title: `tarea ${t.id}`,
+  status: TaskStatus.TODO,
+  priority: TaskPriority.MEDIUM,
+  dueDate: null,
+  aiConfidence: 0.9,
+  ...t,
+});
 
 /**
  * Doble de Prisma: `$transaction` ejecuta el callback contra el mismo objeto,
@@ -23,13 +46,24 @@ function makePrisma() {
   return prisma;
 }
 
-/** `findMany` se llama dos veces: escaneo global y relectura por usuario. */
-function scanReturns(prisma: any, scan: any[], stillDue = scan) {
+/**
+ * `findMany` se llama dos veces: escaneo global (id + userId) y relectura por
+ * usuario (la fila completa).
+ */
+function scan(prisma: any, rows: TaskRow[], userId = 'u1') {
   prisma.task.findMany.mockReset();
-  prisma.task.findMany.mockResolvedValueOnce(scan).mockResolvedValue(stillDue);
+  prisma.task.findMany
+    .mockResolvedValueOnce(rows.map((r) => ({ id: r.id, userId })))
+    .mockResolvedValue(rows.map(row));
 }
 
-describe('OverdueService — barrido de tareas vencidas', () => {
+/** Los `data` de cada `task.update`, indexados por id. */
+const writes = (prisma: any) =>
+  Object.fromEntries(
+    prisma.task.update.mock.calls.map(([arg]: any) => [arg.where.id, arg.data]),
+  );
+
+describe('OverdueService — barrido y reevaluación del tablero', () => {
   let service: OverdueService;
   let prisma: any;
 
@@ -38,87 +72,145 @@ describe('OverdueService — barrido de tareas vencidas', () => {
     service = new OverdueService(prisma as unknown as PrismaService);
   });
 
-  describe('selección de candidatas', () => {
-    it('solo considera tareas con dueDate anterior a "ahora" y en estados barribles', async () => {
+  describe('horizonte del escaneo', () => {
+    it('mira hasta 72 h por delante, que es donde empieza a escalar la prioridad', async () => {
       await service.sweep(NOW);
 
-      expect(prisma.task.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            status: { in: [TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.POSTPONED] },
-            dueDate: { lt: NOW },
-          },
-        }),
-      );
+      const { where } = prisma.task.findMany.mock.calls[0][0];
+      expect(where.dueDate).toEqual({ lt: inHours(72) });
     });
 
-    it('no abre transacción si no hay vencidas', async () => {
-      const result = await service.sweep(NOW);
-
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-      expect(result).toEqual({ candidates: 0, moved: 0, users: 0 });
-    });
-
-    it('excluye DONE y OVERDUE, lo que hace el barrido idempotente', async () => {
+    it('incluye OVERDUE (su prioridad aún puede subir) y excluye DONE', async () => {
       await service.sweep(NOW);
 
       const statuses = prisma.task.findMany.mock.calls[0][0].where.status.in;
+      expect(statuses).toContain(TaskStatus.OVERDUE);
       expect(statuses).not.toContain(TaskStatus.DONE);
-      expect(statuses).not.toContain(TaskStatus.OVERDUE);
+    });
+
+    it('no abre transacción si no hay nada en el horizonte', async () => {
+      const result = await service.sweep(NOW);
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(result).toEqual({ candidates: 0, moved: 0, escalated: 0, users: 0 });
     });
   });
 
   describe('movimiento a la columna OVERDUE', () => {
-    it('marca cada tarea y la anexa tras la última de la columna', async () => {
-      scanReturns(prisma, [
-        { id: 't1', userId: 'u1' },
-        { id: 't2', userId: 'u1' },
+    it('marca las vencidas y las anexa tras la última de la columna', async () => {
+      scan(prisma, [
+        { id: 't1', dueDate: inHours(-48), priority: TaskPriority.URGENT },
+        { id: 't2', dueDate: inHours(-2), priority: TaskPriority.URGENT },
       ]);
       prisma.task.findFirst.mockResolvedValue({ position: 4 });
 
       const result = await service.sweep(NOW);
 
-      expect(prisma.task.update).toHaveBeenNthCalledWith(1, {
-        where: { id: 't1' },
-        data: { status: TaskStatus.OVERDUE, position: 5 },
+      expect(writes(prisma)).toEqual({
+        t1: { status: TaskStatus.OVERDUE, position: 5 },
+        t2: { status: TaskStatus.OVERDUE, position: 6 },
       });
-      expect(prisma.task.update).toHaveBeenNthCalledWith(2, {
-        where: { id: 't2' },
-        data: { status: TaskStatus.OVERDUE, position: 6 },
-      });
-      expect(result).toEqual({ candidates: 2, moved: 2, users: 1 });
+      expect(result.moved).toBe(2);
     });
 
     it('empieza en la posición 0 si la columna está vacía', async () => {
-      scanReturns(prisma, [{ id: 't1', userId: 'u1' }]);
+      scan(prisma, [{ id: 't1', dueDate: inHours(-1), priority: TaskPriority.URGENT }]);
       prisma.task.findFirst.mockResolvedValue(null);
 
       await service.sweep(NOW);
 
-      expect(prisma.task.update).toHaveBeenCalledWith({
-        where: { id: 't1' },
-        data: { status: TaskStatus.OVERDUE, position: 0 },
-      });
+      expect(writes(prisma).t1.position).toBe(0);
     });
 
-    it('usa una transacción por usuario', async () => {
-      scanReturns(
-        prisma,
-        [
-          { id: 't1', userId: 'u1' },
-          { id: 't2', userId: 'u2' },
-        ],
-        [{ id: 't1' }],
-      );
+    it('no consulta la cola de la columna si nadie va a entrar', async () => {
+      scan(prisma, [{ id: 't1', dueDate: inHours(10), priority: TaskPriority.URGENT }]);
+
+      await service.sweep(NOW);
+
+      expect(prisma.task.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('no mueve una tarea que ya estaba en OVERDUE', async () => {
+      scan(prisma, [
+        { id: 't1', status: TaskStatus.OVERDUE, dueDate: inHours(-5), priority: TaskPriority.URGENT },
+      ]);
 
       const result = await service.sweep(NOW);
 
-      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
-      expect(result.users).toBe(2);
+      expect(prisma.task.update).not.toHaveBeenCalled();
+      expect(result.moved).toBe(0);
+    });
+  });
+
+  describe('reevaluación de prioridad', () => {
+    it('sube la prioridad de una tarea que aún no vence pero se acerca', async () => {
+      scan(prisma, [{ id: 't1', dueDate: inHours(3), priority: TaskPriority.LOW }]);
+
+      const result = await service.sweep(NOW);
+
+      expect(writes(prisma)).toEqual({ t1: { priority: TaskPriority.URGENT } });
+      expect(result).toMatchObject({ moved: 0, escalated: 1 });
+    });
+
+    it('mueve y escala en la misma escritura si la tarea venció', async () => {
+      scan(prisma, [{ id: 't1', dueDate: inHours(-3), priority: TaskPriority.LOW }]);
+
+      const result = await service.sweep(NOW);
+
+      expect(writes(prisma).t1).toEqual({
+        priority: TaskPriority.URGENT,
+        status: TaskStatus.OVERDUE,
+        position: 0,
+      });
+      expect(result).toMatchObject({ moved: 1, escalated: 1 });
+    });
+
+    it('escala una tarea ya atrasada sin volver a moverla', async () => {
+      scan(prisma, [
+        { id: 't1', status: TaskStatus.OVERDUE, dueDate: inHours(-30), priority: TaskPriority.MEDIUM },
+      ]);
+
+      const result = await service.sweep(NOW);
+
+      expect(writes(prisma)).toEqual({ t1: { priority: TaskPriority.URGENT } });
+      expect(result).toMatchObject({ moved: 0, escalated: 1 });
+    });
+
+    it('no escribe nada si el estado y la prioridad ya son los que tocan', async () => {
+      scan(prisma, [
+        { id: 't1', status: TaskStatus.OVERDUE, dueDate: inHours(-30), priority: TaskPriority.URGENT },
+        { id: 't2', dueDate: inHours(50), priority: TaskPriority.HIGH },
+      ]);
+
+      const result = await service.sweep(NOW);
+
+      expect(prisma.task.update).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ moved: 0, escalated: 0, candidates: 2 });
+    });
+
+    it('nunca baja la prioridad que ya tenía la tarea', async () => {
+      scan(prisma, [{ id: 't1', dueDate: inHours(60), priority: TaskPriority.URGENT }]);
+
+      await service.sweep(NOW);
+
+      expect(prisma.task.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('carreras con el tablero', () => {
+    it('no escribe si la tarea salió del horizonte entre el escaneo y la transacción', async () => {
+      prisma.task.findMany
+        .mockResolvedValueOnce([{ id: 't1', userId: 'u1' }])
+        .mockResolvedValue([]);
+
+      const result = await service.sweep(NOW);
+
+      expect(prisma.task.update).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ candidates: 1, moved: 0, escalated: 0, users: 1 });
     });
 
     it('acota la relectura al usuario, para no colar tareas de otro', async () => {
-      scanReturns(prisma, [{ id: 't1', userId: 'u1' }]);
+      scan(prisma, [{ id: 't1', dueDate: inHours(-1) }]);
 
       await service.sweep(NOW);
 
@@ -130,34 +222,35 @@ describe('OverdueService — barrido de tareas vencidas', () => {
     });
   });
 
-  describe('carreras con el tablero', () => {
-    it('no escribe si la tarea dejó de estar vencida entre el escaneo y la transacción', async () => {
-      scanReturns(prisma, [{ id: 't1', userId: 'u1' }], []);
+  describe('aislamiento entre usuarios', () => {
+    it('usa una transacción por usuario', async () => {
+      prisma.task.findMany
+        .mockResolvedValueOnce([
+          { id: 't1', userId: 'u1' },
+          { id: 't2', userId: 'u2' },
+        ])
+        .mockResolvedValue([row({ id: 't1', dueDate: inHours(-1) })]);
 
       const result = await service.sweep(NOW);
 
-      expect(prisma.task.update).not.toHaveBeenCalled();
-      expect(result).toEqual({ candidates: 1, moved: 0, users: 1 });
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(result.users).toBe(2);
     });
-  });
 
-  describe('aislamiento entre usuarios', () => {
     it('sigue barriendo al resto si la transacción de uno falla', async () => {
-      scanReturns(
-        prisma,
-        [
+      prisma.task.findMany
+        .mockResolvedValueOnce([
           { id: 't1', userId: 'u1' },
           { id: 't2', userId: 'u2' },
-        ],
-        [{ id: 't2' }],
-      );
+        ])
+        .mockResolvedValue([row({ id: 't2', dueDate: inHours(-1), priority: TaskPriority.URGENT })]);
       prisma.$transaction
         .mockRejectedValueOnce(new Error('deadlock'))
         .mockImplementation((cb: any) => cb(prisma));
 
       const result = await service.sweep(NOW);
 
-      expect(result).toEqual({ candidates: 2, moved: 1, users: 2 });
+      expect(result).toMatchObject({ candidates: 2, moved: 1, users: 2 });
     });
   });
 });
