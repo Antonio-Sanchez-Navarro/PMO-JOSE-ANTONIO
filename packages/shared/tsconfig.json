@@ -1,7 +1,9 @@
 {
+  // Build CommonJS: es lo que consume la API (NestJS con `require`).
+  // El ESM para el frontend sale de `tsconfig.esm.json`.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
+    "outDir": "dist/cjs",
     "rootDir": "src"
   },
   "include": ["src/**/*"]

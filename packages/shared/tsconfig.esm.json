@@ -1,0 +1,18 @@
+{
+  // Build ES modules para el frontend.
+  //
+  // Vite sirve este paquete del workspace directamente (`/@fs/...`) sin
+  // preempaquetarlo, así que necesita exports estáticos de verdad: con la salida
+  // CommonJS (`exports.TaskPriority = ...`) el navegador falla con "does not
+  // provide an export named 'TaskPriority'", aunque el símbolo esté ahí.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "outDir": "dist/esm",
+    "rootDir": "src",
+    // Los .d.ts los genera el build CommonJS; duplicarlos aquí solo añade ruido.
+    "declaration": false
+  },
+  "include": ["src/**/*"]
+}
