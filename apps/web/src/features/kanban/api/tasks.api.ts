@@ -1,4 +1,5 @@
 import { Task, TaskStatus, TaskPriority } from '../types';
+import { getSocketId } from '../hooks/useSocket';
 
 const API_BASE = '/api/tasks'; // Usamos el proxy configurado en vite.config.ts
 
@@ -29,9 +30,13 @@ export const fetchTasks = async (filters?: FetchTasksFilters): Promise<Task[]> =
 };
 
 export const updateTaskStatus = async (id: string, newStatus: TaskStatus): Promise<Task> => {
+  const socketId = getSocketId();
   const response = await fetch(`${API_BASE}/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      ...(socketId ? { 'x-socket-id': socketId } : {})
+    },
     credentials: 'include',
     body: JSON.stringify({ status: newStatus }),
   });
@@ -51,9 +56,13 @@ export interface MoveTaskResponse {
 }
 
 export const moveTask = async (id: string, status: TaskStatus, position: number): Promise<MoveTaskResponse> => {
+  const socketId = getSocketId();
   const response = await fetch(`${API_BASE}/${id}/move`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      ...(socketId ? { 'x-socket-id': socketId } : {})
+    },
     credentials: 'include',
     body: JSON.stringify({ status, position }),
   });
@@ -67,9 +76,13 @@ export const moveTask = async (id: string, status: TaskStatus, position: number)
 };
 
 export const createTask = async (data: any): Promise<Task> => {
+  const socketId = getSocketId();
   const response = await fetch(API_BASE, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      ...(socketId ? { 'x-socket-id': socketId } : {})
+    },
     credentials: 'include',
     body: JSON.stringify(data),
   });
@@ -83,8 +96,12 @@ export const createTask = async (data: any): Promise<Task> => {
 };
 
 export const deleteTask = async (id: string): Promise<void> => {
+  const socketId = getSocketId();
   const response = await fetch(`${API_BASE}/${id}`, {
     method: 'DELETE',
+    headers: {
+      ...(socketId ? { 'x-socket-id': socketId } : {})
+    },
     credentials: 'include',
   });
 

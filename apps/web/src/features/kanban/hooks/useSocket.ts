@@ -14,6 +14,10 @@ export interface ColumnOrder {
   taskIds: string[];
 }
 
+let globalSocket: Socket | null = null;
+
+export const getSocketId = () => globalSocket?.id;
+
 interface UseSocketProps {
   onTaskCreated?: (task: Task) => void;
   onTaskUpdated?: (task: Task) => void;
@@ -38,6 +42,7 @@ export const useSocket = ({
     });
 
     socketRef.current = socket;
+    globalSocket = socket;
 
     socket.on('connect', () => {
       console.log('🔗 Conectado a WebSocket', socket.id);
