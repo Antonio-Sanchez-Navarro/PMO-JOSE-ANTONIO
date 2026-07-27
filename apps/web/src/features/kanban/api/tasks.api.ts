@@ -52,3 +52,24 @@ export const moveTask = async (id: string, status: TaskStatus, position: number)
   const json = await response.json();
   return json;
 };
+
+// MOCK: Crear Tarea
+export const createTask = async (data: any): Promise<Task> => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({
+        id: `t-${Date.now()}`,
+        ...data,
+      });
+    }, 1000);
+  });
+};
+
+// MOCK: Eliminar Tarea
+export const deleteTask = async (id: string): Promise<void> => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve();
+    }, 500);
+  });
+};

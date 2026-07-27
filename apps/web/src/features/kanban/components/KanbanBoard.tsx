@@ -14,7 +14,7 @@ import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus } from '../types';
 import { MOCK_TASKS } from './mockTasks';
-import { fetchTasks, moveTask } from '../api/tasks.api';
+import { fetchTasks, moveTask, createTask, deleteTask } from '../api/tasks.api';
 import { TaskModal } from './TaskModal';
 
 export const KanbanBoard: React.FC = () => {
@@ -163,9 +163,24 @@ export const KanbanBoard: React.FC = () => {
     OVERDUE: tasks.filter((t) => t.status === 'OVERDUE'),
   };
 
-  const handleCreateTask = (data: any) => {
-    console.log('Payload de Nueva Tarea (Mock):', data);
-    setIsModalOpen(false);
+  const handleCreateTask = async (data: any) => {
+    try {
+      const newTask = await createTask(data);
+      setTasks((prev) => [...prev, newTask]);
+      setIsModalOpen(false);
+    } catch (error) {
+      console.error('Error al crear tarea (mock):', error);
+    }
+  };
+
+  const handleDeleteTask = async (id: string) => {
+    // UI optimista: removemos localmente primero
+    setTasks((prev) => prev.filter(t => t.id !== id));
+    try {
+      await deleteTask(id);
+    } catch (error) {
+      console.error('Error al eliminar tarea (mock):', error);
+    }
   };
 
   return (
@@ -188,11 +203,11 @@ export const KanbanBoard: React.FC = () => {
         onDragEnd={handleDragEnd}
       >
         <div className="flex gap-6 p-6 overflow-x-auto grow">
-          <KanbanColumn id="TODO" title="Por Hacer" tasks={tasksByStatus.TODO} />
-          <KanbanColumn id="IN_PROGRESS" title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} />
-          <KanbanColumn id="POSTPONED" title="Pospuestas" tasks={tasksByStatus.POSTPONED} />
-          <KanbanColumn id="DONE" title="Cumplidas" tasks={tasksByStatus.DONE} />
-          <KanbanColumn id="OVERDUE" title="Atrasadas" tasks={tasksByStatus.OVERDUE} />
+          <KanbanColumn id="TODO" title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id="IN_PROGRESS" title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id="POSTPONED" title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id="DONE" title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id="OVERDUE" title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} />
         </div>
       </DndContext>
 

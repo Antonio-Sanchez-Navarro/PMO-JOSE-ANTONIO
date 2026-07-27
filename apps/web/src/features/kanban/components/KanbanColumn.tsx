@@ -8,9 +8,10 @@ interface KanbanColumnProps {
   id: TaskStatus;
   title: string;
   tasks: Task[];
+  onDeleteTask?: (id: string) => void;
 }
 
-export const KanbanColumn: React.FC<KanbanColumnProps> = ({ id, title, tasks }) => {
+export const KanbanColumn: React.FC<KanbanColumnProps> = ({ id, title, tasks, onDeleteTask }) => {
   const { setNodeRef } = useDroppable({ id });
 
   return (
@@ -19,7 +20,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({ id, title, tasks }) 
       <div ref={setNodeRef} className="flex-1 min-h-[200px]">
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
-            <TaskCard key={task.id} task={task} />
+            <TaskCard key={task.id} task={task} onDelete={onDeleteTask} />
           ))}
         </SortableContext>
       </div>
