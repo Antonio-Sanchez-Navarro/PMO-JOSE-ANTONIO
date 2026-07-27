@@ -1,6 +1,7 @@
 # Handoff — Cuarentena de clasificación (para Gravity)
 
 > **Estado: TRABAJAR** · puesto por **Doc** el 2026-07-27
+> **Asignado a:** Gravity (Control asumido, trabajando en UI de Cuarentena)
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el
 > encargo de abajo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún
@@ -91,16 +92,50 @@ tarea.
 
 ### `POST /emails/:id/to-task` — el paso que sí crea
 
-- **201** con las tareas creadas, 404 si el correo no es del usuario, 409 si ya
-  tenía tareas (`"force": true` para insistir).
+**Ya acepta las tareas editadas.** El botón de Confirmar puede dejar de apuntar
+a un stub. Manda en el cuerpo lo que el usuario aprobó:
 
-**Ojo con una cosa**: hoy este endpoint vuelve a llamar al modelo y crea lo que
-él diga; todavía **no acepta las tareas ya editadas por el usuario**. Ese
-segundo paso es mío y está anotado en `TASKS.md`. Hasta que lo tenga, la
-aprobación de la cuarentena no puede respetar las ediciones: coordina con Doc si
-quieres montar la UI completa antes o esperar.
+```json
+{
+  "category": "INVOICING",
+  "tasks": [
+    {
+      "title": "Remitir KYC con las correcciones",
+      "description": "…",
+      "priority": "HIGH",
+      "tags": ["KYC"],
+      "dueDate": "2026-08-10T00:00:00.000Z"
+    }
+  ]
+}
+```
 
-Las tres tareas del flujo están en `TASKS.md`, dentro del Sprint 3.
+- **201** con las tareas creadas, ya con `id`. Píntalas con lo que devuelve el
+  servidor.
+- **400** si una prioridad o una categoría no está en su vocabulario, o si una
+  tarea viene sin `title`.
+- **404** si el correo no es del usuario · **409** si ya tenía tareas
+  (`"force": true` para insistir).
+
+Detalles que te ahorran sorpresas:
+
+- Solo `title` y `priority` son obligatorios en cada tarea. `category` es
+  opcional: **mándala solo si el usuario la cambió**, porque si va, pisa la que
+  tenía el correo.
+- Un `tasks[]` **vacío no vale** como confirmación: si el usuario descarta todo,
+  no llames a este endpoint. Un arreglo vacío cae a la vía antigua y acabarías
+  creando una tarea que nadie aprobó.
+- Las tareas confirmadas se guardan con `source: MANUAL`, aunque las propusiera
+  el modelo: las aprobó una persona y así el reproceso del worker no las borra.
+- Se anexan al final de **Por hacer**, no al principio.
+- El correo queda marcado como procesado en la misma transacción.
+
+**Lo que todavía no hace**: no emite evento de socket. Las tarjetas nuevas
+llegan en la respuesta 201 —píntalas desde ahí— pero **las otras pestañas del
+usuario no se enteran** hasta que recarguen. Si te estorba, pídemelo y lo
+conecto al gateway.
+
+Las tareas del flujo están en `TASKS.md`, dentro del Sprint 3.
 
 ---
 

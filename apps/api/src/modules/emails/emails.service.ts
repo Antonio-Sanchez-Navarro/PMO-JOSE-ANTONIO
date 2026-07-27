@@ -1,13 +1,16 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Task, TaskPriority, TaskSource } from '@prisma/client';
+import { Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
-import { ToTaskDto } from './dto/to-task.dto';
+import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
 
 export interface ToTaskResult {
   emailId: string;
-  /** 'manual' si el cuerpo traía `title`; 'ai' si lo extrajo el modelo. */
-  mode: 'manual' | 'ai';
+  /**
+   * `'confirmed'` si el cuerpo traía `tasks[]` (aprobación desde la cuarentena),
+   * `'manual'` si traía `title`, `'ai'` si lo extrajo el modelo.
+   */
+  mode: 'confirmed' | 'manual' | 'ai';
   /** Solo en modo 'ai': el modelo no vio nada accionable y se usó el asunto. */
   usedFallback: boolean;
   tasks: Task[];
@@ -116,6 +119,13 @@ export class EmailsService {
       }
     }
 
+    // Confirmación de la cuarentena: la persona ya revisó la propuesta y esto
+    // es lo que aprobó. No se vuelve a llamar al modelo — sería pagar otra vez
+    // por una respuesta que además podría no coincidir con lo que aprobó.
+    if (dto.tasks?.length) {
+      return this.persistConfirmed(userId, email.id, dto.tasks, dto.category);
+    }
+
     // Vía manual: la persona ya escribió el título, no hay nada que inferir.
     if (dto.title?.trim()) {
       const task = await this.prisma.task.create({
@@ -169,5 +179,76 @@ export class EmailsService {
     );
 
     return { emailId, mode: 'ai', usedFallback: result.usedFallback, tasks };
+  }
+
+  /**
+   * Escribe lo que la persona aprobó en la cuarentena.
+   *
+   * Todo en una transacción: o entran las tareas y el correo queda marcado, o
+   * no pasa nada. Si se escribieran por separado, un fallo a medias dejaría
+   * tareas sin correo procesado —el worker volvería a clasificarlo y las
+   * duplicaría— o un correo procesado sin las tareas que lo justifican.
+   */
+  private async persistConfirmed(
+    userId: string,
+    emailId: string,
+    confirmed: ConfirmedTaskDto[],
+    category?: string,
+  ): Promise<ToTaskResult> {
+    const tasks = await this.prisma.$transaction(async (tx) => {
+      // Las tarjetas aprobadas se anexan al final de "Por hacer", igual que las
+      // que crea `POST /tasks`: nacer en la posición 0 las metería por delante
+      // de lo que el usuario ya tenía ordenado.
+      const last = await tx.task.findFirst({
+        where: { userId, status: TaskStatus.TODO },
+        orderBy: { position: 'desc' },
+        select: { position: true },
+      });
+
+      let position = last ? last.position + 1 : 0;
+      const created: Task[] = [];
+
+      // Secuencial y no `Promise.all`: Prisma desaconseja lanzar consultas
+      // concurrentes sobre el cliente de una transacción interactiva.
+      for (const task of confirmed) {
+        created.push(
+          await tx.task.create({
+            data: {
+              userId,
+              sourceEmailId: emailId,
+              title: task.title.trim(),
+              description: task.description ?? '',
+              priority: task.priority,
+              tags: task.tags ?? [],
+              dueDate: task.dueDate ? new Date(task.dueDate) : null,
+              position: position++,
+              // MANUAL y no EMAIL aunque las propusiera el modelo: las aprobó
+              // una persona. El reproceso del worker borra lo que tiene origen
+              // EMAIL, y eso destruiría trabajo ya validado.
+              source: TaskSource.MANUAL,
+            },
+          }),
+        );
+      }
+
+      await tx.email.update({
+        where: { id: emailId },
+        data: {
+          isActionable: true,
+          processedAt: new Date(),
+          // Solo si la persona la tocó: sin esto, confirmar borraría la
+          // categoría que ya tuviera el correo.
+          ...(category ? { category } : {}),
+        },
+      });
+
+      return created;
+    });
+
+    this.logger.log(
+      `Cuarentena confirmada en el correo ${emailId}: ${tasks.length} tarea(s) aprobada(s)`,
+    );
+
+    return { emailId, mode: 'confirmed', usedFallback: false, tasks };
   }
 }

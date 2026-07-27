@@ -178,6 +178,130 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
   });
 });
 
+describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)', () => {
+  let service: EmailsService;
+  let prisma: any;
+  let tx: any;
+  let classification: { classifyAndPersist: jest.Mock; classify: jest.Mock };
+
+  const aprobadas = [
+    { title: '  Enviar cotización  ', priority: 'URGENT' as any, tags: ['obra'] },
+    { title: 'Remitir KYC', priority: 'HIGH' as any, dueDate: '2026-08-10T00:00:00.000Z' },
+  ];
+
+  beforeEach(() => {
+    tx = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue({ position: 4 }),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'task-x', ...data })),
+      },
+      email: { update: jest.fn().mockResolvedValue({}) },
+    };
+    prisma = {
+      email: { findFirst: jest.fn().mockResolvedValue(emailNoAccionable) },
+      task: { count: jest.fn().mockResolvedValue(0), create: jest.fn(), update: jest.fn() },
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
+    };
+    classification = { classifyAndPersist: jest.fn(), classify: jest.fn() };
+
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      classification as unknown as EmailClassificationService,
+    );
+  });
+
+  it('no vuelve a llamar al modelo: se persiste lo aprobado, no lo que diga otra vez', async () => {
+    await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
+
+    expect(classification.classifyAndPersist).not.toHaveBeenCalled();
+    expect(classification.classify).not.toHaveBeenCalled();
+  });
+
+  it('crea exactamente las tareas aprobadas, con el título recortado', async () => {
+    const result = await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
+
+    expect(result.mode).toBe('confirmed');
+    expect(tx.task.create).toHaveBeenCalledTimes(2);
+    expect(tx.task.create.mock.calls[0][0].data.title).toBe('Enviar cotización');
+    expect(tx.task.create.mock.calls[1][0].data.dueDate).toEqual(
+      new Date('2026-08-10T00:00:00.000Z'),
+    );
+  });
+
+  it('marca origen MANUAL para que el reproceso no borre lo que un humano aprobó', async () => {
+    await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
+
+    expect(tx.task.create.mock.calls[0][0].data.source).toBe(TaskSource.MANUAL);
+  });
+
+  it('anexa al final de "Por hacer" en vez de colarse en la posición 0', async () => {
+    await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
+
+    expect(tx.task.create.mock.calls[0][0].data.position).toBe(5);
+    expect(tx.task.create.mock.calls[1][0].data.position).toBe(6);
+  });
+
+  it('empieza en 0 cuando la columna está vacía', async () => {
+    tx.task.findFirst.mockResolvedValue(null);
+
+    await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: [aprobadas[0]] });
+
+    expect(tx.task.create.mock.calls[0][0].data.position).toBe(0);
+  });
+
+  it('marca el correo como procesado en la misma transacción', async () => {
+    await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    const data = tx.email.update.mock.calls[0][0].data;
+    expect(data.processedAt).toBeInstanceOf(Date);
+    expect(data.isActionable).toBe(true);
+  });
+
+  it('solo pisa la categoría si la persona la cambió', async () => {
+    await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
+    expect(tx.email.update.mock.calls[0][0].data).not.toHaveProperty('category');
+
+    await service.convertToTask(USER_ID, emailNoAccionable.id, {
+      tasks: aprobadas,
+      category: 'INVOICING',
+    });
+    expect(tx.email.update.mock.calls[1][0].data.category).toBe('INVOICING');
+  });
+
+  it('sigue respetando el 409 por duplicados', async () => {
+    prisma.task.count.mockResolvedValue(3);
+
+    await expect(
+      service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas }),
+    ).rejects.toThrow(ConflictException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('un tasks[] vacío no cuenta como confirmación y cae a la vía de siempre', async () => {
+    classification.classifyAndPersist.mockResolvedValue({
+      isActionable: true,
+      category: 'OTHER',
+      usedFallback: false,
+      tasks: [],
+    });
+
+    const result = await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: [] });
+
+    expect(result.mode).toBe('ai');
+  });
+
+  it('tasks[] manda sobre title si llegan los dos', async () => {
+    const result = await service.convertToTask(USER_ID, emailNoAccionable.id, {
+      tasks: aprobadas,
+      title: 'Un título suelto',
+    });
+
+    expect(result.mode).toBe('confirmed');
+    expect(prisma.task.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('EmailsService — POST /emails/:id/classify', () => {
   let service: EmailsService;
   let prisma: any;
