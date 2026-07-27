@@ -3,6 +3,9 @@ import { Toaster, toast } from 'sonner';
 import {
   DndContext,
   closestCorners,
+  pointerWithin,
+  rectIntersection,
+  CollisionDetection,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -79,6 +82,28 @@ export const KanbanBoard: React.FC = () => {
       });
     }
   });
+
+  /**
+   * Dónde se suelta la tarjeta.
+   *
+   * Manda el puntero: es lo único que distingue "he soltado dentro de esta
+   * columna" de "he soltado cerca de una tarjeta de otra". Las estrategias por
+   * distancia no valen aquí porque las columnas son muy altas —el tablero real
+   * mide más de 2000 px— y tanto su centro como sus esquinas quedan lejísimos
+   * del punto donde se suelta: siempre ganaba alguna tarjeta de una columna
+   * poblada, y en las vacías el drop no registraba nada.
+   *
+   * El resto son respaldos: `rectIntersection` cubre el arrastre por teclado y
+   * el hueco entre columnas, donde no hay puntero dentro de ningún droppable, y
+   * `closestCorners` evita quedarnos sin destino en el peor caso.
+   */
+  const collisionDetection: CollisionDetection = useCallback((args) => {
+    const porPuntero = pointerWithin(args);
+    if (porPuntero.length > 0) return porPuntero;
+
+    const porInterseccion = rectIntersection(args);
+    return porInterseccion.length > 0 ? porInterseccion : closestCorners(args);
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -278,17 +303,9 @@ export const KanbanBoard: React.FC = () => {
         </div>
       </div>
 
-      {/*
-        `closestCorners` y no `closestCenter`: con este último una columna vacía
-        solo aporta el centro de su contenedor, que queda lejos del punto donde
-        se suelta, y casi siempre gana el centro de una tarjeta de otra columna.
-        El drop no registraba cambio de estado y la tarjeta volvía a su sitio,
-        sin error: en "Por Hacer", "Pospuestas" y "Cumplidas" —las tres vacías—
-        era imposible soltar nada.
-      */}
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}

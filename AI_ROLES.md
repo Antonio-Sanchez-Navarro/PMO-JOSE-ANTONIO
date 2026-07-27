@@ -6,14 +6,21 @@
 
 ## Agentes
 
-| Agente | Dónde corre |
-|---|---|
-| **Claude** | Terminal (Claude Code) |
-| **Gemini** | IDE |
+Reglas fijadas por el usuario el 2026-07-27.
+
+| Agente | Dónde corre | Papel |
+|---|---|---|
+| **Doc** | Gemini en Chrome | Project manager y arquitecto principal. **No escribe código**: supervisa la integración, decide arquitectura, valida el trabajo y orquesta los siguientes pasos. |
+| **Gravity** | Gemini local (IDE) | Desarrollador frontend (`@pmo/web`): React, UI/UX, Tailwind, Vite y estado del cliente. |
+| **Claude Code** | Terminal (Claude Code) | Desarrollador backend (`@pmo/api`): Node, Prisma, migraciones, lógica de negocio y testing. |
+
+**Todo lo que haga cualquiera de los dos desarrolladores se le informa a Doc**,
+que es quien reparte el trabajo. A Doc no se le mandan fragmentos para que los
+refactorice: el código lo escriben Gravity y Claude Code.
 
 ---
 
-## Dominio de Claude — backend profundo
+## Dominio de Claude Code — backend profundo
 
 - **Workers y colas** (BullMQ): `gmail.processor.ts`, `ai.processor.ts`,
   `dead-letter/`, configuración de reintentos y backoff.
@@ -24,7 +31,7 @@
 - **Lógica core del backend**: servicios de dominio que no son CRUD
   (`GmailService`, `AuthService`, `CryptoService`, guards, integraciones).
 
-## Dominio de Gemini — frontend y capa REST
+## Dominio de Gravity — frontend y capa REST
 
 - **Frontend** completo: `apps/web/` — React, componentes, hooks, routing.
 - **UI/UX**: Tailwind, layout, estados de carga/error/vacío.
@@ -50,6 +57,18 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
 - `.env` / `.env.example`
 
 ## Excepciones vigentes
+
+- **`KanbanBoard.tsx` — detección de colisión del arrastre**, commiteada por
+  **Claude Code** el 2026-07-27 con el visto bueno de Doc. Es frontend, o sea
+  dominio de Gravity, pero el arreglo salió de una sesión de depuración con la
+  app corriendo y se commitea ya verificado para que Gravity parta de una base
+  estable en vez de un archivo con cambios locales que no ve.
+
+  **Gravity: el refactor de `handleDragEnd` es tuyo.** `moveTask()` se llama
+  dentro del updater de `setTasks`; un updater debe ser puro y React puede
+  invocarlo dos veces (`StrictMode` está activo en `main.tsx`). Hoy no duplica
+  la petición —comprobado con traza del backend y panel de red, un solo
+  `PATCH /move` por arrastre—, así que funciona por suerte, no por diseño.
 
 - **`modules/emails/`** (`POST /emails/:id/to-task`, Sprint 3): es capa REST,
   pero lo implementa **Claude** — acordado con el usuario el 2026-07-25 — porque
