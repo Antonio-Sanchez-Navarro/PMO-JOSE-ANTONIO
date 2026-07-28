@@ -31,16 +31,29 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail 
     transition,
   };
 
+  const titleMatch = task.title.match(/^\[(.*?)\]\s*(.*)$/);
+  const prefix = titleMatch ? titleMatch[1] : null;
+  const cleanTitle = titleMatch ? titleMatch[2] : task.title;
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...attributes}
       {...listeners}
-      className="bg-white p-4 rounded-md shadow-sm border border-gray-200 mb-2 cursor-grab"
+      className="bg-white p-4 rounded-md shadow-sm border border-gray-200 mb-2 cursor-grab flex flex-col group"
     >
-      <div className="flex justify-between items-start mb-2">
-        <h4 className="text-sm font-medium text-gray-900">{task.title}</h4>
+      <div className="flex justify-between items-start mb-2 gap-2">
+        <div className="flex flex-col min-w-0">
+          {prefix && (
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1 truncate">
+              {prefix}
+            </span>
+          )}
+          <h4 className="text-sm font-medium text-gray-900 line-clamp-2" title={cleanTitle}>
+            {cleanTitle}
+          </h4>
+        </div>
         <div className="flex items-center gap-2">
           {task.aiConfidence && <AiAuditBadge confidence={task.aiConfidence} />}
           {onDelete && (
