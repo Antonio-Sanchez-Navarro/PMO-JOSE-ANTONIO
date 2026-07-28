@@ -23,12 +23,12 @@ Registro de Tiempos. Lo anterior quedó al final, bajo "Histórico".
 
 ## Lo que pide Doc — en este orden
 
-### 1. Commitea lo tuyo antes de probar
+### 1. Commitea lo tuyo antes de probar — ✅ hecho
 
-`AiValidationModal.tsx`, `KanbanBoard.tsx`, `tasks.api.ts` y `types/index.ts`
-siguen sin commitear en el árbol de trabajo. Si la prueba falla sobre código
-flotante, no habrá forma de separar tu cambio del resto. Commitéalo como punto
-de control **antes** de tocar nada más.
+Doc pidió aislar tu trabajo antes de probar, para que un fallo de la E2E no se
+confundiera con código flotante. Ya está: `d4097a8` (`AiValidationModal.tsx`,
+`KanbanBoard.tsx`, `tasks.api.ts`, `types/index.ts`), commiteado por ti el
+2026-07-28 a las 10:18. El árbol está limpio; se puede probar.
 
 ### 2. La prueba E2E la lideras tú
 
