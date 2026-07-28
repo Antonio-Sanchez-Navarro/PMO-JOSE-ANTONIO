@@ -96,6 +96,57 @@ cliente de socket.io del tablero. Ya lo tienes hecho (`c06cb73`, `ae2dceb`,
 
 ## Contra qué trabajas
 
+## 🚧 Dos cosas rompen el flujo tras el refactor `6985cc1` + `acc402d`
+
+Comprobadas contra la app, no deducidas. Léelas antes de hacer la E2E, porque
+con el código de ahora no puede pasar.
+
+**1. `InboxPage` analiza con el id equivocado — daría 404 siempre.**
+
+La lista sale de `useInbox` → `GET /gmail/inbox`, que va **en vivo a Google** y
+devuelve el **id de mensaje de Gmail**. `onAnalyze(thread.latest.id)` le pasa
+ese id a `classifyEmail`, pero `classify` y `to-task` esperan el `Email.id` de
+nuestra base. Son dos identificadores distintos del mismo correo:
+
+| | |
+|---|---|
+| `Email.id` (lo que aceptan classify/to-task) | `cmrzl7ycl00037po8l5z7d3nz` |
+| `gmailMessageId` (lo que devuelve `/gmail/inbox`) | `19f95edbf2b0650a` |
+
+Probado: `POST /emails/19f95edbf2b0650a/classify` → **404 "No existe el correo
+19f95edbf2b0650a"**. Este era exactamente el agujero que `GET /emails` vino a
+tapar, y el refactor que quitó el `TriageSidebar` volvió a dejar la vista
+colgada de la lista de Gmail.
+
+**2. `email.tasks` no existe en ningún contrato.**
+
+`InboxPage.tsx:210` hace `Boolean(email.tasks && email.tasks.length > 0)`. Ni
+`EmailSnippet` ni `GET /emails` traen `tasks`. Campos reales que devuelvo:
+`id, subject, from, date, category, taskCount, isConverted`. Así que ese
+`isProcessed` es **siempre false** y el botón nunca se deshabilita. Usa
+`email.isConverted` (o `taskCount > 0`), que es lo que dice el contrato de
+abajo.
+
+**Cómo salir de esto.** La vista de correos debe alimentarse de `GET /emails`,
+no de `/gmail/inbox`: es la única lista cuyos ids sirven y la única que sabe
+qué está convertido. Si necesitas para pintar lo que hoy te da Gmail —`threadId`
+para agrupar por hilo, `labels` para la barra de filtros, `snippet` para la
+vista previa—, **pídemelo y lo añado**: la base ya los tiene persistidos, es
+sumar campos al `select`. Dime y lo hago en cuanto lo leas; no lo doy por hecho
+para no adivinar qué necesitas.
+
+**Con qué correo probar** (me lo preguntaste). Los ids salen de `GET /emails`,
+nunca de la bandeja de Gmail:
+
+- **Camino "Reprocesar"** — hoy es el único que produce tareas, porque los 13
+  accionables ya están convertidos: `cmrzlm1lc000hju1mu8rhe83u` ("Escrituración
+  Lote 36", 3 tareas). Necesita `force: true`; sin él, 409. Avísame cuando
+  termines y limpio las tareas duplicadas que deje la prueba.
+- **Camino limpio (201 sin `force`)**: `cmrzl7ybd00017po8j7ifuwqx` ("Banregio -
+  Transferencia Procesada"), sin tareas. Es no accionable, así que puede que el
+  modelo proponga pocas tareas o ninguna: eso **no** es un fallo, es el caso
+  `isActionable: false` que el modal debe saber enseñar.
+
 ### `GET /emails` — la bandeja de triage · **nuevo, ya en la rama**
 
 Lo que le faltaba a `useTriageEmails`. Devuelve **el arreglo sin envoltorio**
