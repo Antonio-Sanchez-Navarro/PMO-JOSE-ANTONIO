@@ -7,6 +7,7 @@ import { AiAuditBadge } from './AiAuditBadge';
 interface TaskCardProps {
   task: Task;
   onDelete?: (id: string) => void;
+  onViewEmail?: (emailId: string) => void;
 }
 
 const PRIORITY_COLORS: Record<TaskPriority, string> = {
@@ -22,7 +23,7 @@ const SOURCE_LABELS: Record<TaskSource, { icon: string; label: string; style: st
   [TaskSource.WHATSAPP]: { icon: '🤖', label: 'WhatsApp', style: 'bg-emerald-100 text-emerald-700' },
 };
 
-export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete }) => {
+export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task.id });
 
   const style = {
@@ -73,6 +74,20 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete }) => {
               <span>{SOURCE_LABELS[task.source].icon}</span>
               <span>{SOURCE_LABELS[task.source].label}</span>
             </span>
+          )}
+          {/* View Email Button */}
+          {task.sourceEmailId && onViewEmail && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewEmail(task.sourceEmailId!);
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+              title="Ver correo original"
+            >
+              <span>✉️</span>
+              <span>Leer</span>
+            </button>
           )}
         </div>
         {task.dueDate && (

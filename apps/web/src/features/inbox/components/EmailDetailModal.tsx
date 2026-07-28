@@ -7,10 +7,11 @@ export interface EmailDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   emailId: string | null;
-  onAnalyze: (emailId: string) => void;
+  onAnalyze?: (emailId: string) => void;
+  readOnly?: boolean;
 }
 
-export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze }: EmailDetailModalProps) {
+export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze, readOnly }: EmailDetailModalProps) {
   const [email, setEmail] = useState<EmailDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +111,7 @@ export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze }: EmailD
             Cerrar
           </button>
           
-          {email && (
+          {!readOnly && email && onAnalyze && (
             <button
               disabled={isProcessed}
               onClick={() => {

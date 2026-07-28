@@ -20,6 +20,7 @@ import { Task, TaskStatus } from '../types';
 import { MOCK_TASKS } from './mockTasks';
 import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters } from '../api/tasks.api';
 import { TaskModal } from './TaskModal';
+import { EmailDetailModal } from '../../inbox/components/EmailDetailModal';
 import { useSocket } from '../hooks/useSocket';
 import { TaskPriority } from '@pmo/shared';
 
@@ -28,6 +29,7 @@ export const KanbanBoard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   
   const [searchFilter, setSearchFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatus | ''>('');
@@ -319,11 +321,11 @@ export const KanbanBoard: React.FC = () => {
         onDragEnd={handleDragEnd}
       >
         <div className="flex gap-6 p-6 overflow-x-auto grow">
-          <KanbanColumn id={TaskStatus.TODO} title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} />
-          <KanbanColumn id={TaskStatus.IN_PROGRESS} title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} />
-          <KanbanColumn id={TaskStatus.POSTPONED} title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} />
-          <KanbanColumn id={TaskStatus.DONE} title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} />
-          <KanbanColumn id={TaskStatus.OVERDUE} title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id={TaskStatus.TODO} title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} />
+          <KanbanColumn id={TaskStatus.IN_PROGRESS} title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} />
+          <KanbanColumn id={TaskStatus.POSTPONED} title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} />
+          <KanbanColumn id={TaskStatus.DONE} title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} />
+          <KanbanColumn id={TaskStatus.OVERDUE} title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} />
         </div>
       </DndContext>
 
@@ -331,6 +333,13 @@ export const KanbanBoard: React.FC = () => {
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         onSubmit={handleCreateTask} 
+      />
+
+      <EmailDetailModal
+        isOpen={selectedEmailId !== null}
+        onClose={() => setSelectedEmailId(null)}
+        emailId={selectedEmailId}
+        readOnly={true}
       />
     </div>
   );
