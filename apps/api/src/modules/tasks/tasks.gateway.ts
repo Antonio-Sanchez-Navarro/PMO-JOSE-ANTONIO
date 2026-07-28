@@ -19,6 +19,16 @@ export const TASK_EVENTS = {
   deleted: 'task.deleted',
 } as const;
 
+/**
+ * Eventos de la bandeja. Viven en este gateway y no en uno propio porque el
+ * cliente mantiene **un solo socket por pestaña** —de ello depende la supresión
+ * del eco— y abrir un segundo gateway obligaría a un segundo handshake y a otra
+ * sala por usuario para el mismo dueño.
+ */
+export const EMAIL_EVENTS = {
+  updated: 'email.updated',
+} as const;
+
 /** Orden final de una columna del tablero. */
 export interface ColumnOrder {
   status: TaskStatus;
@@ -146,6 +156,21 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
       { id: task.id, status: task.status, userId: task.userId },
       exceptSocketId,
     );
+  }
+
+  /**
+   * Un correo cambió de estado en el triage (Inbox Zero).
+   *
+   * Va la fila entera, igual que en las tareas, para que la bandeja sustituya
+   * la suya sin volver a pedir la lista. `userId` viaja dentro porque es lo que
+   * usa `emit` para encaminar a la sala del dueño.
+   *
+   * El tipo se declara aquí de forma estructural y no importando `TriageEmail`:
+   * el módulo de tareas no debe depender del de correos, y para encaminar solo
+   * hacen falta estos dos campos.
+   */
+  emitEmailUpdated(email: { id: string; userId: string }, exceptSocketId?: string) {
+    this.emit(EMAIL_EVENTS.updated, email, exceptSocketId);
   }
 
   /**

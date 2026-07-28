@@ -285,10 +285,20 @@ las pestañas, o filtras en el cliente por el campo o pides cada una con su
 **Descartar un correo no borra las tareas que ya generó.** Son cosas distintas:
 la tarjeta vive en el tablero por su cuenta desde que se creó.
 
-**Lo que todavía no hace**: no emite evento de socket. Si el usuario tiene la
-bandeja abierta en dos pestañas, la otra no se entera del cambio hasta recargar.
-Está anotado en `TASKS.md`; si te estorba, pídemelo y conecto un `email.updated`
-al gateway.
+**Ya emite por socket** (antes no; queda corregido aquí). Cada cambio de estado
+sale como **`email.updated`** con el correo entero, la misma forma que una fila
+de `GET /emails`, así que puedes sustituir la tuya sin volver a pedir la lista.
+
+Va por el **mismo socket que ya tienes** —el de `useSocket`—, no por uno nuevo:
+un segundo gateway obligaría a otro handshake y rompería la supresión del eco,
+que depende de que haya un solo socket por pestaña. Basta con añadir el
+`socket.on('email.updated', …)` junto a los cuatro de tareas.
+
+El payload lleva `userId` porque es lo que encamina el evento a la sala de su
+dueño; para pintar, ignóralo igual que haces con las tareas.
+
+Manda tu `X-Socket-Id` en el `PATCH`: quien mueve el correo ya lo tiene en la
+respuesta 200 y el eco solo le haría repintar.
 
 ### `GET /emails/:id` — el correo completo, para leerlo · **nuevo**
 

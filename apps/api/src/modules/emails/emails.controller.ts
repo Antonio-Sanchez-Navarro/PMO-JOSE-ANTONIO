@@ -93,14 +93,18 @@ export class EmailsController {
    * Respuestas: 200 con el correo ya actualizado, en la misma forma que
    * devuelve `GET /emails` · 400 si el estado no está en el vocabulario · 404
    * si el correo no es suyo o no existe.
+   *
+   * El cambio sale además por socket como `email.updated`. Quien manda su
+   * `X-Socket-Id` no recibe el eco: ya tiene el correo en la respuesta.
    */
   @Patch(':id/status')
   updateStatus(
     @CurrentUser() user: CurrentUserContext,
     @Param('id') id: string,
     @Body() dto: UpdateEmailStatusDto,
+    @Headers(SOCKET_ID_HEADER) socketId?: string,
   ): Promise<TriageEmail> {
-    return this.emailsService.updateStatus(user.userId, id, dto.status);
+    return this.emailsService.updateStatus(user.userId, id, dto.status, socketId);
   }
 
   /**

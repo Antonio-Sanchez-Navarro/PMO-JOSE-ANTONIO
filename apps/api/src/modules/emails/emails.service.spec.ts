@@ -13,9 +13,9 @@ const USER_ID = 'user-1';
  * de abajo: este `beforeEach` se registra primero y corre antes que los suyos,
  * que son los que construyen el servicio.
  */
-let gateway: { emitTaskCreated: jest.Mock };
+let gateway: { emitTaskCreated: jest.Mock; emitEmailUpdated: jest.Mock };
 beforeEach(() => {
-  gateway = { emitTaskCreated: jest.fn() };
+  gateway = { emitTaskCreated: jest.fn(), emitEmailUpdated: jest.fn() };
 });
 
 describe('EmailsService — POST /emails/:id/to-task', () => {
@@ -875,5 +875,91 @@ describe('EmailsService — filtro por estado en el listado', () => {
     const [fila] = await service.listForTriage(USER_ID, {});
 
     expect(fila.status).toBe(EmailStatus.IN_PROGRESS);
+  });
+});
+
+describe('EmailsService — aviso a la bandeja al mover un correo', () => {
+  let service: EmailsService;
+  let prisma: any;
+
+  const fila = {
+    id: 'email-1',
+    subject: 'Escrituración',
+    from: 'notaria@ejemplo.mx',
+    receivedAt: new Date('2026-07-25T18:00:00.000Z'),
+    category: null,
+    status: EmailStatus.COMPLETED,
+    threadId: 'hilo-1',
+    labels: [],
+    snippet: null,
+    gmailMessageId: 'g1',
+    _count: { tasks: 0 },
+  };
+
+  beforeEach(() => {
+    prisma = {
+      email: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findFirstOrThrow: jest.fn().mockResolvedValue(fila),
+      },
+    };
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      {} as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+    );
+  });
+
+  it('anuncia el correo ya actualizado, no el estado anterior', async () => {
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED);
+
+    expect(gateway.emitEmailUpdated).toHaveBeenCalledTimes(1);
+    const [payload] = gateway.emitEmailUpdated.mock.calls[0];
+    expect(payload.status).toBe(EmailStatus.COMPLETED);
+    expect(payload.id).toBe('email-1');
+  });
+
+  it('mete el userId en el payload, que es lo que encamina el evento a su sala', async () => {
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED);
+
+    expect(gateway.emitEmailUpdated.mock.calls[0][0].userId).toBe(USER_ID);
+  });
+
+  it('excluye del eco a la pestaña que movió el correo', async () => {
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED, 'socket-1');
+
+    expect(gateway.emitEmailUpdated.mock.calls[0][1]).toBe('socket-1');
+  });
+
+  it('sin cabecera se anuncia a todas las pestañas del usuario', async () => {
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED);
+
+    expect(gateway.emitEmailUpdated.mock.calls[0][1]).toBeUndefined();
+  });
+
+  it('no anuncia nada si el correo no era suyo', async () => {
+    prisma.email.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.updateStatus(USER_ID, 'ajeno', EmailStatus.COMPLETED)).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(gateway.emitEmailUpdated).not.toHaveBeenCalled();
+  });
+
+  it('anuncia después de escribir, no antes', async () => {
+    const orden: string[] = [];
+    prisma.email.updateMany.mockImplementation(async () => {
+      orden.push('escritura');
+      return { count: 1 };
+    });
+    gateway.emitEmailUpdated.mockImplementation(() => {
+      orden.push('evento');
+    });
+
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED);
+
+    // Un evento emitido antes de que la escritura cuaje anunciaría un estado
+    // que todavía podría no existir.
+    expect(orden).toEqual(['escritura', 'evento']);
   });
 });

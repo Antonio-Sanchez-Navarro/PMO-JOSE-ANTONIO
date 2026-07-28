@@ -157,7 +157,12 @@ export class EmailsService {
    * comprobación de propiedad y la escritura son la misma operación y no queda
    * hueco entre leer y escribir.
    */
-  async updateStatus(userId: string, emailId: string, status: EmailStatus): Promise<TriageEmail> {
+  async updateStatus(
+    userId: string,
+    emailId: string,
+    status: EmailStatus,
+    socketId?: string,
+  ): Promise<TriageEmail> {
     const { count } = await this.prisma.email.updateMany({
       where: { id: emailId, userId },
       data: { status },
@@ -175,7 +180,14 @@ export class EmailsService {
       where: { id: emailId, userId },
       select: SELECT_TRIAGE,
     });
-    return aTriageEmail(fila);
+    const actualizado = aTriageEmail(fila);
+
+    // Las demás pestañas del usuario ven moverse el correo sin recargar. El
+    // `userId` viaja en el payload porque es lo que encamina el evento a su
+    // sala; la bandeja lo ignora para pintar, igual que hace con las tareas.
+    this.gateway.emitEmailUpdated({ ...actualizado, userId }, socketId);
+
+    return actualizado;
   }
 
   /**
