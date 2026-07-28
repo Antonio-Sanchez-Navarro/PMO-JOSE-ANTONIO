@@ -140,6 +140,11 @@ las tareas ya te llegan en la respuesta 201 y sin la cabecera las pintarías dos
 veces, una por la respuesta y otra por el eco. Recuerda que el `socket.id`
 cambia en cada reconexión, así que léelo en el momento de la petición.
 
+Verificado contra la app con dos pestañas del mismo usuario: la que confirmó
+mandando la cabecera no recibió nada y la otra vio aparecer las dos tarjetas;
+sin cabecera llegaron a las dos. Un correo ya convertido responde 409 y no
+emite nada, así que un reintento no te ensucia el tablero.
+
 Las tareas del flujo están en `TASKS.md`, dentro del Sprint 3.
 
 ---
