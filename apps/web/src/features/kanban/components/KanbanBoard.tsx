@@ -307,9 +307,12 @@ export const KanbanBoard: React.FC = () => {
 
           <button
             onClick={() => {
+              const realEmailId = window.prompt("Pega el ID de un correo real que tengas en tu BD para la prueba E2E (así el backend no dará 404):", "cmrzlm1lc000hju1mu8rhe83u");
+              if (!realEmailId) return;
+              
               setAiProposal({
-                emailId: "test-email-xyz",
-                category: EmailCategory.INVOICING,
+                emailId: realEmailId,
+                category: "INVOICING",
                 isActionable: true,
                 aiConfidence: 0.95,
                 tasks: [
@@ -360,11 +363,20 @@ export const KanbanBoard: React.FC = () => {
         proposal={aiProposal}
         onConfirm={async (data) => {
           try {
-            await createTasksFromEmail(data.emailId, data);
+            const { category, tasks } = data;
+            // Solo mandamos category y tasks según el HANDOFF
+            const payload = category ? { category, tasks } : { tasks };
+            const createdTasks = await createTasksFromEmail(data.emailId, payload);
+            
+            // Añadimos manualmente las tareas devueltas, ya que el eco de socket está suprimido
+            setTasks((prev) => {
+              const newTasks = createdTasks.filter((ct: any) => !prev.some(t => t.id === ct.id));
+              return [...prev, ...newTasks];
+            });
+
             toast.success("Tareas creadas desde el correo exitosamente.");
             setIsAiModalOpen(false);
             setAiProposal(null);
-            loadTasks(); // Actualizar el tablero con las nuevas tareas
           } catch (e) {
             toast.error("Error al crear las tareas propuestas.");
             console.error(e);
