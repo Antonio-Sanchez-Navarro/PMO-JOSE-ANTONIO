@@ -1,4 +1,4 @@
-import { Email } from '@prisma/client';
+import { Email, EmailStatus } from '@prisma/client';
 
 /**
  * Correos de ejemplo para las pruebas.
@@ -19,6 +19,7 @@ const BASE: Email = {
   labels: ['INBOX'],
   category: null,
   isActionable: false,
+  status: EmailStatus.PENDING,
   receivedAt: new Date('2026-07-24T15:30:00.000Z'),
   processedAt: null,
 };
