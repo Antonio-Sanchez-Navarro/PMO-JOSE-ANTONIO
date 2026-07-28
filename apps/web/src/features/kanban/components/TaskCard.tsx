@@ -1,13 +1,26 @@
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Task } from '../types';
+import { Task, TaskPriority, TaskSource } from '../types';
 import { AiAuditBadge } from './AiAuditBadge';
 
 interface TaskCardProps {
   task: Task;
   onDelete?: (id: string) => void;
 }
+
+const PRIORITY_COLORS: Record<TaskPriority, string> = {
+  [TaskPriority.LOW]: 'bg-slate-100 text-slate-700',
+  [TaskPriority.MEDIUM]: 'bg-blue-100 text-blue-700',
+  [TaskPriority.HIGH]: 'bg-orange-100 text-orange-700',
+  [TaskPriority.URGENT]: 'bg-red-100 text-red-700',
+};
+
+const SOURCE_LABELS: Record<TaskSource, { icon: string; label: string; style: string }> = {
+  [TaskSource.MANUAL]: { icon: '👤', label: 'Manual', style: 'bg-gray-100 text-gray-600' },
+  [TaskSource.EMAIL]: { icon: '🤖', label: 'Email', style: 'bg-purple-100 text-purple-700' },
+  [TaskSource.WHATSAPP]: { icon: '🤖', label: 'WhatsApp', style: 'bg-emerald-100 text-emerald-700' },
+};
 
 export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task.id });
@@ -45,9 +58,28 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete }) => {
           )}
         </div>
       </div>
-      <div className="flex gap-2 text-xs text-gray-500">
-        <span>{task.priority}</span>
-        {task.dueDate && <span>Due: {task.dueDate}</span>}
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-3 text-xs">
+        <div className="flex flex-wrap gap-2">
+          {/* Priority Badge */}
+          <span className={`px-2 py-0.5 rounded font-semibold tracking-wide text-[10px] uppercase ${PRIORITY_COLORS[task.priority]}`}>
+            {task.priority}
+          </span>
+          {/* Source Badge */}
+          {task.source && SOURCE_LABELS[task.source] && (
+            <span 
+              className={`flex items-center gap-1 px-2 py-0.5 rounded font-medium ${SOURCE_LABELS[task.source].style}`} 
+              title={`Origen: ${SOURCE_LABELS[task.source].label}`}
+            >
+              <span>{SOURCE_LABELS[task.source].icon}</span>
+              <span>{SOURCE_LABELS[task.source].label}</span>
+            </span>
+          )}
+        </div>
+        {task.dueDate && (
+          <span className="text-gray-500 font-medium whitespace-nowrap">
+            {new Date(task.dueDate).toLocaleDateString()}
+          </span>
+        )}
       </div>
     </div>
   );
