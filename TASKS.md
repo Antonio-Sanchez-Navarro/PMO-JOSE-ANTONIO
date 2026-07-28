@@ -171,7 +171,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [ ] 🔴 `GET /dashboard/metrics`: WIP, throughput, tareas atrasadas, tiempos
 - [ ] 🔴 Vista de métricas con gráficas (burndown/throughput)
 - [ ] 🔴 Seguridad: rate limiting, Helmet, CORS, validación exhaustiva
-- [ ] 🟡 Tests: unitarios (servicios/IA), e2e (flujos clave)
+- [ ] 🟡 Tests: unitarios (servicios/IA), e2e (flujos clave) — ✅ Unitarios: **238 pruebas en 8 suites** (IA, prioridad, prefijo de título, clasificación, correos, tareas, vencidas), sin DB ni Redis ni llamadas a Anthropic, corriendo en CI. _Falta la parte e2e: no hay Playwright ni Cypress en el repo y las pruebas de flujo se han hecho a mano contra la app_
 - [ ] 🟡 Observabilidad: logs estructurados (pino), Sentry, health checks
 - [ ] 🟡 CI/CD completo: build de imágenes + deploy (Cloud Run/Fly/Render)
 - [ ] 🟢 Documentación de operación y runbook de incidentes
