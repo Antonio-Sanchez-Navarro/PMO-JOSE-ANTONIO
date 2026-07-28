@@ -33,6 +33,7 @@ export function InboxPage() {
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiProposal, setAiProposal] = useState<EmailClassification | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'PENDING' | 'IN_PROGRESS' | 'DONE' | 'DISMISSED'>('PENDING');
 
   const handleAnalyzeEmail = async (emailId: string) => {
     try {
@@ -72,6 +73,28 @@ export function InboxPage() {
           {isRefreshing ? "Actualizando…" : "Actualizar"}
         </button>
       </header>
+
+      {/* Tabs de Inbox Zero */}
+      <div className="flex items-center gap-6 px-6 border-b border-slate-200 bg-slate-50/50">
+        {[
+          { id: 'PENDING', label: 'Pendientes' },
+          { id: 'IN_PROGRESS', label: 'En Proceso' },
+          { id: 'DONE', label: 'Completados' },
+          { id: 'DISMISSED', label: 'Descartados' }
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={`py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === tab.id
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
       {status === "ready" && labels.length > 0 && (
         <LabelFilterBar labels={labels} active={labelFilter} onChange={setLabelFilter} />
@@ -287,10 +310,37 @@ function EmailRow({
         <time
           dateTime={email.date}
           title={formatFullDate(email.date)}
-          className="whitespace-nowrap pt-0.5 text-xs text-slate-400"
+          className="whitespace-nowrap pt-0.5 text-xs text-slate-400 mb-1"
         >
           {formatEmailDate(email.date)}
         </time>
+
+        {/* Botones de Inbox Zero (Inactivos) */}
+        {!nested && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={(e) => { e.stopPropagation(); console.log('TODO: conectar PATCH (Descartar)'); }}
+              className="px-2 py-1 text-[11px] font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 rounded transition"
+              title="Descartar"
+            >
+              Descartar
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); console.log('TODO: conectar PATCH (En Proceso)'); }}
+              className="px-2 py-1 text-[11px] font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded transition"
+              title="Marcar en proceso"
+            >
+              En Proceso
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); console.log('TODO: conectar PATCH (Completado)'); }}
+              className="px-2 py-1 text-[11px] font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded transition"
+              title="Marcar como completado"
+            >
+              Completado
+            </button>
+          </div>
+        )}
 
         {onAnalyze && (
           <button
