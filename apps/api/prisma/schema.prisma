@@ -57,6 +57,7 @@ model User {
   emails         Email[]
   tasks          Task[]
   timeEntries    TimeEntry[]
+  tags           Tag[]
 }
 
 model Email {
@@ -100,13 +101,39 @@ model Task {
   /// tarea queda protegida del borrado por reproceso en vez de expuesta.
   source        TaskSource   @default(MANUAL)
   aiConfidence  Float?
+  /// Etiquetas libres que extrae el modelo del texto del correo ("TC", "KYC").
+  /// Son texto suelto a propósito: nacen de cada análisis, no tienen dueño ni
+  /// color. No confundir con `labels`, que son las de la persona.
   tags          String[]
+  /// Etiquetas curadas por la persona, con color y reutilizables entre tareas.
+  labels        Tag[]
   position      Int          @default(0)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
   timeEntries   TimeEntry[]
 
   @@index([userId, status])
+}
+
+/// Etiqueta que crea y reutiliza la persona, con su color.
+///
+/// Convive con `Task.tags`, el arreglo de texto libre que saca el modelo de
+/// cada correo. No se fusionan a propósito: las del modelo nacen y mueren con
+/// cada análisis y llenarían de ruido la lista del usuario; estas las escribe
+/// una persona y esperan seguir ahí mañana.
+model Tag {
+  id        String   @id @default(cuid())
+  name      String
+  /// Hexadecimal `#RRGGBB`. Se valida en el DTO, no aquí.
+  color     String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  tasks     Task[]
+  createdAt DateTime @default(now())
+
+  /// Dos etiquetas con el mismo nombre para la misma persona serían
+  /// indistinguibles en cualquier desplegable.
+  @@unique([userId, name])
 }
 
 model TimeEntry {

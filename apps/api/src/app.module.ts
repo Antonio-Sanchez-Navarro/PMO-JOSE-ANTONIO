@@ -10,6 +10,7 @@ import { AiModule } from "./modules/ai/ai.module";
 import { EmailsModule } from "./modules/emails/emails.module";
 import { OverdueModule } from "./modules/overdue/overdue.module";
 import { DeadLetterModule } from "./common/bullmq/dead-letter.module";
+import { TagsModule } from './modules/tags/tags.module';
 
 // Módulos de dominio (se implementan por sprint — ver TASKS.md):
 import { TasksModule } from "./modules/tasks/tasks.module";
@@ -35,6 +36,7 @@ import { TasksModule } from "./modules/tasks/tasks.module";
     EmailsModule,
     OverdueModule,
     DeadLetterModule,
+    TagsModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

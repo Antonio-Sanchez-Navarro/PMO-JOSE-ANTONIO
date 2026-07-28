@@ -61,6 +61,9 @@ function makePrisma(rows: { id: string; status: string; position: number }[]) {
   return { prisma: prisma as unknown as PrismaService, tx, column, table };
 }
 
+/** Doble del servicio de etiquetas: estas pruebas no cuelgan ninguna. */
+const tagsVacio = () => ({ resolveIds: jest.fn().mockResolvedValue([]) }) as any;
+
 describe('TasksService.move', () => {
   const TODO = [
     { id: 'a', status: 'TODO', position: 0 },
@@ -75,7 +78,7 @@ describe('TasksService.move', () => {
 
   it('rechaza con 404 una tarea que no es del usuario', async () => {
     const { prisma } = makePrisma(TODO);
-    const service = new TasksService(prisma, gateway());
+    const service = new TasksService(prisma, gateway(), tagsVacio());
 
     await expect(
       service.move('otro-usuario', 'a', { status: 'TODO' as any, position: 0 }),
@@ -85,7 +88,7 @@ describe('TasksService.move', () => {
   describe('dentro de la misma columna', () => {
     it('mueve hacia abajo y renumera sin huecos', async () => {
       const { prisma, column } = makePrisma(TODO);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       await service.move(USER, 'a', { status: 'TODO' as any, position: 2 });
 
@@ -94,7 +97,7 @@ describe('TasksService.move', () => {
 
     it('mueve hacia arriba', async () => {
       const { prisma, column } = makePrisma(TODO);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       await service.move(USER, 'd', { status: 'TODO' as any, position: 0 });
 
@@ -103,7 +106,7 @@ describe('TasksService.move', () => {
 
     it('acota una posición fuera de rango al último hueco', async () => {
       const { prisma, column } = makePrisma(TODO);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       await service.move(USER, 'a', { status: 'TODO' as any, position: 999 });
 
@@ -112,7 +115,7 @@ describe('TasksService.move', () => {
 
     it('devuelve solo la columna afectada', async () => {
       const { prisma } = makePrisma(TODO);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       const result = await service.move(USER, 'a', { status: 'TODO' as any, position: 1 });
 
@@ -122,7 +125,7 @@ describe('TasksService.move', () => {
 
     it('no escribe las tarjetas cuya posición no cambia', async () => {
       const { prisma, tx } = makePrisma(TODO);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       // Mover 'c' (pos 2) a la 3 solo afecta a 'c' y 'd'.
       await service.move(USER, 'c', { status: 'TODO' as any, position: 3 });
@@ -136,7 +139,7 @@ describe('TasksService.move', () => {
   describe('entre columnas', () => {
     it('inserta en destino y cierra el hueco en origen', async () => {
       const { prisma, column } = makePrisma([...TODO, ...IN_PROGRESS]);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       await service.move(USER, 'b', { status: 'IN_PROGRESS' as any, position: 1 });
 
@@ -146,7 +149,7 @@ describe('TasksService.move', () => {
 
     it('cambia el status de la tarjeta movida', async () => {
       const { prisma, table } = makePrisma([...TODO, ...IN_PROGRESS]);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
 
@@ -155,7 +158,7 @@ describe('TasksService.move', () => {
 
     it('devuelve las dos columnas afectadas, destino primero', async () => {
       const { prisma } = makePrisma([...TODO, ...IN_PROGRESS]);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       const result = await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
 
@@ -166,7 +169,7 @@ describe('TasksService.move', () => {
 
     it('admite mover a una columna vacía', async () => {
       const { prisma, column } = makePrisma(TODO);
-      const service = new TasksService(prisma, gateway());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
 
       await service.move(USER, 'a', { status: 'DONE' as any, position: 0 });
 
@@ -177,7 +180,7 @@ describe('TasksService.move', () => {
 
   it('hace todo el trabajo dentro de una transacción', async () => {
     const { prisma } = makePrisma(TODO);
-    const service = new TasksService(prisma, gateway());
+    const service = new TasksService(prisma, gateway(), tagsVacio());
 
     await service.move(USER, 'a', { status: 'TODO' as any, position: 1 });
 
@@ -191,7 +194,7 @@ describe('TasksService.move', () => {
       { id: 'q', status: 'TODO', position: 0 },
       { id: 'r', status: 'TODO', position: 0 },
     ]);
-    const service = new TasksService(prisma, gateway());
+    const service = new TasksService(prisma, gateway(), tagsVacio());
 
     await service.move(USER, 'r', { status: 'TODO' as any, position: 0 });
 
@@ -218,7 +221,7 @@ describe('TasksService.create', () => {
     };
     prisma = { $transaction: jest.fn((cb: any) => cb(tx)) };
     events = gateway();
-    service = new TasksService(prisma as unknown as PrismaService, events);
+    service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
   });
 
   /** El `data` con el que se llamó a `task.create`. */
@@ -296,7 +299,7 @@ describe('TasksService.remove', () => {
     };
     prisma = { $transaction: jest.fn((cb: any) => cb(tx)) };
     events = gateway();
-    service = new TasksService(prisma as unknown as PrismaService, events);
+    service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
   });
 
   it('comprueba la propiedad filtrando por usuario, no solo por id', async () => {
@@ -333,7 +336,7 @@ describe('TasksService.findAll — filtros y búsqueda', () => {
         count: jest.fn().mockResolvedValue(0),
       },
     };
-    service = new TasksService(prisma as unknown as PrismaService, gateway());
+    service = new TasksService(prisma as unknown as PrismaService, gateway(), tagsVacio());
   });
 
   /** El `where` con el que se consultó la tabla. */
@@ -413,7 +416,7 @@ describe('TasksService — emisión de eventos realtime', () => {
     };
     prisma = { $transaction: jest.fn((cb: any) => cb(tx)) };
     events = gateway();
-    service = new TasksService(prisma as unknown as PrismaService, events);
+    service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
   });
 
   it('anuncia la tarea creada, con el id que le puso la base de datos', async () => {
@@ -458,7 +461,7 @@ describe('TasksService — task.updated', () => {
       },
     };
     const events = gateway();
-    const service = new TasksService(prisma as unknown as PrismaService, events);
+    const service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
 
     const actualizada = await service.update(USER, 'tarea-1', { status: 'DONE' as any });
 
@@ -478,7 +481,7 @@ describe('TasksService — task.updated', () => {
       },
     };
     const events = gateway();
-    const service = new TasksService(prisma as unknown as PrismaService, events);
+    const service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
 
     await service.update(USER, 'tarea-1', { status: 'DONE' as any });
 
@@ -490,7 +493,7 @@ describe('TasksService — task.updated', () => {
       task: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
     };
     const events = gateway();
-    const service = new TasksService(prisma as unknown as PrismaService, events);
+    const service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
 
     await expect(service.update(USER, 'ajena', { status: 'DONE' as any })).rejects.toThrow(
       NotFoundException,
@@ -505,7 +508,7 @@ describe('TasksService — task.updated', () => {
       { id: 'b', status: 'TODO', position: 1 },
     ]);
     const events = gateway();
-    const service = new TasksService(prisma, events);
+    const service = new TasksService(prisma, events, tagsVacio());
 
     const result = await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
 
@@ -517,7 +520,7 @@ describe('TasksService — task.updated', () => {
   it('no anuncia un arrastre rechazado por no ser del usuario', async () => {
     const { prisma } = makePrisma([{ id: 'a', status: 'TODO', position: 0 }]);
     const events = gateway();
-    const service = new TasksService(prisma, events);
+    const service = new TasksService(prisma, events, tagsVacio());
 
     await expect(
       service.move('otro-usuario', 'a', { status: 'DONE' as any, position: 0 }),
@@ -537,7 +540,7 @@ describe('TasksService — task.reordered', () => {
   it('anuncia el orden final de la columna tras un arrastre interno', async () => {
     const { prisma } = makePrisma(TABLERO);
     const events = gateway();
-    const service = new TasksService(prisma, events);
+    const service = new TasksService(prisma, events, tagsVacio());
 
     await service.move(USER, 'a', { status: 'TODO' as any, position: 2 });
 
@@ -551,7 +554,7 @@ describe('TasksService — task.reordered', () => {
   it('anuncia las dos columnas cuando la tarjeta cambia de columna', async () => {
     const { prisma } = makePrisma(TABLERO);
     const events = gateway();
-    const service = new TasksService(prisma, events);
+    const service = new TasksService(prisma, events, tagsVacio());
 
     const result = await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
 
@@ -563,7 +566,7 @@ describe('TasksService — task.reordered', () => {
   it('emite primero la tarjeta y después el orden', async () => {
     const { prisma } = makePrisma(TABLERO);
     const events = gateway();
-    const service = new TasksService(prisma, events);
+    const service = new TasksService(prisma, events, tagsVacio());
 
     await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
 
@@ -577,7 +580,7 @@ describe('TasksService — task.reordered', () => {
   it('no anuncia orden alguno si el arrastre se rechazó', async () => {
     const { prisma } = makePrisma(TABLERO);
     const events = gateway();
-    const service = new TasksService(prisma, events);
+    const service = new TasksService(prisma, events, tagsVacio());
 
     await expect(
       service.move('otro-usuario', 'a', { status: 'DONE' as any, position: 0 }),
@@ -593,7 +596,7 @@ describe('TasksService — task.reordered', () => {
       },
     };
     const events = gateway();
-    const service = new TasksService(prisma as unknown as PrismaService, events);
+    const service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
 
     await service.update(USER, 'a', { status: 'DONE' as any });
 
@@ -610,7 +613,7 @@ describe('TasksService — el socket que origina el cambio no recibe su eco', ()
       { id: 'b', status: 'TODO', position: 1 },
     ]);
     const events = gateway();
-    const service = new TasksService(prisma, events);
+    const service = new TasksService(prisma, events, tagsVacio());
 
     await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 }, SOCKET);
 
@@ -621,7 +624,7 @@ describe('TasksService — el socket que origina el cambio no recibe su eco', ()
   it('sin cabecera, el evento va a toda la sala', async () => {
     const { prisma } = makePrisma([{ id: 'a', status: 'TODO', position: 0 }]);
     const events = gateway();
-    const service = new TasksService(prisma, events);
+    const service = new TasksService(prisma, events, tagsVacio());
 
     await service.move(USER, 'a', { status: 'DONE' as any, position: 0 });
 
@@ -637,7 +640,7 @@ describe('TasksService — el socket que origina el cambio no recibe su eco', ()
     };
     const prisma: any = { $transaction: jest.fn((cb: any) => cb(tx)) };
     const events = gateway();
-    const service = new TasksService(prisma as unknown as PrismaService, events);
+    const service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
 
     await service.create(USER, { title: 'x' }, SOCKET);
 
@@ -654,7 +657,7 @@ describe('TasksService — el socket que origina el cambio no recibe su eco', ()
     };
     const prisma: any = { $transaction: jest.fn((cb: any) => cb(tx)) };
     const events = gateway();
-    const service = new TasksService(prisma as unknown as PrismaService, events);
+    const service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
 
     await service.remove(USER, 'a', SOCKET);
 
@@ -669,7 +672,7 @@ describe('TasksService — el socket que origina el cambio no recibe su eco', ()
       },
     };
     const events = gateway();
-    const service = new TasksService(prisma as unknown as PrismaService, events);
+    const service = new TasksService(prisma as unknown as PrismaService, events, tagsVacio());
 
     await service.update(USER, 'a', { status: 'DONE' as any }, SOCKET);
 

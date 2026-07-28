@@ -5,6 +5,7 @@ import { adjustPriority } from '../ai/priority.rules';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { TagsService } from '../tags/tags.service';
 import { TasksGateway } from './tasks.gateway';
 import { MoveTaskDto } from './dto/move-task.dto';
 
@@ -30,6 +31,7 @@ export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: TasksGateway,
+    private readonly tags: TagsService,
   ) {}
 
   /**
@@ -67,6 +69,11 @@ export class TasksService {
       this.logger.log(`Prioridad al crear "${dto.title}": ${decision.reason}`);
     }
 
+    // Antes de abrir la transacción: si alguna etiqueta no existe o es de otra
+    // persona, esto lanza un 400 diciendo cuál. Sin la comprobación, un id
+    // ajeno se colgaría de tu tarea sin protestar.
+    const labels = await this.tags.resolveIds(userId, dto.tagIds);
+
     const task = await this.prisma.$transaction(async (tx) => {
       const last = await tx.task.findFirst({
         where: { userId, status },
@@ -82,9 +89,15 @@ export class TasksService {
           status,
           priority,
           dueDate,
+          // Texto libre del modelo…
           tags: dto.tags ?? [],
+          // …y etiquetas curadas por la persona, que son otra cosa.
+          ...(labels.length > 0 ? { labels: { connect: labels } } : {}),
           position: last ? last.position + 1 : 0,
           source: TaskSource.MANUAL,
+        },
+        include: {
+          labels: true,
         },
       });
     });
@@ -162,7 +175,8 @@ export class TasksService {
               subject: true,
               from: true
             }
-          }
+          },
+          labels: true,
         },
         // Sin `orderBy`, Postgres devolvía las filas en orden de heap: al
         // actualizar una tarea la lista podía reordenarse sola. `status` ordena

@@ -56,4 +56,10 @@ export class CreateTaskDto {
   @IsString({ each: true })
   @ArrayMaxSize(20)
   tags?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(20)
+  tagIds?: string[];
 }

@@ -52,6 +52,12 @@ export class ConfirmedTaskDto {
   @ArrayMaxSize(20)
   tags?: string[];
 
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(20)
+  tagIds?: string[];
+
   /** `null` explícito para poder borrar la fecha que propuso el modelo. */
   @IsOptional()
   @IsDateString()
@@ -103,6 +109,12 @@ export class ToTaskDto {
   @IsOptional()
   @IsDateString()
   dueDate?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(20)
+  tagIds?: string[];
 
   /**
    * Permite convertir de nuevo un correo que ya tiene tareas. Sin esto la
