@@ -206,8 +206,8 @@ function EmailRow({
   const labels = visibleLabels(email.labels ?? []);
   const unread = isUnread(email.labels ?? []);
 
-  // Verificar si ya fue procesado: por propiedad `processedAt` o `tasks.length > 0`
-  const isProcessed = Boolean(email.processedAt || (email.tasks && email.tasks.length > 0));
+  // Según HANDOFF: isConverted sale de tener tareas y no de processedAt
+  const isProcessed = Boolean(email.tasks && email.tasks.length > 0);
 
   const content = (
     <div className={`flex items-start gap-4 px-6 py-4 ${nested ? "pl-16" : ""}`}>
