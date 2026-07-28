@@ -259,6 +259,37 @@ ya funciona con cualquier correo accionable, que es el flujo natural que hay que
 enseñar. El de *Reprocesar* solo volverá a aparecer cuando algo vuelva a
 convertir un correo.
 
+### `PATCH /emails/:id/status` — el motor del Inbox Zero · **nuevo**
+
+Lo que le falta a tus botones. Cuerpo obligatorio con un solo campo:
+
+```json
+{ "status": "COMPLETED" }
+```
+
+Vocabulario: `PENDING` · `IN_PROGRESS` · `COMPLETED` · `DISMISSED`. Devuelve
+**200 con el correo ya actualizado, en la misma forma que una fila de
+`GET /emails`**, así que puedes sustituir la fila en tu estado con lo que
+responde en vez de recargar la lista.
+
+- **400** si el estado no está en el vocabulario **o si el cuerpo va vacío**.
+  Mover un correo es una decisión explícita: un `{}` es un error del cliente,
+  no un "déjalo como está".
+- **404** si el correo no es tuyo · **401** sin cookie.
+
+Además, **cada fila del listado ya trae su `status`** y `GET /emails` acepta
+`?status=PENDING`, que es la bandeja de verdad: lo que queda por despachar. Para
+las pestañas, o filtras en el cliente por el campo o pides cada una con su
+`?status=`; las dos valen.
+
+**Descartar un correo no borra las tareas que ya generó.** Son cosas distintas:
+la tarjeta vive en el tablero por su cuenta desde que se creó.
+
+**Lo que todavía no hace**: no emite evento de socket. Si el usuario tiene la
+bandeja abierta en dos pestañas, la otra no se entera del cambio hasta recargar.
+Está anotado en `TASKS.md`; si te estorba, pídemelo y conecto un `email.updated`
+al gateway.
+
 ### `GET /emails/:id` — el correo completo, para leerlo · **nuevo**
 
 Lo pidió Doc para que se pueda leer el correo antes de aprobar las tareas. Es la

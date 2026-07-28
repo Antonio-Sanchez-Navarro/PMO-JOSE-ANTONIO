@@ -32,6 +32,18 @@ enum TaskSource {
   MANUAL
 }
 
+/// En qué punto del triage está el correo (Inbox Zero).
+///
+/// Es una decisión de la persona y no del sistema: `processedAt` dice que el
+/// worker ya lo analizó, que es otra cosa. Un correo puede estar procesado por
+/// la IA y seguir `PENDING` para su dueño.
+enum EmailStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  DISMISSED
+}
+
 model User {
   id             String       @id @default(cuid())
   email          String       @unique
@@ -60,11 +72,15 @@ model Email {
   labels         String[]
   category       String?
   isActionable   Boolean   @default(false)
+  /// Triage de la persona. Nace `PENDING` y solo lo mueve ella.
+  status         EmailStatus @default(PENDING)
   receivedAt     DateTime
   processedAt    DateTime?
   tasks          Task[]
 
   @@index([threadId])
+  /// La bandeja pregunta siempre por "lo mío que sigue pendiente".
+  @@index([userId, status])
 }
 
 model Task {

@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
+import { EmailStatus, Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
@@ -14,6 +14,8 @@ export interface TriageEmail {
   /** ISO 8601, para que el cliente la formatee como quiera. */
   date: string;
   category: string | null;
+  /** Triage de la persona: PENDING · IN_PROGRESS · COMPLETED · DISMISSED. */
+  status: EmailStatus;
   taskCount: number;
   /** Ya generó tareas: `to-task` daría 409 salvo que se insista con `force`. */
   isConverted: boolean;
@@ -29,6 +31,59 @@ export interface TriageEmail {
    * `GET /gmail/inbox` sin tener que adivinar por asunto y fecha.
    */
   gmailMessageId: string;
+}
+
+/**
+ * Columnas que necesita una fila de la bandeja. Vive fuera de la clase porque
+ * lo comparten el listado y la respuesta de `PATCH /:id/status`: si cada uno
+ * escribiera su propio `select`, acabarían devolviendo formas distintas del
+ * mismo correo.
+ */
+const SELECT_TRIAGE = {
+  id: true,
+  subject: true,
+  from: true,
+  receivedAt: true,
+  category: true,
+  status: true,
+  threadId: true,
+  labels: true,
+  snippet: true,
+  gmailMessageId: true,
+  _count: { select: { tasks: true } },
+} as const;
+
+type FilaTriage = {
+  id: string;
+  subject: string | null;
+  from: string;
+  receivedAt: Date;
+  category: string | null;
+  status: EmailStatus;
+  threadId: string;
+  labels: string[];
+  snippet: string | null;
+  gmailMessageId: string;
+  _count: { tasks: number };
+};
+
+function aTriageEmail(email: FilaTriage): TriageEmail {
+  return {
+    id: email.id,
+    // El asunto es opcional en la base y la bandeja necesita algo que pintar:
+    // una fila sin texto parece un fallo de carga.
+    subject: email.subject ?? '(sin asunto)',
+    from: email.from,
+    date: email.receivedAt.toISOString(),
+    category: email.category,
+    status: email.status,
+    taskCount: email._count.tasks,
+    isConverted: email._count.tasks > 0,
+    threadId: email.threadId,
+    labels: email.labels,
+    snippet: email.snippet ?? '',
+    gmailMessageId: email.gmailMessageId,
+  };
 }
 
 /** Una tarea que ese correo ya generó, en su versión corta. */
@@ -91,28 +146,38 @@ export class EmailsService {
   ) {}
 
   /**
-   * Devuelve lo que la IA propone para un correo **sin crear nada**.
+   * Mueve el correo de estado en el triage (Inbox Zero, Sprint 4).
    *
-   * Es el primer paso de la validación humana: la persona ve las tareas
-   * propuestas, las edita o las descarta, y solo entonces se crean con
-   * `to-task`. Por eso no hay 409 por duplicados aquí — mirar qué propondría el
-   * modelo no colisiona con nada — ni se marca el correo como procesado.
+   * El estado es de la persona, no del sistema: `processedAt` dice que el
+   * worker ya analizó el correo, y eso puede convivir con un `PENDING` porque
+   * su dueño todavía no lo ha despachado. Por eso es una columna aparte y no
+   * una lectura derivada de las marcas que ya había.
    *
-   * No se fuerza `isActionable`: si el modelo no ve nada accionable, se dice y
-   * ya decidirá la persona. Forzar aquí sería inventarle una tarea a alguien
-   * que solo estaba mirando.
+   * `updateMany` filtrando por `userId` en vez de `update` por id: así la
+   * comprobación de propiedad y la escritura son la misma operación y no queda
+   * hueco entre leer y escribir.
    */
-  /**
-   * Los correos del usuario para la bandeja de triage.
-   *
-   * Nace porque el frontend no tenía forma legítima de conocer el `Email.id`:
-   * `GET /gmail/inbox` va en vivo a Google y devuelve el id de mensaje de Gmail,
-   * que no es el que aceptan `classify` ni `to-task`. Sin esta ruta, la única
-   * manera de probar la cuarentena era pegar un cuid a mano.
-   *
-   * Lee de nuestra base y no de Gmail a propósito: solo lo persistido tiene id
-   * propio, y solo nosotros sabemos qué se convirtió ya. Gmail no lo sabe.
-   */
+  async updateStatus(userId: string, emailId: string, status: EmailStatus): Promise<TriageEmail> {
+    const { count } = await this.prisma.email.updateMany({
+      where: { id: emailId, userId },
+      data: { status },
+    });
+
+    if (count === 0) {
+      throw new NotFoundException(`No existe el correo ${emailId}`);
+    }
+
+    this.logger.log(`Correo ${emailId} movido a ${status}`);
+
+    // Se relee con el mismo `select` del listado para devolver exactamente la
+    // forma que el cliente ya sabe pintar, en vez de un objeto a medias.
+    const fila = await this.prisma.email.findFirstOrThrow({
+      where: { id: emailId, userId },
+      select: SELECT_TRIAGE,
+    });
+    return aTriageEmail(fila);
+  }
+
   /**
    * Un correo con su texto completo, para la vista de lectura.
    *
@@ -139,6 +204,7 @@ export class EmailsService {
         labels: true,
         snippet: true,
         gmailMessageId: true,
+        status: true,
         bodyText: true,
         isActionable: true,
         processedAt: true,
@@ -159,6 +225,7 @@ export class EmailsService {
       from: email.from,
       date: email.receivedAt.toISOString(),
       category: email.category,
+      status: email.status,
       threadId: email.threadId,
       labels: email.labels,
       snippet: email.snippet ?? '',
@@ -175,11 +242,23 @@ export class EmailsService {
     };
   }
 
+  /**
+   * Los correos del usuario para la bandeja de triage.
+   *
+   * Nace porque el frontend no tenía forma legítima de conocer el `Email.id`:
+   * `GET /gmail/inbox` va en vivo a Google y devuelve el id de mensaje de Gmail,
+   * que no es el que aceptan `classify` ni `to-task`. Sin esta ruta, la única
+   * manera de probar la cuarentena era pegar un cuid a mano.
+   *
+   * Lee de nuestra base y no de Gmail a propósito: solo lo persistido tiene id
+   * propio, y solo nosotros sabemos qué se convirtió ya. Gmail no lo sabe.
+   */
   async listForTriage(userId: string, query: QueryEmailsDto): Promise<TriageEmail[]> {
     const emails = await this.prisma.email.findMany({
       where: {
         userId,
         ...(query.actionable === undefined ? {} : { isActionable: query.actionable }),
+        ...(query.status === undefined ? {} : { status: query.status }),
         // `converted` se traduce a "tiene o no tiene tareas", que es justo lo
         // que hace que `to-task` responda 409. `processedAt` no sirve para
         // esto: el worker lo marca aunque no crease ni una tarea.
@@ -189,42 +268,29 @@ export class EmailsService {
             ? { tasks: { some: {} } }
             : { tasks: { none: {} } }),
       },
-      select: {
-        id: true,
-        subject: true,
-        from: true,
-        receivedAt: true,
-        category: true,
-        threadId: true,
-        labels: true,
-        snippet: true,
-        gmailMessageId: true,
-        // `bodyText` se queda fuera a propósito: son ~8 KB por correo y en un
-        // listado de 50 serían 400 KB por petición para pintar una lista.
-        _count: { select: { tasks: true } },
-      },
+      // `bodyText` se queda fuera a propósito: son ~8 KB por correo y en un
+      // listado de 50 serían 400 KB por petición para pintar una lista.
+      select: SELECT_TRIAGE,
       orderBy: { receivedAt: 'desc' },
       skip: query.skip ?? 0,
       take: query.take ?? 50,
     });
 
-    return emails.map((email) => ({
-      id: email.id,
-      // El asunto es opcional en la base y la bandeja necesita algo que pintar:
-      // una fila sin texto parece un fallo de carga.
-      subject: email.subject ?? '(sin asunto)',
-      from: email.from,
-      date: email.receivedAt.toISOString(),
-      category: email.category,
-      taskCount: email._count.tasks,
-      isConverted: email._count.tasks > 0,
-      threadId: email.threadId,
-      labels: email.labels,
-      snippet: email.snippet ?? '',
-      gmailMessageId: email.gmailMessageId,
-    }));
+    return emails.map(aTriageEmail);
   }
 
+  /**
+   * Devuelve lo que la IA propone para un correo **sin crear nada**.
+   *
+   * Es el primer paso de la validación humana: la persona ve las tareas
+   * propuestas, las edita o las descarta, y solo entonces se crean con
+   * `to-task`. Por eso no hay 409 por duplicados aquí — mirar qué propondría el
+   * modelo no colisiona con nada — ni se marca el correo como procesado.
+   *
+   * No se fuerza `isActionable`: si el modelo no ve nada accionable, se dice y
+   * ya decidirá la persona. Forzar aquí sería inventarle una tarea a alguien
+   * que solo estaba mirando.
+   */
   async classify(userId: string, emailId: string): Promise<ClassificationResult> {
     const email = await this.prisma.email.findFirst({
       where: { id: emailId, userId },

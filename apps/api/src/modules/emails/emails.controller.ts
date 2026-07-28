@@ -5,6 +5,7 @@ import {
   Headers,
   HttpCode,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -18,6 +19,7 @@ import {
 } from './emails.service';
 import { ToTaskDto } from './dto/to-task.dto';
 import { QueryEmailsDto } from './dto/query-emails.dto';
+import { UpdateEmailStatusDto } from './dto/update-email-status.dto';
 import { SOCKET_ID_HEADER } from '../tasks/tasks.gateway';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -80,6 +82,25 @@ export class EmailsController {
     @Param('id') id: string,
   ): Promise<ClassificationResult> {
     return this.emailsService.classify(user.userId, id);
+  }
+
+  /**
+   * Mueve el correo por el triage: pendiente, en proceso, hecho o descartado.
+   *
+   * Es el motor del "Inbox Zero" (Sprint 4). El estado lo decide la persona,
+   * así que el cuerpo es obligatorio: `{ "status": "COMPLETED" }`.
+   *
+   * Respuestas: 200 con el correo ya actualizado, en la misma forma que
+   * devuelve `GET /emails` · 400 si el estado no está en el vocabulario · 404
+   * si el correo no es suyo o no existe.
+   */
+  @Patch(':id/status')
+  updateStatus(
+    @CurrentUser() user: CurrentUserContext,
+    @Param('id') id: string,
+    @Body() dto: UpdateEmailStatusDto,
+  ): Promise<TriageEmail> {
+    return this.emailsService.updateStatus(user.userId, id, dto.status);
   }
 
   /**

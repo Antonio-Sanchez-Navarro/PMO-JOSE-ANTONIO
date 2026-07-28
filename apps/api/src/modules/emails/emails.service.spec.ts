@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { TaskSource } from '@prisma/client';
+import { EmailStatus, TaskSource } from '@prisma/client';
 import { EmailsService } from './emails.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
@@ -728,5 +728,152 @@ describe('EmailsService — GET /emails/:id (vista de lectura)', () => {
     prisma.email.findFirst.mockResolvedValue({ ...fila, subject: null });
 
     expect((await service.findOne(USER_ID, 'email-1')).subject).toBe('(sin asunto)');
+  });
+});
+
+describe('EmailsService — PATCH /emails/:id/status (Inbox Zero)', () => {
+  let service: EmailsService;
+  let prisma: any;
+
+  const fila = {
+    id: 'email-1',
+    subject: 'Escrituración lote 36',
+    from: 'notaria@ejemplo.mx',
+    receivedAt: new Date('2026-07-25T18:00:00.000Z'),
+    category: 'PROJECT_MANAGEMENT',
+    status: EmailStatus.COMPLETED,
+    threadId: 'hilo-1',
+    labels: ['INBOX'],
+    snippet: 'Adjunto…',
+    gmailMessageId: '19f95edbf2b0650a',
+    _count: { tasks: 2 },
+  };
+
+  beforeEach(() => {
+    prisma = {
+      email: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findFirstOrThrow: jest.fn().mockResolvedValue(fila),
+      },
+    };
+
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      {} as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+    );
+  });
+
+  it('mueve el correo al estado pedido', async () => {
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED);
+
+    expect(prisma.email.updateMany).toHaveBeenCalledWith({
+      where: { id: 'email-1', userId: USER_ID },
+      data: { status: EmailStatus.COMPLETED },
+    });
+  });
+
+  it('comprueba la propiedad en la misma escritura, sin hueco entre leer y escribir', async () => {
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.DISMISSED);
+
+    // El filtro por userId va en el where del update, no en una lectura previa.
+    expect(prisma.email.updateMany.mock.calls[0][0].where.userId).toBe(USER_ID);
+  });
+
+  it('devuelve 404 si el correo no es del usuario', async () => {
+    prisma.email.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.updateStatus(USER_ID, 'ajeno', EmailStatus.COMPLETED)).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(prisma.email.findFirstOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('responde con la misma forma que una fila del listado', async () => {
+    const actualizado = await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED);
+
+    expect(actualizado).toEqual({
+      id: 'email-1',
+      subject: 'Escrituración lote 36',
+      from: 'notaria@ejemplo.mx',
+      date: '2026-07-25T18:00:00.000Z',
+      category: 'PROJECT_MANAGEMENT',
+      status: EmailStatus.COMPLETED,
+      taskCount: 2,
+      isConverted: true,
+      threadId: 'hilo-1',
+      labels: ['INBOX'],
+      snippet: 'Adjunto…',
+      gmailMessageId: '19f95edbf2b0650a',
+    });
+  });
+
+  it('no toca las tareas del correo al moverlo de estado', async () => {
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.DISMISSED);
+
+    // Descartar un correo no borra lo que ya generó: la tarea vive en el
+    // tablero por su cuenta desde que se creó.
+    expect(prisma.task).toBeUndefined();
+  });
+
+  it('acepta los cuatro estados del vocabulario', async () => {
+    for (const estado of [
+      EmailStatus.PENDING,
+      EmailStatus.IN_PROGRESS,
+      EmailStatus.COMPLETED,
+      EmailStatus.DISMISSED,
+    ]) {
+      await service.updateStatus(USER_ID, 'email-1', estado);
+    }
+
+    expect(prisma.email.updateMany).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('EmailsService — filtro por estado en el listado', () => {
+  let service: EmailsService;
+  let prisma: any;
+
+  beforeEach(() => {
+    prisma = { email: { findMany: jest.fn().mockResolvedValue([]) } };
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      {} as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+    );
+  });
+
+  it('?status=PENDING deja solo lo que sigue sin despachar', async () => {
+    await service.listForTriage(USER_ID, { status: EmailStatus.PENDING });
+
+    expect(prisma.email.findMany.mock.calls[0][0].where.status).toBe(EmailStatus.PENDING);
+  });
+
+  it('sin el filtro no acota por estado', async () => {
+    await service.listForTriage(USER_ID, {});
+
+    expect(prisma.email.findMany.mock.calls[0][0].where.status).toBeUndefined();
+  });
+
+  it('el estado viaja en cada fila para que la bandeja pinte sus pestañas', async () => {
+    prisma.email.findMany.mockResolvedValue([
+      {
+        id: 'e1',
+        subject: 'x',
+        from: 'a@b.mx',
+        receivedAt: new Date('2026-07-25T00:00:00.000Z'),
+        category: null,
+        status: EmailStatus.IN_PROGRESS,
+        threadId: 'h1',
+        labels: [],
+        snippet: null,
+        gmailMessageId: 'g1',
+        _count: { tasks: 0 },
+      },
+    ]);
+
+    const [fila] = await service.listForTriage(USER_ID, {});
+
+    expect(fila.status).toBe(EmailStatus.IN_PROGRESS);
   });
 });

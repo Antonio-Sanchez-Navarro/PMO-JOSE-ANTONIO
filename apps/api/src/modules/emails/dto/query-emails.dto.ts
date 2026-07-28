@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { EmailStatus } from '@prisma/client';
 
 /**
  * Convierte el `?flag=true` de la query en booleano.
@@ -38,6 +39,14 @@ export class QueryEmailsDto {
   @Transform(aBooleano)
   @IsBoolean()
   converted?: boolean;
+
+  /**
+   * Estado del triage. `?status=PENDING` es la bandeja de verdad: lo que
+   * todavía no ha despachado su dueño. Un valor fuera del enum da 400.
+   */
+  @IsOptional()
+  @IsEnum(EmailStatus)
+  status?: EmailStatus;
 
   @IsOptional()
   @Type(() => Number)
