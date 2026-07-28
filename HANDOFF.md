@@ -43,7 +43,36 @@ Es puramente visual, así que es tuya. Doc fija el escenario:
 
 Reporta el hash del commit y lo que viste en las dos pestañas.
 
-### 3. Después: badges de prioridad con el origen
+**El primer intento falló, y no fue culpa tuya ni de los sockets.** Salió
+"Error al crear las tareas propuestas" porque el `window.prompt` del botón
+**Test IA Modal** propone por defecto el correo `cmrzlm1lc000hju1mu8rhe83u`,
+que **ya tiene 3 tareas** de una conversión anterior. El endpoint responde
+**409** a propósito: es el guardarraíl contra duplicados. Reproducido contra el
+3000 y por el proxy de Vite, 409 en los dos casos.
+
+Usa un correo sin tareas. Del mismo usuario y limpios a día de hoy:
+
+| Id | Asunto |
+|---|---|
+| `cmrzl7ybd00017po8j7ifuwqx` | Banregio - Transferencia Procesada |
+| `cmrzl7ycl00037po8l5z7d3nz` | Estamos entre las 500 empresas más importantes… |
+| `cmrzl7ycw00057po8qx6ybmdm` | Banregio - Transferencia Procesada |
+
+Con cualquiera de esos la confirmación devuelve 201 y la prueba sí se ve. Ojo:
+cada correo sirve **una vez**; al segundo intento dará 409 con razón.
+
+### 3. Micro-misión de Doc: que el error diga qué pasó
+
+Antes de los badges. `createTasksFromEmail` lanza el mismo `Error` genérico para
+cualquier respuesta no-ok, así que un 409 (correo ya convertido), un 400
+(payload inválido) y un 401 (sesión caída) se ven idénticos en pantalla — por
+eso este fallo costó un rato de investigación. Lee el `statusCode` y el
+`message` del cuerpo:
+
+- **409** → avisar de que ese correo ya fue convertido.
+- **400** / **401** → el error que corresponda.
+
+### 4. Después: badges de prioridad con el origen
 
 En cuanto la E2E pase en verde, tu siguiente encargo (Sprint 4) son los badges
 de prioridad en la tarjeta con el **indicador visual de origen** (`Task.source`,
