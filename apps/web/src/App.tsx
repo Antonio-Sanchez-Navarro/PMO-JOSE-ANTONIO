@@ -11,6 +11,8 @@ type Health = {
   timestamp: string;
 };
 
+import { InboxPage } from "./features/inbox/InboxPage";
+
 export function App() {
   const { user, status, logout } = useSession();
 
@@ -40,6 +42,7 @@ export function App() {
 function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"inbox" | "kanban">("inbox");
 
   useEffect(() => {
     // Vía el proxy de Vite: /api -> http://localhost:3000
@@ -50,12 +53,30 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
-          <span className="font-semibold">PMO Dashboard</span>
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col">
+      <header className="border-b border-slate-200 bg-white shrink-0">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <span className="font-bold text-xl text-slate-900 tracking-tight">PMO Dashboard</span>
           <div className="flex items-center gap-4 text-sm">
-            <span className="text-slate-500">{user.name ?? user.email}</span>
+            <div className="flex rounded-lg bg-slate-100 p-1">
+              <button
+                onClick={() => setActiveTab("inbox")}
+                className={`rounded-md px-3 py-1.5 font-medium transition ${
+                  activeTab === "inbox" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Bandeja
+              </button>
+              <button
+                onClick={() => setActiveTab("kanban")}
+                className={`rounded-md px-3 py-1.5 font-medium transition ${
+                  activeTab === "kanban" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Tablero
+              </button>
+            </div>
+            <span className="text-slate-500 ml-4 hidden sm:inline-block">{user.name ?? user.email}</span>
             <button
               onClick={onLogout}
               className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-600 transition hover:bg-slate-50"
@@ -66,20 +87,18 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         </div>
       </header>
 
-      <div className="mx-auto max-w-7xl px-6 py-12">
-        <span className="inline-block rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
-          Sprint 4 · Tablero Kanban
-        </span>
-        <h1 className="mt-4 text-4xl font-bold tracking-tight">Hola, {user.name ?? user.email}</h1>
-        <p className="mt-2 text-slate-500">
-          Tus tareas extraídas por IA y organizadas.
-        </p>
+      <main className="flex-1 w-full max-w-7xl mx-auto p-6 overflow-hidden flex flex-col">
+        {activeTab === "inbox" ? (
+          <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+             <InboxPage />
+          </div>
+        ) : (
+          <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+             <KanbanBoard />
+          </div>
+        )}
 
-        <div className="mt-8 overflow-x-auto min-h-[600px] border border-slate-200 rounded-xl bg-white shadow-sm">
-          <KanbanBoard />
-        </div>
-
-        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+        <div className="mt-8 grid gap-4 sm:grid-cols-2 shrink-0">
           <Card title="Cuenta">
             <dl className="space-y-1 text-sm">
               <Row label="Correo" value={user.email} />
@@ -111,7 +130,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             )}
           </Card>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
