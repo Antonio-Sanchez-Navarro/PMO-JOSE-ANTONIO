@@ -124,7 +124,19 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
   });
 
   if (!response.ok) {
-    throw new Error('Failed to create tasks from email');
+    let errorMsg = 'Error al crear las tareas propuestas';
+    try {
+      const errorBody = await response.json();
+      if (response.status === 409) {
+        errorMsg = 'Este correo ya fue convertido a tareas anteriormente.';
+      } else if (errorBody.message) {
+        // En NestJS el message puede ser un array de strings (ej: fallos de validación) o un string
+        errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
+      }
+    } catch (parseError) {
+      // Ignoramos el error si no hay body JSON válido
+    }
+    throw new Error(errorMsg);
   }
 
   const json = await response.json();

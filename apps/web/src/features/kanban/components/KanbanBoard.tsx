@@ -377,8 +377,9 @@ export const KanbanBoard: React.FC = () => {
             toast.success("Tareas creadas desde el correo exitosamente.");
             setIsAiModalOpen(false);
             setAiProposal(null);
-          } catch (e) {
-            toast.error("Error al crear las tareas propuestas.");
+          } catch (e: any) {
+            const errorMsg = e?.message || "Error al crear las tareas propuestas.";
+            toast.error(errorMsg);
             console.error(e);
           }
         }}
