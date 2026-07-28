@@ -18,16 +18,19 @@ import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus } from '../types';
 import { MOCK_TASKS } from './mockTasks';
-import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters } from '../api/tasks.api';
+import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters, createTasksFromEmail } from '../api/tasks.api';
 import { TaskModal } from './TaskModal';
 import { useSocket } from '../hooks/useSocket';
-import { TaskPriority } from '../types';
+import { EmailClassification, EmailCategory, TaskPriority } from '@pmo/shared';
+import { AiValidationModal } from './AiValidationModal';
 
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [aiProposal, setAiProposal] = useState<EmailClassification | null>(null);
   
   const [searchFilter, setSearchFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatus | ''>('');
@@ -302,6 +305,25 @@ export const KanbanBoard: React.FC = () => {
             <option value={TaskPriority.URGENT}>Urgente</option>
           </select>
 
+          <button
+            onClick={() => {
+              setAiProposal({
+                emailId: "test-email-xyz",
+                category: EmailCategory.INVOICING,
+                isActionable: true,
+                aiConfidence: 0.95,
+                tasks: [
+                  { title: "Validar montos con contabilidad", description: "", priority: TaskPriority.MEDIUM, tags: [] },
+                  { title: "Aprobar PDF final", description: "", priority: TaskPriority.HIGH, tags: [] },
+                  { title: "Enviar correo a cliente", description: "", priority: TaskPriority.URGENT, tags: [] }
+                ]
+              });
+              setIsAiModalOpen(true);
+            }}
+            className="px-4 py-2 text-sm font-medium text-indigo-700 transition-colors bg-indigo-100 rounded-md hover:bg-indigo-200 whitespace-nowrap dark:bg-indigo-900/40 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+          >
+            🤖 Test IA Modal
+          </button>
           <button 
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2 text-sm font-medium text-white transition-colors bg-blue-600 rounded-md hover:bg-blue-700 whitespace-nowrap"
@@ -331,6 +353,27 @@ export const KanbanBoard: React.FC = () => {
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         onSubmit={handleCreateTask} 
+      />
+
+      <AiValidationModal
+        isOpen={isAiModalOpen}
+        proposal={aiProposal}
+        onConfirm={async (data) => {
+          try {
+            await createTasksFromEmail(data.emailId, data);
+            toast.success("Tareas creadas desde el correo exitosamente.");
+            setIsAiModalOpen(false);
+            setAiProposal(null);
+            loadTasks(); // Actualizar el tablero con las nuevas tareas
+          } catch (e) {
+            toast.error("Error al crear las tareas propuestas.");
+            console.error(e);
+          }
+        }}
+        onCancel={() => {
+          setIsAiModalOpen(false);
+          setAiProposal(null);
+        }}
       />
     </div>
   );

@@ -1,5 +1,6 @@
 import { Task, TaskStatus, TaskPriority } from '../types';
 import { getSocketId } from '../hooks/useSocket';
+import { EmailClassification } from '@pmo/shared';
 
 const API_BASE = '/api/tasks'; // Usamos el proxy configurado en vite.config.ts
 
@@ -108,4 +109,24 @@ export const deleteTask = async (id: string): Promise<void> => {
   if (!response.ok) {
     throw new Error('Failed to delete task');
   }
+};
+
+export const createTasksFromEmail = async (emailId: string, payload: Partial<EmailClassification>): Promise<Task[]> => {
+  const socketId = getSocketId();
+  const response = await fetch(`/api/emails/${emailId}/to-task`, {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json',
+      ...(socketId ? { 'x-socket-id': socketId } : {})
+    },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to create tasks from email');
+  }
+
+  const json = await response.json();
+  return json.data || json;
 };
