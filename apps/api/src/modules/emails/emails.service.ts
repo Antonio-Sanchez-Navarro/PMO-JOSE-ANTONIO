@@ -17,6 +17,18 @@ export interface TriageEmail {
   taskCount: number;
   /** Ya generó tareas: `to-task` daría 409 salvo que se insista con `force`. */
   isConverted: boolean;
+  /** Hilo de Gmail, para agrupar la lista como hace la bandeja. */
+  threadId: string;
+  /** Etiquetas de Gmail (`INBOX`, `UNREAD`, `CATEGORY_*`…), para los filtros. */
+  labels: string[];
+  /** Vista previa corta. Cadena vacía si el correo no la trae. */
+  snippet: string;
+  /**
+   * El id del mensaje en Gmail. No sirve para `classify` ni `to-task` —para eso
+   * está `id`— pero permite casar esta lista con la que devuelve
+   * `GET /gmail/inbox` sin tener que adivinar por asunto y fecha.
+   */
+  gmailMessageId: string;
 }
 
 export interface ToTaskResult {
@@ -102,6 +114,12 @@ export class EmailsService {
         from: true,
         receivedAt: true,
         category: true,
+        threadId: true,
+        labels: true,
+        snippet: true,
+        gmailMessageId: true,
+        // `bodyText` se queda fuera a propósito: son ~8 KB por correo y en un
+        // listado de 50 serían 400 KB por petición para pintar una lista.
         _count: { select: { tasks: true } },
       },
       orderBy: { receivedAt: 'desc' },
@@ -119,6 +137,10 @@ export class EmailsService {
       category: email.category,
       taskCount: email._count.tasks,
       isConverted: email._count.tasks > 0,
+      threadId: email.threadId,
+      labels: email.labels,
+      snippet: email.snippet ?? '',
+      gmailMessageId: email.gmailMessageId,
     }));
   }
 

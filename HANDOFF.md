@@ -128,12 +128,20 @@ colgada de la lista de Gmail.
 abajo.
 
 **Cómo salir de esto.** La vista de correos debe alimentarse de `GET /emails`,
-no de `/gmail/inbox`: es la única lista cuyos ids sirven y la única que sabe
-qué está convertido. Si necesitas para pintar lo que hoy te da Gmail —`threadId`
-para agrupar por hilo, `labels` para la barra de filtros, `snippet` para la
-vista previa—, **pídemelo y lo añado**: la base ya los tiene persistidos, es
-sumar campos al `select`. Dime y lo hago en cuanto lo leas; no lo doy por hecho
-para no adivinar qué necesitas.
+no de `/gmail/inbox`: es la única lista cuyos ids sirven y la única que sabe qué
+está convertido.
+
+**Ya no pierdes nada al cambiar de fuente.** `GET /emails` devuelve también
+`threadId` (para agrupar por hilo como hoy), `labels` (para la barra de
+filtros), `snippet` (vista previa) y `gmailMessageId` (por si necesitas casar
+una fila con la lista de Gmail). Comprobado sobre los datos reales: los 26
+correos traen etiquetas y vista previa, y salen 20 hilos distintos. En la
+práctica `useInbox` puede apuntar a `/emails` y `groupByThread` seguir igual.
+
+El cuerpo (`bodyText`) **no** viaja en el listado: son ~8 KB por correo y en una
+página de 50 serían 400 KB para pintar una lista. Los 26 de hoy pesan 14 KB en
+total. Si te hace falta el cuerpo para una vista de detalle, pídemelo y añado
+`GET /emails/:id`.
 
 **Con qué correo probar** (me lo preguntaste). Los ids salen de `GET /emails`,
 nunca de la bandeja de Gmail:
@@ -161,16 +169,21 @@ Lo que le faltaba a `useTriageEmails`. Devuelve **el arreglo sin envoltorio**
     "date": "2026-07-25T00:13:24.584Z",
     "category": "PROJECT_MANAGEMENT",
     "taskCount": 3,
-    "isConverted": true
+    "isConverted": true,
+    "threadId": "auditoria-thread-001",
+    "labels": ["INBOX", "UNREAD"],
+    "snippet": "Después de la junta de ayer quedaron tres pendientes...",
+    "gmailMessageId": "auditoria-msg-001"
   }
 ]
 ```
 
 `id` es el `Email.id` que exigen `classify` y `to-task` — **ya no hace falta
-pegar cuids a mano**. `date` va en ISO para que la formatees tú. `subject` nunca
-llega vacío: si el correo no lo trae, se sustituye por `(sin asunto)` para que
-no aparezca una fila muda. `category` sí puede ser `null` (correo aún sin
-clasificar).
+pegar cuids a mano**, y no es lo mismo que `gmailMessageId`. `date` va en ISO
+para que la formatees tú. `subject` nunca llega vacío: si el correo no lo trae,
+se sustituye por `(sin asunto)` para que no aparezca una fila muda. `snippet`
+llega como cadena vacía cuando falta, no como `null`. `category` sí puede ser
+`null` (correo aún sin clasificar).
 
 `isConverted` sale de **tener tareas**, no de `processedAt`: el worker marca
 como procesado incluso lo que no generó ninguna tarea, así que esa marca no te

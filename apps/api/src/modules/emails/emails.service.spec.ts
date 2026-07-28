@@ -474,6 +474,10 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
       from: 'notaria@ejemplo.mx',
       receivedAt: new Date('2026-07-25T18:00:00.000Z'),
       category: 'PROJECT_MANAGEMENT',
+      threadId: 'hilo-1',
+      labels: ['INBOX', 'UNREAD'],
+      snippet: 'Adjunto el borrador de la escritura…',
+      gmailMessageId: '19f95edbf2b0650a',
       _count: { tasks: 3 },
     },
     {
@@ -482,6 +486,10 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
       from: 'banco@ejemplo.mx',
       receivedAt: new Date('2026-07-24T09:00:00.000Z'),
       category: null,
+      threadId: 'hilo-2',
+      labels: [],
+      snippet: null,
+      gmailMessageId: '19f95edbf2b0650b',
       _count: { tasks: 0 },
     },
   ];
@@ -585,11 +593,36 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
     expect(args.take).toBe(5);
   });
 
-  it('no expone el cuerpo del correo en el listado', async () => {
+  it('trae lo que la bandeja necesita para agrupar y filtrar', async () => {
+    const [primero] = await service.listForTriage(USER_ID, {});
+
+    expect(primero.threadId).toBe('hilo-1');
+    expect(primero.labels).toEqual(['INBOX', 'UNREAD']);
+    expect(primero.snippet).toBe('Adjunto el borrador de la escritura…');
+  });
+
+  it('da cadena vacía cuando el correo no trae vista previa', async () => {
+    const [, sinSnippet] = await service.listForTriage(USER_ID, {});
+
+    expect(sinSnippet.snippet).toBe('');
+  });
+
+  it('expone el id de Gmail para casar con GET /gmail/inbox, sin confundirlo con el propio', async () => {
+    const [primero] = await service.listForTriage(USER_ID, {});
+
+    expect(primero.gmailMessageId).toBe('19f95edbf2b0650a');
+    // El que sirve para classify y to-task es `id`, y no son el mismo.
+    expect(primero.id).toBe('email-1');
+    expect(primero.gmailMessageId).not.toBe(primero.id);
+  });
+
+  it('no arrastra el cuerpo del correo en el listado', async () => {
     await service.listForTriage(USER_ID, {});
 
     const { select } = prisma.email.findMany.mock.calls[0][0];
+    // Son ~8 KB por correo: en una página de 50 serían 400 KB para pintar una
+    // lista. El `snippet` sí va, que para eso es la vista previa.
     expect(select.bodyText).toBeUndefined();
-    expect(select.snippet).toBeUndefined();
+    expect(select.snippet).toBe(true);
   });
 });
