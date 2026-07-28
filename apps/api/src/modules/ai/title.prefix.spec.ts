@@ -1,4 +1,4 @@
-import { MAX_TITLE_LENGTH, withContextPrefix } from './title.prefix';
+import { MAX_TITLE_LENGTH, senderFromHeader, withContextPrefix } from './title.prefix';
 
 const CONTEXTO = { senderName: 'Astrid R.', project: 'Citrotarte' };
 
@@ -102,5 +102,86 @@ describe('withContextPrefix — prefijo de contexto en el título (Sprint 4)', (
 
   it('sobre una lista vacía no hace nada', () => {
     expect(withContextPrefix([], CONTEXTO)).toEqual([]);
+  });
+});
+
+describe('senderFromHeader — el remitente sale de la cabecera, no del modelo', () => {
+  it('abrevia nombre y apellido', () => {
+    expect(senderFromHeader('Astrid Robles <astrid@example.test>')).toBe('Astrid R.');
+  });
+
+  it('funciona con la cabecera sin ángulos', () => {
+    expect(senderFromHeader('Josmat Narvaez')).toBe('Josmat N.');
+  });
+
+  it('quita las comillas del nombre visible', () => {
+    expect(senderFromHeader('"Astrid Robles" <a@x.mx>')).toBe('Astrid R.');
+  });
+
+  it('reordena el formato apellido-primero de algunos clientes', () => {
+    expect(senderFromHeader('"Robles, Astrid" <a@x.mx>')).toBe('Astrid R.');
+  });
+
+  it('con un correo pelado usa la parte local', () => {
+    expect(senderFromHeader('josmat.narvaez@sekuralaw.com')).toBe('Josmat N.');
+  });
+
+  it('sin nombre visible cae también a la parte local', () => {
+    expect(senderFromHeader('<astrid.robles@example.test>')).toBe('Astrid R.');
+  });
+
+  it('un solo nombre se queda sin inicial en vez de inventarla', () => {
+    expect(senderFromHeader('Astrid <a@x.mx>')).toBe('Astrid');
+  });
+
+  it('normaliza las mayúsculas gritadas', () => {
+    expect(senderFromHeader('ASTRID ROBLES <a@x.mx>')).toBe('Astrid R.');
+  });
+
+  it('no vuelve a abreviar un apellido que ya viene abreviado', () => {
+    expect(senderFromHeader('Astrid R. <a@x.mx>')).toBe('Astrid R.');
+  });
+
+  it('toma el último apellido cuando hay varios', () => {
+    expect(senderFromHeader('José Antonio Sánchez Navarro <js@x.mx>')).toBe('José N.');
+  });
+
+  it('devuelve null cuando no hay nada aprovechable', () => {
+    expect(senderFromHeader('')).toBeNull();
+    expect(senderFromHeader(null)).toBeNull();
+    expect(senderFromHeader(undefined)).toBeNull();
+    expect(senderFromHeader('   ')).toBeNull();
+  });
+
+  it('encaja con withContextPrefix para dar el formato que pidió Doc', () => {
+    const sender = senderFromHeader('Astrid Robles <astrid@example.test>');
+
+    expect(withContextPrefix(['Solicitar inmueble', 'Confirmar TC'], { senderName: sender, project: 'Citrotarte' })).toEqual([
+      '[Astrid R. - Citrotarte 1/2] Solicitar inmueble',
+      '[Astrid R. - Citrotarte 2/2] Confirmar TC',
+    ]);
+  });
+});
+
+describe('senderFromHeader — tratamientos', () => {
+  it('no confunde el tratamiento con el nombre', () => {
+    // Antes daba "Arq. R.": se comía el tratamiento como nombre de pila.
+    expect(senderFromHeader('Arq. Elena Ruiz <elena@constructora.example>')).toBe('Elena R.');
+  });
+
+  it('vale para los tratamientos habituales en un despacho', () => {
+    expect(senderFromHeader('Lic. Josmat Narvaez <j@x.mx>')).toBe('Josmat N.');
+    expect(senderFromHeader('Dra. Ana Pérez <a@x.mx>')).toBe('Ana P.');
+    expect(senderFromHeader('C.P. Mario Solís <m@x.mx>')).toBe('Mario S.');
+  });
+
+  it('no se queda sin nada si el remitente es solo un tratamiento', () => {
+    expect(senderFromHeader('Lic. <l@x.mx>')).toBe('Lic.');
+  });
+
+  it('deja intactos los nombres de organización', () => {
+    // "Notaría 42" o "Boletín Financiero" no son personas, pero como remitente
+    // siguen siendo el contexto correcto de la tarea.
+    expect(senderFromHeader('Notaría 42 <contacto@notaria42.example>')).toBe('Notaría');
   });
 });

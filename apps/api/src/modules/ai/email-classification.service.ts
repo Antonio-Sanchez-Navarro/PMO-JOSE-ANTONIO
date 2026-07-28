@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, Task, TaskPriority, TaskSource } from '@prisma/client';
 import { AiService } from './ai.service';
 import { adjustPriority } from './priority.rules';
-import { withContextPrefix } from './title.prefix';
+import { senderFromHeader, withContextPrefix } from './title.prefix';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 export interface ClassifyOptions {
@@ -141,7 +141,15 @@ export class EmailClassificationService {
    * persistir, con la prioridad ya pasada por la capa determinista.
    */
   private async analyze(
-    email: { id: string; subject: string | null; snippet: string | null; bodyText: string | null; receivedAt: Date },
+    email: {
+      id: string;
+      subject: string | null;
+      snippet: string | null;
+      bodyText: string | null;
+      receivedAt: Date;
+      /** Cabecera `From` cruda: de ahí sale el remitente del prefijo. */
+      from: string;
+    },
     forceActionable: boolean,
   ): Promise<ClassificationDraft> {
     const textToAnalyze = email.bodyText || email.snippet || '';
@@ -157,11 +165,20 @@ export class EmailClassificationService {
 
     const isActionable = analysis.isActionable || forceActionable;
 
+    // Quién manda el correo sale de la cabecera, no del modelo (decisión de Doc
+    // el 2026-07-28): es un dato duro y el modelo tendía a elegir a la persona
+    // de la que hablaba el cuerpo. Solo si la cabecera no da nada aprovechable
+    // se recurre a lo que dijera él, que es mejor que quedarse sin contexto.
+    const contexto = {
+      senderName: senderFromHeader(email.from) ?? analysis.senderName,
+      project: analysis.project,
+    };
+
     // El prefijo se compone aquí, sobre la lista ya filtrada, para que el
     // contador cuadre con las tareas que de verdad van a existir.
     const titulos = withContextPrefix(
       analysis.tasks.map((t) => t.title),
-      { senderName: analysis.senderName, project: analysis.project },
+      contexto,
     );
 
     let tasks: TaskDraft[] = isActionable
@@ -188,10 +205,10 @@ export class EmailClassificationService {
           // Lleva el mismo prefijo que las demás: al tablero le da igual que
           // esta saliera del asunto y no del modelo, y una tarjeta sin contexto
           // entre otras con él se lee como un fallo.
-          title: withContextPrefix([email.subject?.trim() || 'Tarea desde correo sin asunto'], {
-            senderName: analysis.senderName,
-            project: analysis.project,
-          })[0],
+          title: withContextPrefix(
+            [email.subject?.trim() || 'Tarea desde correo sin asunto'],
+            contexto,
+          )[0],
           description: email.snippet ?? '',
           priority: TaskPriority.MEDIUM,
           tags: [],

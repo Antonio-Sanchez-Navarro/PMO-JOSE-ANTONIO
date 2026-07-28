@@ -75,7 +75,8 @@ describe('EmailClassificationService', () => {
 
       expect(draft.tasks).toHaveLength(1);
       expect(draft.tasks[0]).not.toHaveProperty('id');
-      expect(draft.tasks[0].title).toBe('Enviar cotización');
+      // El título llega prefijado con el remitente de la cabecera (Sprint 4).
+      expect(draft.tasks[0].title).toBe('[Elena R.] Enviar cotización');
       expect(draft.emailId).toBe(emailConFechaRelativa.id);
       expect(draft.aiConfidence).toBe(0.9);
     });
@@ -217,7 +218,8 @@ describe('EmailClassificationService', () => {
       expect(tx.task.create).toHaveBeenCalledTimes(1);
 
       const creada = tx.task.create.mock.calls[0][0].data;
-      expect(creada.title).toBe(emailNoAccionable.subject);
+      // El respaldo desde el asunto lleva el mismo prefijo que el resto.
+      expect(creada.title).toBe(`[Boletín F.] ${emailNoAccionable.subject}`);
       expect(creada.priority).toBe('MEDIUM');
       // El origen es lo que la protege del borrado en un reproceso posterior:
       // la creó una persona forzando, no el criterio del modelo.
@@ -231,7 +233,9 @@ describe('EmailClassificationService', () => {
       });
 
       expect(result.usedFallback).toBe(false);
-      expect(tx.task.create.mock.calls[0][0].data.title).toBe('Enviar cotización');
+      // La tarea sigue siendo la del modelo; lo que cambia es que se persiste
+      // con el prefijo de contexto delante (Sprint 4).
+      expect(tx.task.create.mock.calls[0][0].data.title).toBe('[Elena R.] Enviar cotización');
     });
   });
 
@@ -338,7 +342,13 @@ describe('EmailClassificationService — prefijo de contexto en los títulos', (
       email: { update: jest.fn() },
     };
     prisma = {
-      email: { findUniqueOrThrow: jest.fn().mockResolvedValue(emailConFechaRelativa) },
+      email: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          ...emailConFechaRelativa,
+          // El remitente del prefijo sale de aquí, no del modelo.
+          from: 'Astrid Robles <astrid@example.test>',
+        }),
+      },
       $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
     ai = { analyzeEmail: jest.fn().mockResolvedValue(analisis({})) };
@@ -359,6 +369,8 @@ describe('EmailClassificationService — prefijo de contexto en los títulos', (
   });
 
   it('sin remitente ni proyecto deja los títulos como los dio el modelo', async () => {
+    // Sin cabecera aprovechable y sin nada del modelo no hay prefijo posible.
+    prisma.email.findUniqueOrThrow.mockResolvedValue({ ...emailConFechaRelativa, from: '' });
     ai.analyzeEmail.mockResolvedValue(analisis({ senderName: null, project: null }));
 
     const draft = await service.classify(emailConFechaRelativa.id, { forceActionable: false });
