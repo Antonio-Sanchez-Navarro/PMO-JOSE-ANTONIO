@@ -13,6 +13,7 @@ import { AiValidationModal } from "../kanban/components/AiValidationModal";
 import { classifyEmail, createTasksFromEmail } from "../kanban/api/tasks.api";
 import { EmailClassification } from "@pmo/shared";
 import { Toaster, toast } from 'sonner';
+import { EmailDetailModal } from "./components/EmailDetailModal";
 
 export function InboxPage() {
   const {
@@ -31,6 +32,7 @@ export function InboxPage() {
 
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiProposal, setAiProposal] = useState<EmailClassification | null>(null);
+  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
 
   const handleAnalyzeEmail = async (emailId: string) => {
     try {
@@ -105,6 +107,7 @@ export function InboxPage() {
                 key={thread.threadId} 
                 thread={thread} 
                 onAnalyze={handleAnalyzeEmail} 
+                onRead={(id) => setSelectedEmailId(id)}
               />
             ))}
           </ul>
@@ -145,16 +148,25 @@ export function InboxPage() {
           }
         }}
       />
+
+      <EmailDetailModal
+        isOpen={selectedEmailId !== null}
+        onClose={() => setSelectedEmailId(null)}
+        emailId={selectedEmailId}
+        onAnalyze={handleAnalyzeEmail}
+      />
     </section>
   );
 }
 
 function ThreadRow({ 
   thread, 
-  onAnalyze 
+  onAnalyze,
+  onRead
 }: { 
   thread: EmailThread; 
   onAnalyze: (id: string) => void; 
+  onRead: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasReplies = thread.messages.length > 1;
@@ -167,6 +179,7 @@ function ThreadRow({
         expanded={expanded}
         onToggle={hasReplies ? () => setExpanded((open) => !open) : undefined}
         onAnalyze={() => onAnalyze(thread.latest.id)}
+        onRead={() => onRead(thread.latest.id)}
       />
 
       {expanded && (
@@ -177,6 +190,7 @@ function ThreadRow({
                 email={message} 
                 nested 
                 onAnalyze={() => onAnalyze(message.id)} 
+                onRead={() => onRead(message.id)}
               />
             </li>
           ))}
@@ -193,6 +207,7 @@ function EmailRow({
   onToggle,
   nested = false,
   onAnalyze,
+  onRead,
 }: {
   email: EmailSnippet;
   threadCount?: number;
@@ -200,6 +215,7 @@ function EmailRow({
   onToggle?: () => void;
   nested?: boolean;
   onAnalyze?: () => void;
+  onRead?: () => void;
 }) {
   const sender = parseSender(email.from);
   const interactive = Boolean(onToggle);
@@ -210,7 +226,15 @@ function EmailRow({
   const isProcessed = Boolean(email.isConverted);
 
   const content = (
-    <div className={`flex items-start gap-4 px-6 py-4 ${nested ? "pl-16" : ""}`}>
+    <div 
+      className={`flex items-start gap-4 px-6 py-4 cursor-pointer hover:bg-slate-50 transition ${nested ? "pl-16" : ""}`}
+      onClick={(e) => {
+        // Evitar que el clic en botones propague el evento al div padre
+        const target = e.target as HTMLElement;
+        if (target.closest('button')) return;
+        onRead?.();
+      }}
+    >
       {!nested && (
         <span
           aria-hidden="true"
