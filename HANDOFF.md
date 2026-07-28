@@ -23,6 +23,58 @@ Registro de Tiempos. Lo anterior quedó al final, bajo "Histórico".
 
 ## Lo que pide Doc — en este orden
 
+### 0. 🚨 URGENTE: monta `InboxPage`. Sin eso no hay E2E posible
+
+Encargo de **Doc** el 2026-07-28 ("Bloqueo de Enrutamiento"), con el diagnóstico
+afinado por **Claude Code** contra el código.
+
+**El problema no es una ruta mal configurada.** Doc supuso que `/inbox` estaba
+cayendo en un comodín de React Router; la realidad es más simple y más profunda:
+
+- **`react-router-dom` no está instalado.** No aparece en las dependencias de
+  `apps/web/package.json` ni se importa en ningún archivo. No hay archivo de
+  rutas que revisar: nunca ha habido router.
+- **`InboxPage` no la monta nadie.** Cero importaciones fuera de su propio
+  archivo. `App.tsx` renderiza `<KanbanBoard />` directamente.
+- Por eso `http://localhost:5173/inbox` pinta el tablero: el servidor de Vite
+  sirve el mismo `index.html` para cualquier ruta y la app solo tiene un árbol
+  de componentes.
+
+Resultado: el flujo de IA completo —`classifyEmail` → `AiValidationModal` →
+`createTasksFromEmail`— vive **exclusivamente** dentro de `InboxPage`, y desde
+el navegador **no hay forma de llegar a él**. Al quitar el `TriageSidebar` en
+`6985cc1`, el único acceso que quedaba desapareció.
+
+**Dos formas de arreglarlo. Elige tú, que la UI es tuya:**
+
+1. **Sin dependencia nueva** (lo más rápido): un conmutador en el `Dashboard` de
+   `App.tsx` — dos pestañas, "Bandeja" y "Tablero", con un `useState`. Nada más.
+2. **Con React Router**: instalar `react-router-dom` y declarar las rutas. Ojo:
+   `package.json` es **zona compartida** según `AI_ROLES.md`, así que avisa
+   antes de tocarlo.
+
+**Avísanos en cuanto la bandeja sea alcanzable desde el navegador.**
+
+### 0-bis. Lo que ya está probado, para que no lo repitas
+
+Claude Code ejecutó el 2026-07-28 la mitad de la E2E que sí era alcanzable, con
+tres pestañas reales y el flujo real por HTTP desde el contexto de la pestaña A
+(sus cookies y su `x-socket-id`, igual que haría tu modal):
+
+- `classify` real sobre el correo de Escrituración → 200 con **4 tareas
+  propuestas** por el modelo.
+- Aprobadas 2 de las 4, con un título editado → `to-task` con `force: true` →
+  **201**, `mode: "confirmed"`, ambas `MANUAL`, en `TODO`, posiciones 9 y 10.
+- **La pestaña que confirmó no recibió eco**; las **otras dos pintaron las
+  tarjetas solas, sin recargar**. Al borrarlas, el `task.deleted` las quitó de
+  las demás pestañas.
+- Limpieza hecha: 0 restos en la base y el correo devuelto a su estado.
+
+**Lo único que falta por probar es tuyo**: que la pestaña que confirma pinte las
+tarjetas **desde la respuesta 201** sin duplicarlas. Eso lo hace tu `onConfirm`,
+y no se pudo comprobar porque el modal es inalcanzable. En cuanto montes la
+bandeja, esa es la parte que hay que mirar.
+
 ### 1. Commitea lo tuyo antes de probar — ✅ hecho
 
 Doc pidió aislar tu trabajo antes de probar, para que un fallo de la E2E no se
