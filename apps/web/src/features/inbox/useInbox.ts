@@ -54,7 +54,7 @@ export function useInbox(initialMaxResults = 20) {
     setError(null);
 
     try {
-      const data = await apiFetch<EmailSnippet[]>(`/gmail/inbox?maxResults=${limit}`);
+      const data = await apiFetch<EmailSnippet[]>(`/emails?take=${limit}`);
       setEmails(data);
       setStatus("ready");
     } catch (err) {
