@@ -9,3 +9,12 @@ export interface Task extends Omit<SharedTask, 'id'> {
   id: string;
   aiConfidence?: number | null;
 }
+
+// Tipo provisional para los correos que devuelva GET /emails
+export interface TriageEmail {
+  id: string;
+  subject: string;
+  from: string;
+  date: string;
+  isConverted: boolean; // Para saber si mostrar "Analizar" o "Reprocesar"
+}

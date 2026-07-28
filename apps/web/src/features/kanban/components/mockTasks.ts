@@ -1,4 +1,4 @@
-import { Task, TaskStatus, TaskPriority } from '../types';
+import { Task, TaskStatus, TaskPriority, TaskSource } from '../types';
 
 export const MOCK_TASKS: Task[] = [
   {
@@ -8,6 +8,11 @@ export const MOCK_TASKS: Task[] = [
     priority: TaskPriority.HIGH,
     dueDate: '2026-07-20',
     aiConfidence: 0.95,
+    source: TaskSource.MANUAL,
+    tags: ['sprint-4'],
+    position: 0,
+    createdAt: '2026-07-20T10:00:00Z',
+    updatedAt: '2026-07-20T10:00:00Z',
   },
   {
     id: 't-2',
@@ -15,6 +20,11 @@ export const MOCK_TASKS: Task[] = [
     status: TaskStatus.DONE,
     priority: TaskPriority.HIGH,
     aiConfidence: 0.98,
+    source: TaskSource.MANUAL,
+    tags: ['db'],
+    position: 1,
+    createdAt: '2026-07-20T10:00:00Z',
+    updatedAt: '2026-07-20T10:00:00Z',
   },
   {
     id: 't-3',
@@ -22,6 +32,11 @@ export const MOCK_TASKS: Task[] = [
     status: TaskStatus.IN_PROGRESS,
     priority: TaskPriority.MEDIUM,
     aiConfidence: 0.85,
+    source: TaskSource.MANUAL,
+    tags: ['docs'],
+    position: 0,
+    createdAt: '2026-07-20T10:00:00Z',
+    updatedAt: '2026-07-20T10:00:00Z',
   },
   {
     id: 't-4',
@@ -30,6 +45,11 @@ export const MOCK_TASKS: Task[] = [
     priority: TaskPriority.HIGH,
     dueDate: '2026-07-25',
     aiConfidence: 0.99,
+    source: TaskSource.MANUAL,
+    tags: ['react'],
+    position: 1,
+    createdAt: '2026-07-20T10:00:00Z',
+    updatedAt: '2026-07-20T10:00:00Z',
   },
   {
     id: 't-5',
@@ -38,6 +58,11 @@ export const MOCK_TASKS: Task[] = [
     priority: TaskPriority.HIGH,
     dueDate: '2026-07-27',
     aiConfidence: 0.45,
+    source: TaskSource.MANUAL,
+    tags: ['api'],
+    position: 0,
+    createdAt: '2026-07-20T10:00:00Z',
+    updatedAt: '2026-07-20T10:00:00Z',
   },
   {
     id: 't-6',
@@ -45,5 +70,10 @@ export const MOCK_TASKS: Task[] = [
     status: TaskStatus.TODO,
     priority: TaskPriority.LOW,
     aiConfidence: 0.60,
+    source: TaskSource.MANUAL,
+    tags: ['e2e'],
+    position: 1,
+    createdAt: '2026-07-20T10:00:00Z',
+    updatedAt: '2026-07-20T10:00:00Z',
   }
 ];

@@ -111,8 +111,34 @@ export const deleteTask = async (id: string): Promise<void> => {
   }
 };
 
-export const createTasksFromEmail = async (emailId: string, payload: Partial<EmailClassification>): Promise<Task[]> => {
+export const classifyEmail = async (emailId: string): Promise<EmailClassification> => {
+  const response = await fetch(`/api/emails/${emailId}/classify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    let errorMsg = 'Error al analizar el correo';
+    try {
+      const errorBody = await response.json();
+      if (errorBody.message) {
+        errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
+      }
+    } catch (e) {}
+    throw new Error(errorMsg);
+  }
+
+  const json = await response.json();
+  return json.data || json;
+};
+
+export const createTasksFromEmail = async (emailId: string, payload: Partial<EmailClassification>, force?: boolean): Promise<Task[]> => {
   const socketId = getSocketId();
+  
+  // Agregar force al payload si viene true
+  const finalPayload = force ? { ...payload, force } : payload;
+
   const response = await fetch(`/api/emails/${emailId}/to-task`, {
     method: 'POST',
     headers: { 
@@ -120,7 +146,7 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
     credentials: 'include',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(finalPayload),
   });
 
   if (!response.ok) {
@@ -130,7 +156,6 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
       if (response.status === 409) {
         errorMsg = 'Este correo ya fue convertido a tareas anteriormente.';
       } else if (errorBody.message) {
-        // En NestJS el message puede ser un array de strings (ej: fallos de validación) o un string
         errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
       }
     } catch (parseError) {
