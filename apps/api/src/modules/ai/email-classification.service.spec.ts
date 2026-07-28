@@ -305,3 +305,89 @@ describe('EmailClassificationService', () => {
     });
   });
 });
+
+/**
+ * El prefijo de contexto (Sprint 4) se compone en esta capa, no en el modelo:
+ * ver el porqué en `title.prefix.ts`.
+ */
+describe('EmailClassificationService — prefijo de contexto en los títulos', () => {
+  let service: EmailClassificationService;
+  let ai: { analyzeEmail: jest.Mock };
+  let prisma: any;
+  let tx: any;
+
+  const analisis = (extra: Record<string, unknown>) => ({
+    isActionable: true,
+    category: 'PROJECT_MANAGEMENT',
+    aiConfidence: 0.9,
+    senderName: 'Astrid R.',
+    project: 'Citrotarte',
+    tasks: [
+      { title: 'Solicitar inmueble en garantía', description: '', priority: 'MEDIUM', tags: [], dueDate: null },
+      { title: 'Confirmar tipo de cambio', description: '', priority: 'MEDIUM', tags: [], dueDate: null },
+    ],
+    ...extra,
+  });
+
+  beforeEach(() => {
+    tx = {
+      task: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 't', ...data })),
+      },
+      email: { update: jest.fn() },
+    };
+    prisma = {
+      email: { findUniqueOrThrow: jest.fn().mockResolvedValue(emailConFechaRelativa) },
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
+    };
+    ai = { analyzeEmail: jest.fn().mockResolvedValue(analisis({})) };
+
+    service = new EmailClassificationService(
+      ai as unknown as AiService,
+      prisma as unknown as PrismaService,
+    );
+  });
+
+  it('prefija y numera las tareas propuestas', async () => {
+    const draft = await service.classify(emailConFechaRelativa.id, { forceActionable: false });
+
+    expect(draft.tasks.map((t) => t.title)).toEqual([
+      '[Astrid R. - Citrotarte 1/2] Solicitar inmueble en garantía',
+      '[Astrid R. - Citrotarte 2/2] Confirmar tipo de cambio',
+    ]);
+  });
+
+  it('sin remitente ni proyecto deja los títulos como los dio el modelo', async () => {
+    ai.analyzeEmail.mockResolvedValue(analisis({ senderName: null, project: null }));
+
+    const draft = await service.classify(emailConFechaRelativa.id, { forceActionable: false });
+
+    expect(draft.tasks[0].title).toBe('Solicitar inmueble en garantía');
+  });
+
+  it('el contador cuenta las tareas que van a existir, no las que propuso el modelo', async () => {
+    // El modelo no ve nada accionable y una persona fuerza: la lista se sustituye
+    // por una sola tarea desde el asunto, y el prefijo no puede decir "1/2".
+    ai.analyzeEmail.mockResolvedValue(analisis({ isActionable: false, tasks: [] }));
+
+    const draft = await service.classify(emailConFechaRelativa.id, { forceActionable: true });
+
+    expect(draft.tasks).toHaveLength(1);
+    expect(draft.tasks[0].title).toContain('[Astrid R. - Citrotarte]');
+    expect(draft.tasks[0].title).not.toContain('/');
+  });
+
+  it('las tareas que se persisten llevan el prefijo, no solo las propuestas', async () => {
+    await service.classifyAndPersist(emailConFechaRelativa.id, {
+      replaceExisting: true,
+      forceActionable: false,
+    });
+
+    const filas = tx.task.create.mock.calls.map((c: any[]) => c[0].data);
+    expect(filas.map((f: { title: string }) => f.title)).toEqual([
+      '[Astrid R. - Citrotarte 1/2] Solicitar inmueble en garantía',
+      '[Astrid R. - Citrotarte 2/2] Confirmar tipo de cambio',
+    ]);
+  });
+});

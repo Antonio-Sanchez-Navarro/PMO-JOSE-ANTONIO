@@ -17,6 +17,13 @@ export interface EmailAnalysisResult {
   category: string;
   tasks: ExtractedTask[];
   aiConfidence: number;
+  /**
+   * Remitente abreviado ("Astrid R.") y proyecto al que pertenece el correo.
+   * Alimentan el prefijo de contexto del título (ver `title.prefix.ts`). Son
+   * `null` cuando el correo no da para deducirlos.
+   */
+  senderName: string | null;
+  project: string | null;
 }
 
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
@@ -88,8 +95,18 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
         type: 'number',
         description: 'Confianza del análisis, entre 0 y 1',
       },
+      senderName: {
+        anyOf: [{ type: 'string' }, { type: 'null' }],
+        description:
+          'Nombre del remitente abreviado: nombre de pila e inicial del apellido con punto, por ejemplo "Astrid R.". null si el correo no permite deducirlo.',
+      },
+      project: {
+        anyOf: [{ type: 'string' }, { type: 'null' }],
+        description:
+          'Proyecto, obra, cliente o asunto al que pertenece el correo, en una o dos palabras, por ejemplo "Citrotarte" o "Lote 36". null si no hay ninguno claro.',
+      },
     },
-    required: ['isActionable', 'category', 'tasks', 'aiConfidence'],
+    required: ['isActionable', 'category', 'tasks', 'aiConfidence', 'senderName', 'project'],
     additionalProperties: false,
   },
 };
@@ -99,6 +116,18 @@ Tu único propósito es leer un correo y determinar:
 1. Si el correo requiere una acción o seguimiento por parte del usuario (isActionable).
 2. Si es accionable, extraer la tarea principal o la lista de tareas.
 3. Asignar prioridad, etiquetas, fecha límite (si el correo la menciona) y tu nivel de confianza.
+
+Sobre el contexto de las tareas (senderName y project): el tablero necesita saber de
+quién y de qué proyecto viene cada tarea. Extrae el nombre del remitente abreviado
+—nombre de pila e inicial del apellido con punto, "Astrid R."— y el proyecto, obra,
+cliente o asunto al que pertenece el correo, en una o dos palabras ("Citrotarte",
+"Lote 36"). Si el correo no permite deducir alguno de los dos, devuelve null: no
+inventes un remitente ni un proyecto.
+
+Los títulos de las tareas van SIN prefijo: escríbelos como acciones limpias
+("Solicitar inmueble en garantía"). El sistema antepone después el bloque
+[Astrid R. - Citrotarte 1/3] con los datos que acabas de extraer, y numera él las
+tareas. No escribas tú corchetes ni contadores: se duplicarían.
 
 Sobre las fechas: el mensaje del usuario incluye la fecha de recepción del correo.
 Resuelve contra ella cualquier fecha relativa o incompleta ("el viernes", "31 de julio",
@@ -207,7 +236,23 @@ export class AiService {
       // La confianza alimenta decisiones de negocio: la acotamos al rango válido.
       aiConfidence: Math.min(1, Math.max(0, raw.aiConfidence)),
       tasks: raw.tasks.map((task, index) => this.parseTask(task, index)),
+      // Ausentes o de otro tipo se degradan a null en vez de romper el análisis:
+      // sin ellos la tarea sale sin prefijo, que es peor que con él pero mucho
+      // mejor que perder la extracción entera.
+      senderName: this.parseContexto(raw.senderName, 'senderName'),
+      project: this.parseContexto(raw.project, 'project'),
     };
+  }
+
+  /** Remitente y proyecto: texto útil o `null`. Nunca cadena vacía. */
+  private parseContexto(value: unknown, campo: string): string | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string') {
+      this.logger.warn(`Campo "${campo}" ignorado: no es texto (${typeof value})`);
+      return null;
+    }
+    const limpio = value.trim();
+    return limpio === '' ? null : limpio;
   }
 
   private parseTask(value: unknown, index: number): ExtractedTask {

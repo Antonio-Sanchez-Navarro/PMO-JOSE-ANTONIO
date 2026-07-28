@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, Task, TaskPriority, TaskSource } from '@prisma/client';
 import { AiService } from './ai.service';
 import { adjustPriority } from './priority.rules';
+import { withContextPrefix } from './title.prefix';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 export interface ClassifyOptions {
@@ -156,9 +157,16 @@ export class EmailClassificationService {
 
     const isActionable = analysis.isActionable || forceActionable;
 
+    // El prefijo se compone aquí, sobre la lista ya filtrada, para que el
+    // contador cuadre con las tareas que de verdad van a existir.
+    const titulos = withContextPrefix(
+      analysis.tasks.map((t) => t.title),
+      { senderName: analysis.senderName, project: analysis.project },
+    );
+
     let tasks: TaskDraft[] = isActionable
-      ? analysis.tasks.map((task) => ({
-          title: task.title,
+      ? analysis.tasks.map((task, i) => ({
+          title: titulos[i],
           description: task.description,
           // La prioridad del modelo pasa por la capa determinista antes de
           // persistirse: la fecha puede subirla, nunca bajarla.
@@ -177,7 +185,13 @@ export class EmailClassificationService {
     if (usedFallback) {
       tasks = [
         {
-          title: email.subject?.trim() || 'Tarea desde correo sin asunto',
+          // Lleva el mismo prefijo que las demás: al tablero le da igual que
+          // esta saliera del asunto y no del modelo, y una tarjeta sin contexto
+          // entre otras con él se lee como un fallo.
+          title: withContextPrefix([email.subject?.trim() || 'Tarea desde correo sin asunto'], {
+            senderName: analysis.senderName,
+            project: analysis.project,
+          })[0],
           description: email.snippet ?? '',
           priority: TaskPriority.MEDIUM,
           tags: [],
