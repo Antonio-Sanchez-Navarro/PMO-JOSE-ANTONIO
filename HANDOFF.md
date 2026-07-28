@@ -96,7 +96,52 @@ cliente de socket.io del tablero. Ya lo tienes hecho (`c06cb73`, `ae2dceb`,
 
 ## Contra qué trabajas
 
+### `GET /emails` — la bandeja de triage · **nuevo, ya en la rama**
+
+Lo que le faltaba a `useTriageEmails`. Devuelve **el arreglo sin envoltorio**
+(como `POST /tasks`), del correo más reciente al más antiguo:
+
+```json
+[
+  {
+    "id": "cmrzm8nhx0001bgaendpebue5",
+    "subject": "Pendientes proyecto Torre Citrotarte",
+    "from": "Astrid Robles <astrid@example.test>",
+    "date": "2026-07-25T00:13:24.584Z",
+    "category": "PROJECT_MANAGEMENT",
+    "taskCount": 3,
+    "isConverted": true
+  }
+]
+```
+
+`id` es el `Email.id` que exigen `classify` y `to-task` — **ya no hace falta
+pegar cuids a mano**. `date` va en ISO para que la formatees tú. `subject` nunca
+llega vacío: si el correo no lo trae, se sustituye por `(sin asunto)` para que
+no aparezca una fila muda. `category` sí puede ser `null` (correo aún sin
+clasificar).
+
+`isConverted` sale de **tener tareas**, no de `processedAt`: el worker marca
+como procesado incluso lo que no generó ninguna tarea, así que esa marca no te
+sirve para saber si `to-task` va a darte 409. Es exactamente la condición que
+dispara ese 409, así que con este campo sabes de antemano cuándo hace falta
+`force: true`.
+
+Filtros, todos opcionales: `?actionable=true|false`, `?converted=true|false`,
+`?skip=` y `?take=` (por defecto 50, tope 200). Un valor que no sea `true` ni
+`false` da **400**, no se interpreta por su cuenta. Sin cookie, **401**.
+
+**Ojo con lo que vas a ver hoy**: de los 26 correos hay 13 accionables y **los
+13 ya están convertidos** por el worker, así que `?actionable=true&converted=false`
+devuelve **0**. Si filtras solo por accionables, la barra saldrá entera en modo
+*Reprocesar* — que es el caso que Doc aprobó, pero conviene que no te sorprenda
+ni lo leas como un fallo. Si quieres ver correos vírgenes, quita el filtro de
+accionable: hay 13 no accionables sin tareas.
+
 ### `POST /emails/:id/classify` — la propuesta, sin crear nada
+
+**Ya existía** desde `6fd683f`; no había que programarlo. Está verificado y es
+el que alimenta tu modal.
 
 Es el que alimenta la cuarentena. Analiza el correo y devuelve lo que
 propondría **sin escribir una sola fila**: ni tareas, ni la marca de procesado

@@ -461,3 +461,135 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     expect(result.tasks[0]).not.toHaveProperty('source');
   });
 });
+
+describe('EmailsService — GET /emails (bandeja de triage)', () => {
+  let service: EmailsService;
+  let prisma: any;
+
+  /** Dos correos: uno ya convertido y otro por despachar. */
+  const filas = [
+    {
+      id: 'email-1',
+      subject: 'Escrituración lote 36',
+      from: 'notaria@ejemplo.mx',
+      receivedAt: new Date('2026-07-25T18:00:00.000Z'),
+      category: 'PROJECT_MANAGEMENT',
+      _count: { tasks: 3 },
+    },
+    {
+      id: 'email-2',
+      subject: null,
+      from: 'banco@ejemplo.mx',
+      receivedAt: new Date('2026-07-24T09:00:00.000Z'),
+      category: null,
+      _count: { tasks: 0 },
+    },
+  ];
+
+  beforeEach(() => {
+    prisma = { email: { findMany: jest.fn().mockResolvedValue(filas) } };
+
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      {} as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+    );
+  });
+
+  it('solo devuelve correos del usuario', async () => {
+    await service.listForTriage(USER_ID, {});
+
+    expect(prisma.email.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ userId: USER_ID }) }),
+    );
+  });
+
+  it('marca como convertido el que ya tiene tareas', async () => {
+    const [convertido, pendiente] = await service.listForTriage(USER_ID, {});
+
+    expect(convertido.isConverted).toBe(true);
+    expect(convertido.taskCount).toBe(3);
+    expect(pendiente.isConverted).toBe(false);
+    expect(pendiente.taskCount).toBe(0);
+  });
+
+  it('da un asunto que pintar cuando el correo no lo trae', async () => {
+    const [, sinAsunto] = await service.listForTriage(USER_ID, {});
+
+    expect(sinAsunto.subject).toBe('(sin asunto)');
+  });
+
+  it('entrega la fecha en ISO, no como objeto Date', async () => {
+    const [primero] = await service.listForTriage(USER_ID, {});
+
+    expect(primero.date).toBe('2026-07-25T18:00:00.000Z');
+  });
+
+  it('sin filtros no acota por accionable ni por convertido', async () => {
+    await service.listForTriage(USER_ID, {});
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    expect(where).toEqual({ userId: USER_ID });
+  });
+
+  it('actionable=true deja solo los accionables', async () => {
+    await service.listForTriage(USER_ID, { actionable: true });
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    expect(where.isActionable).toBe(true);
+  });
+
+  it('actionable=false no se confunde con "sin filtro"', async () => {
+    await service.listForTriage(USER_ID, { actionable: false });
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    expect(where.isActionable).toBe(false);
+  });
+
+  it('converted=false es la bandeja por despachar: los que no tienen tareas', async () => {
+    await service.listForTriage(USER_ID, { converted: false });
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    // Por tareas y no por processedAt: el worker marca procesado aunque no
+    // hubiera creado ninguna, y esos siguen pendientes de despachar.
+    expect(where.tasks).toEqual({ none: {} });
+    expect(where.processedAt).toBeUndefined();
+  });
+
+  it('converted=true devuelve los que ya generaron tareas', async () => {
+    await service.listForTriage(USER_ID, { converted: true });
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    expect(where.tasks).toEqual({ some: {} });
+  });
+
+  it('ordena del más reciente al más antiguo', async () => {
+    await service.listForTriage(USER_ID, {});
+
+    expect(prisma.email.findMany.mock.calls[0][0].orderBy).toEqual({ receivedAt: 'desc' });
+  });
+
+  it('pagina con valores por defecto sensatos', async () => {
+    await service.listForTriage(USER_ID, {});
+
+    const args = prisma.email.findMany.mock.calls[0][0];
+    expect(args.skip).toBe(0);
+    expect(args.take).toBe(50);
+  });
+
+  it('respeta skip y take cuando llegan', async () => {
+    await service.listForTriage(USER_ID, { skip: 10, take: 5 });
+
+    const args = prisma.email.findMany.mock.calls[0][0];
+    expect(args.skip).toBe(10);
+    expect(args.take).toBe(5);
+  });
+
+  it('no expone el cuerpo del correo en el listado', async () => {
+    await service.listForTriage(USER_ID, {});
+
+    const { select } = prisma.email.findMany.mock.calls[0][0];
+    expect(select.bodyText).toBeUndefined();
+    expect(select.snippet).toBeUndefined();
+  });
+});

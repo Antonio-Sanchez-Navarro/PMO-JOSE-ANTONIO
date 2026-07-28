@@ -1,6 +1,17 @@
-import { Body, Controller, Headers, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
-import { ClassificationResult, EmailsService, ToTaskResult } from './emails.service';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { ClassificationResult, EmailsService, ToTaskResult, TriageEmail } from './emails.service';
 import { ToTaskDto } from './dto/to-task.dto';
+import { QueryEmailsDto } from './dto/query-emails.dto';
 import { SOCKET_ID_HEADER } from '../tasks/tasks.gateway';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -10,6 +21,25 @@ import type { CurrentUserContext } from '../auth/auth.types';
 @UseGuards(AuthGuard)
 export class EmailsController {
   constructor(private readonly emailsService: EmailsService) {}
+
+  /**
+   * Los correos del usuario, para la bandeja de triage del tablero (Sprint 3).
+   *
+   * Devuelve el arreglo **sin envoltorio**, como `POST /tasks`. Filtros:
+   * `?actionable=true|false` y `?converted=true|false`, más `skip` y `take`
+   * (por defecto 50, tope 200). Un valor que no sea `true` ni `false` da 400.
+   *
+   * Es lo que permite que la cuarentena se abra desde un correo de verdad: sin
+   * esta ruta el frontend no tenía de dónde sacar el `Email.id` que exigen
+   * `classify` y `to-task`.
+   */
+  @Get()
+  list(
+    @CurrentUser() user: CurrentUserContext,
+    @Query() query: QueryEmailsDto,
+  ): Promise<TriageEmail[]> {
+    return this.emailsService.listForTriage(user.userId, query);
+  }
 
   /**
    * Analiza un correo y devuelve lo que propondría, sin crear nada (Sprint 3).

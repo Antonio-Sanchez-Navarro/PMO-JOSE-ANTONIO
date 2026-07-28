@@ -3,7 +3,21 @@ import { Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
+import { QueryEmailsDto } from './dto/query-emails.dto';
 import { TasksGateway } from '../tasks/tasks.gateway';
+
+/** Un correo tal y como lo necesita la bandeja de triage del tablero. */
+export interface TriageEmail {
+  id: string;
+  subject: string;
+  from: string;
+  /** ISO 8601, para que el cliente la formatee como quiera. */
+  date: string;
+  category: string | null;
+  taskCount: number;
+  /** Ya generó tareas: `to-task` daría 409 salvo que se insista con `force`. */
+  isConverted: boolean;
+}
 
 export interface ToTaskResult {
   emailId: string;
@@ -57,6 +71,57 @@ export class EmailsService {
    * ya decidirá la persona. Forzar aquí sería inventarle una tarea a alguien
    * que solo estaba mirando.
    */
+  /**
+   * Los correos del usuario para la bandeja de triage.
+   *
+   * Nace porque el frontend no tenía forma legítima de conocer el `Email.id`:
+   * `GET /gmail/inbox` va en vivo a Google y devuelve el id de mensaje de Gmail,
+   * que no es el que aceptan `classify` ni `to-task`. Sin esta ruta, la única
+   * manera de probar la cuarentena era pegar un cuid a mano.
+   *
+   * Lee de nuestra base y no de Gmail a propósito: solo lo persistido tiene id
+   * propio, y solo nosotros sabemos qué se convirtió ya. Gmail no lo sabe.
+   */
+  async listForTriage(userId: string, query: QueryEmailsDto): Promise<TriageEmail[]> {
+    const emails = await this.prisma.email.findMany({
+      where: {
+        userId,
+        ...(query.actionable === undefined ? {} : { isActionable: query.actionable }),
+        // `converted` se traduce a "tiene o no tiene tareas", que es justo lo
+        // que hace que `to-task` responda 409. `processedAt` no sirve para
+        // esto: el worker lo marca aunque no crease ni una tarea.
+        ...(query.converted === undefined
+          ? {}
+          : query.converted
+            ? { tasks: { some: {} } }
+            : { tasks: { none: {} } }),
+      },
+      select: {
+        id: true,
+        subject: true,
+        from: true,
+        receivedAt: true,
+        category: true,
+        _count: { select: { tasks: true } },
+      },
+      orderBy: { receivedAt: 'desc' },
+      skip: query.skip ?? 0,
+      take: query.take ?? 50,
+    });
+
+    return emails.map((email) => ({
+      id: email.id,
+      // El asunto es opcional en la base y la bandeja necesita algo que pintar:
+      // una fila sin texto parece un fallo de carga.
+      subject: email.subject ?? '(sin asunto)',
+      from: email.from,
+      date: email.receivedAt.toISOString(),
+      category: email.category,
+      taskCount: email._count.tasks,
+      isConverted: email._count.tasks > 0,
+    }));
+  }
+
   async classify(userId: string, emailId: string): Promise<ClassificationResult> {
     const email = await this.prisma.email.findFirst({
       where: { id: emailId, userId },
