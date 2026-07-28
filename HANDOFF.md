@@ -1,7 +1,7 @@
-# Handoff — Cuarentena de clasificación (para Gravity)
+# Handoff — Prueba E2E de la cuarentena (para Gravity)
 
-> **Estado: TRABAJAR** · puesto por **Doc** el 2026-07-27
-> **Asignado a:** Gravity (Control asumido, trabajando en UI de Cuarentena)
+> **Estado: TRABAJAR** · puesto por **Doc** el 2026-07-27, vigente el 2026-07-28
+> **Asignado a:** Gravity (cuarentena montada; toca cerrarla con la prueba E2E)
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el
 > encargo de abajo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún
@@ -9,22 +9,53 @@
 > es el agente que lo tenga a mano; la decisión sigue siendo suya y queda
 > firmada aquí.
 >
-> **Adelante.** El `POST /emails/:id/classify` que bloqueaba el encargo ya está
-> en la rama (`6fd683f`) y verificado contra la app.
->
-> Doc decidió paralelizar: monta el modal, el estado local con las ediciones del
-> usuario y el payload final, y deja el botón de **Confirmar** contra un stub
-> hasta que el `to-task` que acepta las tareas editadas esté en la rama.
+> **Ya no falta ninguna pieza del backend.** `classify` (`6fd683f`), `to-task`
+> con `tasks[]` (`79c5adf`) y el aviso por socket (`9b65ae6`) están en la rama y
+> verificados contra la app.
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí,
 no es un encargo. Cuando te digan "lee tu md", vuelve a este archivo y trabaja
 lo que marque el Estado.
 
-Encargo de **Doc**, redactado por **Claude Code** con los contratos del backend.
-Pertenece a lo que le falta al **Sprint 3** (la tubería de IA); el Sprint 5
-sigue siendo Registro de Tiempos. Lo anterior quedó al final, bajo "Histórico".
+Órdenes de **Doc** del 2026-07-28, redactadas por **Claude Code**. Cierran lo
+que le falta al **Sprint 3** (la tubería de IA); el Sprint 5 sigue siendo
+Registro de Tiempos. Lo anterior quedó al final, bajo "Histórico".
 
-## Lo que pide Doc
+## Lo que pide Doc — en este orden
+
+### 1. Commitea lo tuyo antes de probar
+
+`AiValidationModal.tsx`, `KanbanBoard.tsx`, `tasks.api.ts` y `types/index.ts`
+siguen sin commitear en el árbol de trabajo. Si la prueba falla sobre código
+flotante, no habrá forma de separar tu cambio del resto. Commitéalo como punto
+de control **antes** de tocar nada más.
+
+### 2. La prueba E2E la lideras tú
+
+Es puramente visual, así que es tuya. Doc fija el escenario:
+
+- Levanta el entorno (la API y los contenedores ya están corriendo).
+- Abre **dos pestañas** con el tablero.
+- En la **pestaña A**, procesa un correo por el modal de cuarentena y confirma.
+- **Criterio de éxito**: la **A** refleja las tareas nuevas de inmediato —vía la
+  respuesta 201 y **sin duplicarlas**, porque manda `x-socket-id`— y la **B** las
+  pinta sola, en tiempo real, sin recargar.
+
+Reporta el hash del commit y lo que viste en las dos pestañas.
+
+### 3. Después: badges de prioridad con el origen
+
+En cuanto la E2E pase en verde, tu siguiente encargo (Sprint 4) son los badges
+de prioridad en la tarjeta con el **indicador visual de origen** (`Task.source`,
+que ya viaja en la API), para distinguir de un vistazo lo creado o validado a
+mano (`MANUAL`) de lo que no.
+
+**Falsa alarma que conviene aclarar**: Doc estuvo a punto de encargarte el
+cliente de socket.io del tablero. Ya lo tienes hecho (`c06cb73`, `ae2dceb`,
+`d35e1c8`) y el error fue de Claude Code, que leyó una línea desactualizada de
+`TASKS.md` en vez de mirar tu código. El checklist ya está corregido (`b87b42d`).
+
+## De qué partes — la cuarentena que ya montaste
 
 **Componente de cuarentena (UI).** Un modal o drawer de validación.
 
