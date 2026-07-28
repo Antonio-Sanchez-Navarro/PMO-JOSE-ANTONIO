@@ -626,3 +626,107 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
     expect(select.snippet).toBe(true);
   });
 });
+
+describe('EmailsService — GET /emails/:id (vista de lectura)', () => {
+  let service: EmailsService;
+  let prisma: any;
+
+  const fila = {
+    id: 'email-1',
+    subject: 'Escrituración lote 36',
+    from: 'notaria@ejemplo.mx',
+    receivedAt: new Date('2026-07-25T18:00:00.000Z'),
+    category: 'PROJECT_MANAGEMENT',
+    threadId: 'hilo-1',
+    labels: ['INBOX'],
+    snippet: 'Adjunto el borrador…',
+    gmailMessageId: '19f95edbf2b0650a',
+    bodyText: 'Buenas tardes, adjunto el borrador de la escritura para su revisión…',
+    isActionable: true,
+    processedAt: new Date('2026-07-25T18:45:08.667Z'),
+    tasks: [
+      { id: 'task-1', title: 'Confirmar TC', status: 'TODO', priority: 'URGENT' },
+      { id: 'task-2', title: 'Remitir KYC', status: 'IN_PROGRESS', priority: 'HIGH' },
+    ],
+  };
+
+  beforeEach(() => {
+    prisma = { email: { findFirst: jest.fn().mockResolvedValue(fila) } };
+
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      {} as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+    );
+  });
+
+  it('devuelve el texto completo, que es lo que el listado no trae', async () => {
+    const detalle = await service.findOne(USER_ID, 'email-1');
+
+    expect(detalle.bodyText).toContain('adjunto el borrador de la escritura');
+    expect(prisma.email.findFirst.mock.calls[0][0].select.bodyText).toBe(true);
+  });
+
+  it('filtra por userId además de por id', async () => {
+    await service.findOne(USER_ID, 'email-1');
+
+    expect(prisma.email.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'email-1', userId: USER_ID } }),
+    );
+  });
+
+  it('devuelve 404 si el correo no existe o es de otra persona', async () => {
+    prisma.email.findFirst.mockResolvedValue(null);
+
+    await expect(service.findOne(USER_ID, 'ajeno')).rejects.toThrow(NotFoundException);
+  });
+
+  it('trae las tareas que ese correo ya generó, para poder comparar al reprocesar', async () => {
+    const detalle = await service.findOne(USER_ID, 'email-1');
+
+    expect(detalle.tasks).toHaveLength(2);
+    expect(detalle.tasks[0]).toEqual({
+      id: 'task-1',
+      title: 'Confirmar TC',
+      status: 'TODO',
+      priority: 'URGENT',
+    });
+    expect(detalle.taskCount).toBe(2);
+    expect(detalle.isConverted).toBe(true);
+  });
+
+  it('mantiene el mismo contrato que el listado en los campos compartidos', async () => {
+    const detalle = await service.findOne(USER_ID, 'email-1');
+
+    expect(detalle.date).toBe('2026-07-25T18:00:00.000Z');
+    expect(detalle.threadId).toBe('hilo-1');
+    expect(detalle.labels).toEqual(['INBOX']);
+    expect(detalle.gmailMessageId).toBe('19f95edbf2b0650a');
+  });
+
+  it('distingue el correo sin cuerpo guardado del cuerpo vacío', async () => {
+    prisma.email.findFirst.mockResolvedValue({ ...fila, bodyText: null, snippet: null });
+
+    const detalle = await service.findOne(USER_ID, 'email-1');
+
+    // `null` en el cuerpo le dice a la vista que caiga al snippet en vez de
+    // pintar un panel en blanco; el snippet sí se normaliza a cadena.
+    expect(detalle.bodyText).toBeNull();
+    expect(detalle.snippet).toBe('');
+  });
+
+  it('da la marca de procesado en ISO, o null si el worker no ha pasado', async () => {
+    expect((await service.findOne(USER_ID, 'email-1')).processedAt).toBe(
+      '2026-07-25T18:45:08.667Z',
+    );
+
+    prisma.email.findFirst.mockResolvedValue({ ...fila, processedAt: null });
+    expect((await service.findOne(USER_ID, 'email-1')).processedAt).toBeNull();
+  });
+
+  it('sustituye el asunto ausente igual que el listado', async () => {
+    prisma.email.findFirst.mockResolvedValue({ ...fila, subject: null });
+
+    expect((await service.findOne(USER_ID, 'email-1')).subject).toBe('(sin asunto)');
+  });
+});

@@ -9,7 +9,13 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ClassificationResult, EmailsService, ToTaskResult, TriageEmail } from './emails.service';
+import {
+  ClassificationResult,
+  EmailDetail,
+  EmailsService,
+  ToTaskResult,
+  TriageEmail,
+} from './emails.service';
 import { ToTaskDto } from './dto/to-task.dto';
 import { QueryEmailsDto } from './dto/query-emails.dto';
 import { SOCKET_ID_HEADER } from '../tasks/tasks.gateway';
@@ -39,6 +45,23 @@ export class EmailsController {
     @Query() query: QueryEmailsDto,
   ): Promise<TriageEmail[]> {
     return this.emailsService.listForTriage(user.userId, query);
+  }
+
+  /**
+   * Un correo con su texto completo, para la vista de lectura (Sprint 3).
+   *
+   * El listado no trae `bodyText` porque son ~8 KB por correo; aquí sí, que es
+   * lo que se va a leer antes de aprobar las tareas propuestas. Devuelve además
+   * las tareas que ese correo ya generó, para poder comparar al reprocesar.
+   *
+   * Respuestas: 200 con el detalle · 404 si el correo no es suyo o no existe.
+   */
+  @Get(':id')
+  findOne(
+    @CurrentUser() user: CurrentUserContext,
+    @Param('id') id: string,
+  ): Promise<EmailDetail> {
+    return this.emailsService.findOne(user.userId, id);
   }
 
   /**

@@ -31,6 +31,25 @@ export interface TriageEmail {
   gmailMessageId: string;
 }
 
+/** Una tarea que ese correo ya generó, en su versión corta. */
+export interface EmailTaskSummary {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+}
+
+/** El correo completo, para la vista de lectura previa a la cuarentena. */
+export interface EmailDetail extends TriageEmail {
+  /** Texto completo. `null` si el correo se guardó sin cuerpo. */
+  bodyText: string | null;
+  isActionable: boolean;
+  /** ISO 8601, o `null` si el worker todavía no lo ha despachado. */
+  processedAt: string | null;
+  /** Las tareas que ya salieron de este correo, en el orden del tablero. */
+  tasks: EmailTaskSummary[];
+}
+
 export interface ToTaskResult {
   emailId: string;
   /**
@@ -94,6 +113,68 @@ export class EmailsService {
    * Lee de nuestra base y no de Gmail a propósito: solo lo persistido tiene id
    * propio, y solo nosotros sabemos qué se convirtió ya. Gmail no lo sabe.
    */
+  /**
+   * Un correo con su texto completo, para la vista de lectura.
+   *
+   * Es la contraparte del listado: allí el `bodyText` se excluye porque son
+   * ~8 KB por correo, aquí se incluye porque es justo lo que se va a leer. Una
+   * persona no puede aprobar tareas propuestas sobre un correo que no ha
+   * podido leer.
+   *
+   * Trae además las tareas que ese correo ya generó: al reprocesar, la vista
+   * necesita poder enseñar contra qué se está comparando la propuesta nueva.
+   */
+  async findOne(userId: string, emailId: string): Promise<EmailDetail> {
+    const email = await this.prisma.email.findFirst({
+      // Por `userId` además de por `id`: sin esto, cualquier sesión válida
+      // leería el correo de otra persona con solo conocer su id.
+      where: { id: emailId, userId },
+      select: {
+        id: true,
+        subject: true,
+        from: true,
+        receivedAt: true,
+        category: true,
+        threadId: true,
+        labels: true,
+        snippet: true,
+        gmailMessageId: true,
+        bodyText: true,
+        isActionable: true,
+        processedAt: true,
+        tasks: {
+          select: { id: true, title: true, status: true, priority: true },
+          orderBy: { position: 'asc' },
+        },
+      },
+    });
+
+    if (!email) {
+      throw new NotFoundException(`No existe el correo ${emailId}`);
+    }
+
+    return {
+      id: email.id,
+      subject: email.subject ?? '(sin asunto)',
+      from: email.from,
+      date: email.receivedAt.toISOString(),
+      category: email.category,
+      threadId: email.threadId,
+      labels: email.labels,
+      snippet: email.snippet ?? '',
+      gmailMessageId: email.gmailMessageId,
+      // `null` y no cadena vacía: distingue "este correo no tiene cuerpo
+      // guardado" de "el cuerpo está vacío", y así la vista sabe cuándo caer
+      // al snippet en vez de enseñar un panel en blanco.
+      bodyText: email.bodyText,
+      isActionable: email.isActionable,
+      processedAt: email.processedAt?.toISOString() ?? null,
+      taskCount: email.tasks.length,
+      isConverted: email.tasks.length > 0,
+      tasks: email.tasks,
+    };
+  }
+
   async listForTriage(userId: string, query: QueryEmailsDto): Promise<TriageEmail[]> {
     const emails = await this.prisma.email.findMany({
       where: {

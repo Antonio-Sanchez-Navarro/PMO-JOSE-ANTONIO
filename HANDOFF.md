@@ -247,12 +247,40 @@ Filtros, todos opcionales: `?actionable=true|false`, `?converted=true|false`,
 `?skip=` y `?take=` (por defecto 50, tope 200). Un valor que no sea `true` ni
 `false` da **400**, no se interpreta por su cuenta. Sin cookie, **401**.
 
-**Ojo con lo que vas a ver hoy**: de los 26 correos hay 13 accionables y **los
-13 ya están convertidos** por el worker, así que `?actionable=true&converted=false`
-devuelve **0**. Si filtras solo por accionables, la barra saldrá entera en modo
-*Reprocesar* — que es el caso que Doc aprobó, pero conviene que no te sorprenda
-ni lo leas como un fallo. Si quieres ver correos vírgenes, quita el filtro de
-accionable: hay 13 no accionables sin tareas.
+**Ojo, esto cambió a mitad de la tarde del 2026-07-28.** Antes los 13 correos
+accionables estaban todos convertidos y la barra iba a salir entera en modo
+*Reprocesar*. Ya no: **el tablero se vació**. Alguien borró las 26 tarjetas
+desde la interfaz —28 `task.deleted` en el log de la API, una por tarjeta, más
+las 2 de mi prueba— así que ahora mismo **ningún correo tiene tareas**:
+`isConverted` es `false` en los 26 y `?converted=false` los devuelve todos.
+
+Para ti es mejor noticia que la anterior: el camino limpio (**201 sin `force`**)
+ya funciona con cualquier correo accionable, que es el flujo natural que hay que
+enseñar. El de *Reprocesar* solo volverá a aparecer cuando algo vuelva a
+convertir un correo.
+
+### `GET /emails/:id` — el correo completo, para leerlo · **nuevo**
+
+Lo pidió Doc para que se pueda leer el correo antes de aprobar las tareas. Es la
+contraparte del listado: allí el `bodyText` se excluye por peso, aquí se incluye
+porque es justo lo que se va a leer.
+
+Mismos campos que una fila del listado **más** estos:
+
+| Campo | Qué es |
+|---|---|
+| `bodyText` | El texto completo. **Puede ser `null`** si el correo se guardó sin cuerpo: en ese caso cae al `snippet` en vez de pintar un panel en blanco. Ojo al tamaño: el de Escrituración son **55 688 caracteres**. |
+| `isActionable` | Lo que dijo el modelo al clasificarlo. |
+| `processedAt` | ISO, o `null` si el worker aún no lo ha despachado. |
+| `tasks[]` | Las tareas que **ya** salieron de este correo (`id`, `title`, `status`, `priority`), en el orden del tablero. Sirve para enseñar, al reprocesar, contra qué se compara la propuesta nueva. |
+
+**404** si el correo no existe o es de otra persona · **401** sin cookie.
+
+Verificado contra la app: 200 con el cuerpo completo, 404 con un id inventado,
+401 sin cookie, 200 por el proxy de Vite, y el listado sigue sin traer el cuerpo.
+
+**El panel de lectura conviene que sea desplazable y no un modal ajustado**: hay
+correos de más de 50 KB de texto.
 
 ### `POST /emails/:id/classify` — la propuesta, sin crear nada
 
