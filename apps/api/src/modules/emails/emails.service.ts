@@ -3,6 +3,7 @@ import { Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
+import { TasksGateway } from '../tasks/tasks.gateway';
 
 export interface ToTaskResult {
   emailId: string;
@@ -41,6 +42,7 @@ export class EmailsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly classification: EmailClassificationService,
+    private readonly gateway: TasksGateway,
   ) {}
 
   /**
@@ -93,12 +95,44 @@ export class EmailsService {
   }
 
   /**
-   * Convierte un correo en tarea a petición de una persona.
+   * Convierte un correo en tarea y anuncia las tarjetas nuevas al tablero.
+   *
+   * La emisión vive aquí, envolviendo a las tres vías, y no dentro de cada una:
+   * al tablero le da igual si la tarjeta salió de la cuarentena, de un título
+   * escrito a mano o del modelo — lo que necesita es enterarse siempre. Puesta
+   * en cada rama, cualquier vía futura nacería muda.
+   *
+   * Va después de que la escritura haya terminado: un evento emitido dentro de
+   * la transacción anunciaría tarjetas que aún podrían no llegar a existir.
+   */
+  async convertToTask(
+    userId: string,
+    emailId: string,
+    dto: ToTaskDto,
+    socketId?: string,
+  ): Promise<ToTaskResult> {
+    const result = await this.createFromEmail(userId, emailId, dto);
+
+    // Un evento por tarjeta, como hace `POST /tasks`: el cliente ya sabe
+    // insertar una tarea suelta y no hay que enseñarle un formato nuevo.
+    for (const task of result.tasks) {
+      this.gateway.emitTaskCreated(task, socketId);
+    }
+
+    return result;
+  }
+
+  /**
+   * Las tres vías de conversión, sin la parte de anunciarlas.
    *
    * A diferencia del worker, aquí nunca se borran tareas: la conversión manual
    * solo añade. El guardarraíl contra duplicados es el 409, no el borrado.
    */
-  async convertToTask(userId: string, emailId: string, dto: ToTaskDto): Promise<ToTaskResult> {
+  private async createFromEmail(
+    userId: string,
+    emailId: string,
+    dto: ToTaskDto,
+  ): Promise<ToTaskResult> {
     // Filtrar por userId además de por id: sin esto, cualquier sesión válida
     // podría convertir el correo de otra persona con solo conocer su id.
     const email = await this.prisma.email.findFirst({

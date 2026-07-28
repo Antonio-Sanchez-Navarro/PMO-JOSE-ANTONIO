@@ -130,10 +130,15 @@ Detalles que te ahorran sorpresas:
 - Se anexan al final de **Por hacer**, no al principio.
 - El correo queda marcado como procesado en la misma transacción.
 
-**Lo que todavía no hace**: no emite evento de socket. Las tarjetas nuevas
-llegan en la respuesta 201 —píntalas desde ahí— pero **las otras pestañas del
-usuario no se enteran** hasta que recarguen. Si te estorba, pídemelo y lo
-conecto al gateway.
+**Ya emite por socket** (antes no lo hacía; queda corregido aquí). Cada tarjeta
+creada sale como un `task.created` con la tarea completa —el mismo evento y el
+mismo formato que `POST /tasks`, así que el cliente no tiene que aprender nada
+nuevo— y las demás pestañas del usuario ven aparecer las tarjetas sin recargar.
+
+Manda tu `X-Socket-Id` en la confirmación, igual que en el resto del tablero:
+las tareas ya te llegan en la respuesta 201 y sin la cabecera las pintarías dos
+veces, una por la respuesta y otra por el eco. Recuerda que el `socket.id`
+cambia en cada reconexión, así que léelo en el momento de la petición.
 
 Las tareas del flujo están en `TASKS.md`, dentro del Sprint 3.
 

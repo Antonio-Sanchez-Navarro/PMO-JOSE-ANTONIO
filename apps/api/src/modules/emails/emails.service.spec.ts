@@ -3,9 +3,20 @@ import { TaskSource } from '@prisma/client';
 import { EmailsService } from './emails.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
+import { TasksGateway } from '../tasks/tasks.gateway';
 import { emailNoAccionable, emailSinTexto } from '../ai/__fixtures__/emails.fixture';
 
 const USER_ID = 'user-1';
+
+/**
+ * El gateway se renueva antes de cada prueba, incluidas las de los `describe`
+ * de abajo: este `beforeEach` se registra primero y corre antes que los suyos,
+ * que son los que construyen el servicio.
+ */
+let gateway: { emitTaskCreated: jest.Mock };
+beforeEach(() => {
+  gateway = { emitTaskCreated: jest.fn() };
+});
 
 describe('EmailsService — POST /emails/:id/to-task', () => {
   let service: EmailsService;
@@ -50,6 +61,7 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
     service = new EmailsService(
       prisma as unknown as PrismaService,
       classification as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
     );
   });
 
@@ -176,6 +188,45 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
       expect(prisma.task.update).not.toHaveBeenCalled();
     });
   });
+
+  describe('aviso al tablero', () => {
+    it('anuncia la tarjeta creada por la vía manual', async () => {
+      await service.convertToTask(USER_ID, emailNoAccionable.id, { title: 'A mano' });
+
+      expect(gateway.emitTaskCreated).toHaveBeenCalledTimes(1);
+      expect(gateway.emitTaskCreated.mock.calls[0][0].title).toBe('A mano');
+    });
+
+    it('anuncia también las que salieron del modelo', async () => {
+      await service.convertToTask(USER_ID, emailNoAccionable.id, {});
+
+      expect(gateway.emitTaskCreated).toHaveBeenCalledTimes(1);
+    });
+
+    it('excluye del eco al socket que originó la conversión', async () => {
+      await service.convertToTask(USER_ID, emailNoAccionable.id, { title: 'x' }, 'socket-1');
+
+      expect(gateway.emitTaskCreated).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'x' }),
+        'socket-1',
+      );
+    });
+
+    it('sin cabecera se anuncia a todas las pestañas del usuario', async () => {
+      await service.convertToTask(USER_ID, emailNoAccionable.id, { title: 'x' });
+
+      expect(gateway.emitTaskCreated.mock.calls[0][1]).toBeUndefined();
+    });
+
+    it('no anuncia nada si la conversión falló', async () => {
+      prisma.email.findFirst.mockResolvedValue(null);
+
+      await expect(service.convertToTask(USER_ID, 'otro-id', {})).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(gateway.emitTaskCreated).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)', () => {
@@ -207,6 +258,7 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
     service = new EmailsService(
       prisma as unknown as PrismaService,
       classification as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
     );
   });
 
@@ -291,6 +343,15 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
     expect(result.mode).toBe('ai');
   });
 
+  it('anuncia al tablero una tarjeta por cada tarea aprobada', async () => {
+    await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas }, 'socket-abc');
+
+    expect(gateway.emitTaskCreated).toHaveBeenCalledTimes(2);
+    // El que confirmó ya tiene las tareas en la respuesta 201: reenviárselas se
+    // las duplicaría en pantalla.
+    expect(gateway.emitTaskCreated.mock.calls[0][1]).toBe('socket-abc');
+  });
+
   it('tasks[] manda sobre title si llegan los dos', async () => {
     const result = await service.convertToTask(USER_ID, emailNoAccionable.id, {
       tasks: aprobadas,
@@ -338,6 +399,7 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     service = new EmailsService(
       prisma as unknown as PrismaService,
       classification as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
     );
   });
 
