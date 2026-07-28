@@ -9,6 +9,10 @@ import {
   visibleLabels,
 } from "./format";
 import type { EmailSnippet, EmailThread } from "./types";
+import { AiValidationModal } from "../kanban/components/AiValidationModal";
+import { classifyEmail, createTasksFromEmail } from "../kanban/api/tasks.api";
+import { EmailClassification } from "@pmo/shared";
+import { Toaster, toast } from 'sonner';
 
 export function InboxPage() {
   const {
@@ -25,8 +29,28 @@ export function InboxPage() {
     loadMore,
   } = useInbox();
 
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [aiProposal, setAiProposal] = useState<EmailClassification | null>(null);
+
+  const handleAnalyzeEmail = async (emailId: string) => {
+    try {
+      const toastId = toast.loading('Analizando correo con IA...');
+      const result = await classifyEmail(emailId);
+      toast.dismiss(toastId);
+      setAiProposal(result);
+      setIsAiModalOpen(true);
+    } catch (e: any) {
+      if (e.response?.status === 409) {
+        toast.error('Este correo ya fue convertido a tareas.');
+      } else {
+        toast.error(e.message || 'Error al analizar el correo');
+      }
+    }
+  };
+
   return (
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+    <section className="rounded-xl border border-slate-200 bg-white shadow-sm relative">
+      <Toaster position="top-right" />
       <header className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-4">
         <div>
           <h2 className="font-semibold text-slate-800">Bandeja de entrada</h2>
@@ -77,7 +101,11 @@ export function InboxPage() {
         <>
           <ul className="divide-y divide-slate-100">
             {threads.map((thread) => (
-              <ThreadRow key={thread.threadId} thread={thread} />
+              <ThreadRow 
+                key={thread.threadId} 
+                thread={thread} 
+                onAnalyze={handleAnalyzeEmail} 
+              />
             ))}
           </ul>
           <div className="border-t border-slate-200 px-6 py-4 text-center">
@@ -91,11 +119,43 @@ export function InboxPage() {
           </div>
         </>
       )}
+
+      <AiValidationModal
+        isOpen={isAiModalOpen}
+        onCancel={() => {
+          setIsAiModalOpen(false);
+          setAiProposal(null);
+        }}
+        proposal={aiProposal}
+        onConfirm={async (data) => {
+          try {
+            const { category, tasks } = data;
+            const payload = category ? { category, tasks } : { tasks };
+            // Sin force: true, porque es la primera vez que se procesa en este flujo
+            await createTasksFromEmail(data.emailId, payload);
+            
+            toast.success("✅ Convertido a Tareas");
+            setIsAiModalOpen(false);
+            setAiProposal(null);
+            // Refrescar bandeja para actualizar el estado visual de los correos
+            refresh();
+          } catch (e: any) {
+            toast.error(e?.message || "Error al crear las tareas propuestas.");
+            console.error(e);
+          }
+        }}
+      />
     </section>
   );
 }
 
-function ThreadRow({ thread }: { thread: EmailThread }) {
+function ThreadRow({ 
+  thread, 
+  onAnalyze 
+}: { 
+  thread: EmailThread; 
+  onAnalyze: (id: string) => void; 
+}) {
   const [expanded, setExpanded] = useState(false);
   const hasReplies = thread.messages.length > 1;
 
@@ -106,13 +166,18 @@ function ThreadRow({ thread }: { thread: EmailThread }) {
         threadCount={thread.messages.length}
         expanded={expanded}
         onToggle={hasReplies ? () => setExpanded((open) => !open) : undefined}
+        onAnalyze={() => onAnalyze(thread.latest.id)}
       />
 
       {expanded && (
         <ul className="border-t border-slate-100 bg-slate-50/60">
           {thread.messages.slice(1).map((message) => (
             <li key={message.id} className="border-t border-slate-100 first:border-t-0">
-              <EmailRow email={message} nested />
+              <EmailRow 
+                email={message} 
+                nested 
+                onAnalyze={() => onAnalyze(message.id)} 
+              />
             </li>
           ))}
         </ul>
@@ -127,17 +192,22 @@ function EmailRow({
   expanded,
   onToggle,
   nested = false,
+  onAnalyze,
 }: {
   email: EmailSnippet;
   threadCount?: number;
   expanded?: boolean;
   onToggle?: () => void;
   nested?: boolean;
+  onAnalyze?: () => void;
 }) {
   const sender = parseSender(email.from);
   const interactive = Boolean(onToggle);
   const labels = visibleLabels(email.labels ?? []);
   const unread = isUnread(email.labels ?? []);
+
+  // Verificar si ya fue procesado: por propiedad `processedAt` o `tasks.length > 0`
+  const isProcessed = Boolean(email.processedAt || (email.tasks && email.tasks.length > 0));
 
   const content = (
     <div className={`flex items-start gap-4 px-6 py-4 ${nested ? "pl-16" : ""}`}>
@@ -189,13 +259,33 @@ function EmailRow({
         )}
       </div>
 
-      <time
-        dateTime={email.date}
-        title={formatFullDate(email.date)}
-        className="shrink-0 whitespace-nowrap pt-0.5 text-xs text-slate-400"
-      >
-        {formatEmailDate(email.date)}
-      </time>
+      <div className="shrink-0 flex flex-col items-end gap-2">
+        <time
+          dateTime={email.date}
+          title={formatFullDate(email.date)}
+          className="whitespace-nowrap pt-0.5 text-xs text-slate-400"
+        >
+          {formatEmailDate(email.date)}
+        </time>
+
+        {onAnalyze && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAnalyze();
+            }}
+            disabled={isProcessed}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border
+              ${isProcessed 
+                ? 'bg-green-50 text-green-700 border-green-200 cursor-default' 
+                : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
+              }
+            `}
+          >
+            {isProcessed ? "✅ Convertido a Tareas" : "🪄 Generar Tareas (IA)"}
+          </button>
+        )}
+      </div>
     </div>
   );
 

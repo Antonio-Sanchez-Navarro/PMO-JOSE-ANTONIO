@@ -18,21 +18,16 @@ import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus } from '../types';
 import { MOCK_TASKS } from './mockTasks';
-import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters, createTasksFromEmail, classifyEmail } from '../api/tasks.api';
+import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters } from '../api/tasks.api';
 import { TaskModal } from './TaskModal';
 import { useSocket } from '../hooks/useSocket';
-import { EmailClassification, TaskPriority } from '@pmo/shared';
-import { AiValidationModal } from './AiValidationModal';
-import { TriageSidebar } from './TriageSidebar';
+import { TaskPriority } from '@pmo/shared';
 
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
-  const [aiProposal, setAiProposal] = useState<EmailClassification | null>(null);
-  const [forceReprocess, setForceReprocess] = useState(false);
   
   const [searchFilter, setSearchFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatus | ''>('');
@@ -316,76 +311,26 @@ export const KanbanBoard: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
-        <TriageSidebar 
-          onAnalyze={async (emailId, isConverted) => {
-            try {
-              const toastId = toast.loading('Analizando correo con IA...');
-              const result = await classifyEmail(emailId);
-              toast.dismiss(toastId);
-              setAiProposal(result);
-              setForceReprocess(isConverted);
-              setIsAiModalOpen(true);
-            } catch (e: any) {
-              toast.error(e.message || 'Error al analizar el correo');
-            }
-          }} 
-        />
-        
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <DndContext
-            sensors={sensors}
-            collisionDetection={collisionDetection}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragEnd={handleDragEnd}
-          >
-            <div className="flex gap-6 p-6 overflow-x-auto grow">
-              <KanbanColumn id={TaskStatus.TODO} title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} />
-              <KanbanColumn id={TaskStatus.IN_PROGRESS} title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} />
-              <KanbanColumn id={TaskStatus.POSTPONED} title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} />
-              <KanbanColumn id={TaskStatus.DONE} title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} />
-              <KanbanColumn id={TaskStatus.OVERDUE} title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} />
-            </div>
-          </DndContext>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={collisionDetection}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="flex gap-6 p-6 overflow-x-auto grow">
+          <KanbanColumn id={TaskStatus.TODO} title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id={TaskStatus.IN_PROGRESS} title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id={TaskStatus.POSTPONED} title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id={TaskStatus.DONE} title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} />
+          <KanbanColumn id={TaskStatus.OVERDUE} title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} />
         </div>
-      </div>
+      </DndContext>
 
       <TaskModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         onSubmit={handleCreateTask} 
-      />
-
-      <AiValidationModal
-        isOpen={isAiModalOpen}
-        proposal={aiProposal}
-        onConfirm={async (data) => {
-          try {
-            const { category, tasks } = data;
-            // Solo mandamos category y tasks según el HANDOFF
-            const payload = category ? { category, tasks } : { tasks };
-            const createdTasks = await createTasksFromEmail(data.emailId, payload, forceReprocess);
-            
-            // Añadimos manualmente las tareas devueltas, ya que el eco de socket está suprimido
-            setTasks((prev) => {
-              const newTasks = createdTasks.filter((ct: any) => !prev.some(t => t.id === ct.id));
-              return [...prev, ...newTasks];
-            });
-
-            toast.success("Tareas creadas desde el correo exitosamente.");
-            setIsAiModalOpen(false);
-            setAiProposal(null);
-          } catch (e: any) {
-            const errorMsg = e?.message || "Error al crear las tareas propuestas.";
-            toast.error(errorMsg);
-            console.error(e);
-          }
-        }}
-        onCancel={() => {
-          setIsAiModalOpen(false);
-          setAiProposal(null);
-        }}
       />
     </div>
   );

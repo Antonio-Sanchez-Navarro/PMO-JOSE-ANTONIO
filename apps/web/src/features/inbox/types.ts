@@ -13,6 +13,9 @@ export interface EmailSnippet {
   labels: string[];
   /** Solo llega si se pide `?includeBody=true`. */
   bodyText?: string;
+  /** Para saber si ya ha sido procesado por la IA / convertido a tareas */
+  processedAt?: string | null;
+  tasks?: any[];
 }
 
 /** Mensajes de un mismo hilo, del más reciente al más antiguo. */
