@@ -643,12 +643,19 @@ Es más rápido que deshacer un choque.
 
 ## Estado del repo
 
-- `320 pruebas en 10 suites`, todas en verde. Build de los tres paquetes, en
+- `377 pruebas en 11 suites`, todas en verde. Build de los tres paquetes, en
   verde, ya con Recharts dentro.
 - **`@google/genai` instalado** en `apps/api` (luz verde de Doc el 2026-07-29).
   Se hoistea al `node_modules` de la raíz como el resto; si tu `npm install` no
   lo trae, vuelve a instalar desde la raíz.
-- Migración `20260729153000_add_time_tracking` aplicada.
+- Migraciones aplicadas: `20260729153000_add_time_tracking` (registro de
+  tiempos) y `20260729140000_add_copilot_threads` (hilos del copiloto y su
+  bitácora). Si tu base es anterior, `npx prisma migrate deploy` desde
+  `apps/api`.
+- **La API va con Helmet y con límite de peticiones desde el 2026-07-29**: 240
+  por minuto en general y **20 por minuto en todo `/copilot`**, porque cada
+  turno cuesta tokens. Un `429` en el panel de chat no es un fallo del backend:
+  es el límite. Enséñalo como tal en vez de como error genérico.
 - La API y Vite están levantados. Recuerda: **un solo `dev:api` a la vez**
   (ver `AI_ROLES.md`, notas de operación).
 
