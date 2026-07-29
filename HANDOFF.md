@@ -35,10 +35,14 @@ cookie), y las dos por el proxy de Vite igual que el resto: `/api/copilot/…`.
 ```
 
 **Pinta solo los que traen `ready: true`.** Un proveedor con `ready: false` está
-declarado pero no configurado en este entorno (le falta la credencial o los ids
-de modelo); pedirlo devuelve **503** con el motivo. Hoy Gemini sale `false`:
-la dependencia ya está instalada y el código escrito, pero faltan
-`GEMINI_API_KEY` y los ids, que los pone quien conecte la cuenta.
+declarado pero no configurado en ese entorno (le falta la credencial); pedirlo
+devuelve **503** con el motivo.
+
+**Desde el 2026-07-29 los dos salen `ready: true`.** Gemini quedó encendido y
+probado de punta a punta contra la API real: `light` responde con
+`gemini-3.5-flash-lite` y `pro` con `gemini-3.6-flash`. Aun así, **saca la
+lista del endpoint y no la escribas a mano**: en la máquina de otro puede
+faltar la clave, y lo que aquí funciona allí daría 503.
 
 ## 1. El contrato — `StartChatDto`
 
@@ -90,7 +94,7 @@ usuario en el cliente si no quieres que la repita cada vez.
 |---|---|
 | **400** | `provider` o `tier` fuera del vocabulario, o `message` vacío |
 | **401** | Sin cookie de sesión |
-| **503** | El proveedor está declarado pero no configurado (hoy, `google`) |
+| **503** | El proveedor está declarado pero no configurado en ese entorno (le falta la credencial) |
 
 Todo esto pasa **antes** de que se escriba una sola cabecera, así que puedes
 tratarlo con el mismo manejo de errores que el resto de la API. Lo que falle una
@@ -209,9 +213,10 @@ antes de que existiera este documento, y acertaste con el vocabulario: tu
 2. **Consumir el stream** como en la sección 2, pintando los `token` según
    llegan. Es aquí donde se pierde una tarde si se usa `EventSource`.
 3. **El selector tiene que preguntar.** `CopilotHeader` pinta los dos
-   proveedores fijos en el JSX; hoy elegir Google da **503**, porque le faltan
-   la credencial y los ids. Sácalos de `GET /copilot/providers` y pinta solo los
-   `ready: true` (o enséñalos deshabilitados, pero no como si funcionaran).
+   proveedores fijos en el JSX. Hoy acierta —los dos están listos— pero por
+   casualidad: en un entorno sin `GEMINI_API_KEY` seguiría ofreciendo Google y
+   cada intento daría **503**. Sácalos de `GET /copilot/providers` y pinta solo
+   los `ready: true` (o enséñalos deshabilitados, pero no como si funcionaran).
 4. **Botón de parar** que aborte el `fetch` — es lo que corta la generación en
    el backend.
 5. **Errores por código**: 400, 401 y 503 como respuesta normal; `event: error`
