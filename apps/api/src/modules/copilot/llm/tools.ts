@@ -89,6 +89,52 @@ export const CREATE_TASK_DESCRIPTION =
   'algo que haya que hacer. La tarea no se crea sola: se le enseña a la persona para que ' +
   'la confirme, así que propón en vez de preguntar si quiere que la crees.';
 
+export const SEARCH_EMAILS = 'search_emails';
+export const GET_METRICS = 'get_metrics';
+
+export const SEARCH_EMAILS_SCHEMA = {
+  type: 'object',
+  properties: {
+    query: {
+      type: 'string',
+      description: 'Qué buscar. Se busca en asunto, remitente y cuerpo del correo.',
+    },
+    limit: { type: 'integer', description: 'Cuántos devolver como mucho. Por defecto 10.' },
+  },
+  required: ['query'],
+  additionalProperties: false,
+} as const;
+
+export const SEARCH_EMAILS_DESCRIPTION =
+  'Busca en los correos de la persona. Úsala cuando te pregunten por algo que estaría en su ' +
+  'correo y no lo tengas delante, en vez de decir que no lo sabes.';
+
+export const GET_METRICS_SCHEMA = {
+  type: 'object',
+  properties: {},
+  required: [],
+  additionalProperties: false,
+} as const;
+
+export const GET_METRICS_DESCRIPTION =
+  'Devuelve el estado del tablero: cuántas tareas hay por columna, cuántas vencidas, ' +
+  'cuántos correos quedan por despachar y el tiempo registrado esta semana. Úsala cuando ' +
+  'te pregunten cómo va todo o pidan un resumen.';
+
+/**
+ * Las dos formas de herramienta, que es lo que decide qué pasa cuando el modelo
+ * la pide.
+ *
+ * - `propose`: **sale hacia el frontend** como evento `tool_call` y ahí termina
+ *   el turno. Es lo que hace algo hacia afuera —mandar un correo, crear una
+ *   tarea— y por eso lo confirma una persona.
+ * - `execute`: **la ejecuta el backend** y le devuelve el resultado al modelo
+ *   dentro del mismo turno, para que siga respondiendo con el dato en la mano.
+ *   Solo para lecturas: no cambian nada, así que pedir confirmación sería
+ *   interrumpir para preguntar si se puede mirar.
+ */
+export type ToolKind = 'propose' | 'execute';
+
 /**
  * El catálogo completo, en un solo sitio.
  *
@@ -96,10 +142,42 @@ export const CREATE_TASK_DESCRIPTION =
  * `parametersJsonSchema` en Google) recorriendo esta lista, así que añadir una
  * herramienta es una entrada aquí y nada más.
  */
-export const COPILOT_TOOLS = [
-  { name: DRAFT_EMAIL, description: DRAFT_EMAIL_DESCRIPTION, schema: DRAFT_EMAIL_SCHEMA },
-  { name: CREATE_TASK, description: CREATE_TASK_DESCRIPTION, schema: CREATE_TASK_SCHEMA },
-] as const;
+export const COPILOT_TOOLS: readonly {
+  name: string;
+  description: string;
+  schema: unknown;
+  kind: ToolKind;
+}[] = [
+  {
+    name: DRAFT_EMAIL,
+    description: DRAFT_EMAIL_DESCRIPTION,
+    schema: DRAFT_EMAIL_SCHEMA,
+    kind: 'propose',
+  },
+  {
+    name: CREATE_TASK,
+    description: CREATE_TASK_DESCRIPTION,
+    schema: CREATE_TASK_SCHEMA,
+    kind: 'propose',
+  },
+  {
+    name: SEARCH_EMAILS,
+    description: SEARCH_EMAILS_DESCRIPTION,
+    schema: SEARCH_EMAILS_SCHEMA,
+    kind: 'execute',
+  },
+  {
+    name: GET_METRICS,
+    description: GET_METRICS_DESCRIPTION,
+    schema: GET_METRICS_SCHEMA,
+    kind: 'execute',
+  },
+];
+
+/** ¿La ejecuta el backend en el mismo turno, o se le enseña a la persona? */
+export function esEjecutable(toolName: string): boolean {
+  return COPILOT_TOOLS.some((t) => t.name === toolName && t.kind === 'execute');
+}
 
 /** Lo que viaja en `payload` del evento `tool_call`. */
 export interface CreateTaskPayload {

@@ -1,12 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenAI } from '@google/genai';
+import {
+  Content,
+  createPartFromFunctionResponse,
+  FunctionCall,
+  GoogleGenAI,
+  Part,
+} from '@google/genai';
 import { LlmChatRequest, LlmChunk, LlmProvider, LlmStrategy, LlmTier } from './llm.types';
 import { tierConfig } from './model-tiers';
-import { COPILOT_TOOLS, parseToolArgs } from './tools';
+import { COPILOT_TOOLS, esEjecutable, parseToolArgs } from './tools';
 
 /** Mismo techo que en Anthropic: con streaming no hay riesgo de agotar el tiempo de HTTP. */
 const MAX_OUTPUT_TOKENS = 64_000;
+
+/** Mismo tope de vueltas que en Anthropic, y por el mismo motivo. */
+const MAX_VUELTAS = 4;
 
 /**
  * Las mismas herramientas en el vocabulario de Google: van dentro de
@@ -77,60 +86,100 @@ export class GoogleStrategy implements LlmStrategy {
     }
 
     const model = this.modelFor(request.tier);
+    const contents: Content[] = request.messages.map((m) => ({
+      // El papel del modelo se llama `model` aquí; el del usuario coincide.
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
 
-    const stream = await this.client.models.generateContentStream({
-      model,
-      contents: request.messages.map((m) => ({
-        // El papel del modelo se llama `model` aquí; el del usuario coincide.
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }],
-      })),
-      config: {
-        ...(request.system ? { systemInstruction: request.system } : {}),
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        tools: TOOLS,
-        // Corta la generación cuando el cliente cierra la conexión SSE.
-        ...(request.signal ? { abortSignal: request.signal } : {}),
-      },
-    });
+    let entrada = 0;
+    let salida = 0;
 
-    let usage: { inputTokens: number; outputTokens: number } | undefined;
+    // Mismo bucle que en Anthropic y por lo mismo: una herramienta de solo
+    // lectura obliga a volver a llamar con el resultado para que el modelo siga
+    // respondiendo con el dato en la mano.
+    for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
+      const stream = await this.client.models.generateContentStream({
+        model,
+        contents,
+        config: {
+          ...(request.system ? { systemInstruction: request.system } : {}),
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          tools: TOOLS,
+          // Corta la generación cuando el cliente cierra la conexión SSE.
+          ...(request.signal ? { abortSignal: request.signal } : {}),
+        },
+      });
 
-    for await (const chunk of stream) {
-      // `text` es un accesor que puede venir vacío: hay trozos que solo traen
-      // metadatos (motivo de parada, filtros de seguridad) y emitirlos como
-      // texto pintaría cadenas vacías en la interfaz.
-      if (chunk.text) {
-        yield { type: 'text', text: chunk.text };
+      const ejecutables: FunctionCall[] = [];
+      /**
+       * Las partes del turno del modelo, **tal cual vinieron**.
+       *
+       * Se guardan en vez de reconstruirlas desde `functionCalls` porque
+       * Gemini 3 devuelve en cada `functionCall` un `thoughtSignature` y exige
+       * que se le reenvíe: sin él responde 400 —"Function call is missing a
+       * thought_signature"— y el turno se corta justo al ir a usar la
+       * herramienta. Comprobado contra la API.
+       */
+      const partesModelo: Part[] = [];
+
+      for await (const chunk of stream) {
+        partesModelo.push(...(chunk.candidates?.[0]?.content?.parts ?? []));
+        // `text` es un accesor que puede venir vacío: hay trozos que solo traen
+        // metadatos (motivo de parada, filtros de seguridad) y emitirlos como
+        // texto pintaría cadenas vacías en la interfaz.
+        if (chunk.text) {
+          yield { type: 'text', text: chunk.text };
+        }
+
+        // Aquí llegan dentro del stream, al revés que en Anthropic: `args`
+        // viene ya como objeto, sin JSON parcial que reconstruir.
+        for (const llamada of chunk.functionCalls ?? []) {
+          if (!llamada.name || !NOMBRES.has(llamada.name)) continue;
+
+          if (esEjecutable(llamada.name)) {
+            ejecutables.push(llamada);
+            continue;
+          }
+
+          this.logger.log(`Herramienta ${llamada.name} propuesta por ${model}`);
+          yield {
+            type: 'tool_call',
+            toolName: llamada.name,
+            payload: parseToolArgs(llamada.name, llamada.args),
+          };
+        }
+
+        // Los contadores llegan en los trozos, no en un mensaje final como en
+        // Anthropic: se acumula el último de cada vuelta.
+        if (chunk.usageMetadata) {
+          entrada = chunk.usageMetadata.promptTokenCount ?? entrada;
+          salida = chunk.usageMetadata.candidatesTokenCount ?? salida;
+        }
       }
 
-      // Aquí sí llegan dentro del stream, al revés que en Anthropic: `args`
-      // viene ya como objeto, sin JSON parcial que reconstruir.
-      for (const llamada of chunk.functionCalls ?? []) {
-        if (!llamada.name || !NOMBRES.has(llamada.name)) continue;
+      if (!ejecutables.length || !request.execute) break;
 
-        this.logger.log(`Herramienta ${llamada.name} solicitada por ${model}`);
-        yield {
-          type: 'tool_call',
-          toolName: llamada.name,
-          payload: parseToolArgs(llamada.name, llamada.args),
-        };
-      }
+      // El turno del modelo va con sus partes originales —firma de pensamiento
+      // incluida— y después un `functionResponse` por cada herramienta.
+      contents.push({ role: 'model', parts: partesModelo });
+      contents.push({
+        role: 'user',
+        parts: await Promise.all(
+          ejecutables.map(async (llamada) => {
+            this.logger.log(`Ejecutando ${llamada.name} para ${model}`);
+            const resultado = await request.execute!(llamada.name!, llamada.args);
 
-      // Los contadores llegan en los trozos, no en un mensaje final como en
-      // Anthropic: se guarda el último que venga.
-      if (chunk.usageMetadata) {
-        usage = {
-          inputTokens: chunk.usageMetadata.promptTokenCount ?? 0,
-          outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0,
-        };
-      }
+            return createPartFromFunctionResponse(llamada.id ?? '', llamada.name!, {
+              result: resultado,
+            } as Record<string, unknown>);
+          }),
+        ),
+      });
     }
 
-    this.logger.log(
-      `Copiloto (${model}): ${usage?.inputTokens ?? '?'} entrada / ${usage?.outputTokens ?? '?'} salida`,
-    );
+    this.logger.log(`Copiloto (${model}): ${entrada} entrada / ${salida} salida`);
 
-    yield { type: 'done', model, ...(usage ? { usage } : {}) };
+    yield { type: 'done', model, usage: { inputTokens: entrada, outputTokens: salida } };
   }
 }

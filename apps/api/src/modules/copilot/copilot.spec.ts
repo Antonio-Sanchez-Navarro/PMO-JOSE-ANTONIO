@@ -15,6 +15,9 @@ import {
   COPILOT_TOOLS,
   CREATE_TASK,
   DRAFT_EMAIL,
+  GET_METRICS,
+  SEARCH_EMAILS,
+  esEjecutable,
   parseCreateTask,
   parseDraftEmail,
   parseToolArgs,
@@ -68,6 +71,7 @@ function copiloto(opts: Partial<Record<string, unknown>> = {}) {
     }) as never,
     (opts.tasks ?? { create: jest.fn() }) as never,
     (opts.prisma ?? {}) as never,
+    (opts.toolRunner ?? { run: jest.fn().mockResolvedValue({}) }) as never,
   );
 }
 
@@ -332,8 +336,24 @@ describe('create_task — la tarea que propone el copiloto', () => {
     expect(parseToolArgs(DRAFT_EMAIL, { to: 'a@b.mx' })).toHaveProperty('cc', []);
   });
 
-  it('las dos herramientas viajan a los dos proveedores desde el mismo catálogo', () => {
-    expect(COPILOT_TOOLS.map((t) => t.name)).toEqual([DRAFT_EMAIL, CREATE_TASK]);
+  it('el catálogo es uno solo y dice de cada herramienta quién la ejecuta', () => {
+    // Lo que actúa hacia afuera lo confirma una persona; lo que solo lee lo
+    // ejecuta el backend en el mismo turno. Si alguien añadiera una herramienta
+    // que escribe como `execute`, se saltaría la confirmación humana sin que
+    // nadie lo note — por eso la lista está fijada aquí.
+    expect(COPILOT_TOOLS.map((t) => `${t.name}:${t.kind}`)).toEqual([
+      'draft_email:propose',
+      'create_task:propose',
+      'search_emails:execute',
+      'get_metrics:execute',
+    ]);
+  });
+
+  it('esEjecutable distingue las de leer de las de actuar', () => {
+    expect(esEjecutable(SEARCH_EMAILS)).toBe(true);
+    expect(esEjecutable(GET_METRICS)).toBe(true);
+    expect(esEjecutable(DRAFT_EMAIL)).toBe(false);
+    expect(esEjecutable(CREATE_TASK)).toBe(false);
   });
 });
 
@@ -508,6 +528,122 @@ describe('AnthropicStrategy — herramientas', () => {
       },
       expect.objectContaining({ type: 'done', model: 'claude-opus-5' }),
     ]);
+  });
+
+  describe('bucle de herramientas de solo lectura', () => {
+    /** Un cliente que responde distinto en cada vuelta del bucle. */
+    function conVueltas(respuestas: { content: unknown[] }[]) {
+      const strategy = new AnthropicStrategy({ get: () => 'clave' } as unknown as ConfigService);
+      const llamadas: unknown[] = [];
+      let vuelta = 0;
+
+      (strategy as unknown as { client: unknown }).client = {
+        messages: {
+          stream: (params: unknown) => {
+            llamadas.push(params);
+            const final = {
+              model: 'claude-opus-5',
+              content: respuestas[vuelta++]?.content ?? [],
+              usage: { input_tokens: 10, output_tokens: 5 },
+            };
+            return Object.assign((async function* () {})(), { finalMessage: async () => final });
+          },
+        },
+      };
+
+      return { strategy, llamadas };
+    }
+
+    it('ejecuta la herramienta y vuelve a llamar con el resultado', async () => {
+      const { strategy, llamadas } = conVueltas([
+        { content: [{ type: 'tool_use', id: 'tu-1', name: SEARCH_EMAILS, input: { query: 'lote' } }] },
+        { content: [{ type: 'text', text: 'Encontré tres correos.' }] },
+      ]);
+      const execute = jest.fn().mockResolvedValue({ total: 3 });
+
+      const trozos: LlmChunk[] = [];
+      for await (const c of strategy.stream({ messages: [], tier: LlmTier.PRO, execute })) {
+        trozos.push(c);
+      }
+
+      expect(execute).toHaveBeenCalledWith(SEARCH_EMAILS, { query: 'lote' });
+      // Dos llamadas al modelo: sin la segunda, el turno se cortaría justo
+      // cuando iba a usar lo que pidió.
+      expect(llamadas).toHaveLength(2);
+
+      const segunda = (llamadas[1] as { messages: { role: string; content: unknown }[] }).messages;
+      expect(segunda.at(-1)).toMatchObject({
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tu-1', content: '{"total":3}' }],
+      });
+      // La de leer no sale hacia el frontend: no hay nada que confirmar.
+      expect(trozos.some((t) => t.type === 'tool_call')).toBe(false);
+    });
+
+    it('las de actuar sí salen al frontend y no reabren el bucle', async () => {
+      const { strategy, llamadas } = conVueltas([
+        { content: [{ type: 'tool_use', id: 'tu-1', name: DRAFT_EMAIL, input: { to: ['a@b.mx'] } }] },
+      ]);
+
+      const trozos: LlmChunk[] = [];
+      for await (const c of strategy.stream({
+        messages: [],
+        tier: LlmTier.PRO,
+        execute: jest.fn(),
+      })) {
+        trozos.push(c);
+      }
+
+      expect(llamadas).toHaveLength(1);
+      expect(trozos.filter((t) => t.type === 'tool_call')).toHaveLength(1);
+    });
+
+    it('el turno tiene tope de vueltas: un modelo que insista no agota la cuota', async () => {
+      const busca = {
+        content: [{ type: 'tool_use', id: 'tu-1', name: SEARCH_EMAILS, input: { query: 'x' } }],
+      };
+      const { strategy, llamadas } = conVueltas([busca, busca, busca, busca, busca, busca]);
+
+      for await (const _ of strategy.stream({
+        messages: [],
+        tier: LlmTier.PRO,
+        execute: jest.fn().mockResolvedValue({}),
+      })) {
+        // consumir
+      }
+
+      expect(llamadas.length).toBeLessThanOrEqual(4);
+    });
+
+    it('los contadores suman todas las vueltas: el turno costó las dos llamadas', async () => {
+      const { strategy } = conVueltas([
+        { content: [{ type: 'tool_use', id: 'tu-1', name: SEARCH_EMAILS, input: {} }] },
+        { content: [{ type: 'text', text: 'ya' }] },
+      ]);
+
+      const trozos: LlmChunk[] = [];
+      for await (const c of strategy.stream({
+        messages: [],
+        tier: LlmTier.PRO,
+        execute: jest.fn().mockResolvedValue({}),
+      })) {
+        trozos.push(c);
+      }
+
+      expect(trozos.at(-1)).toMatchObject({ usage: { inputTokens: 20, outputTokens: 10 } });
+    });
+
+    it('sin ejecutor no se abre el bucle: la estrategia no inventa el resultado', async () => {
+      const { strategy, llamadas } = conVueltas([
+        { content: [{ type: 'tool_use', id: 'tu-1', name: SEARCH_EMAILS, input: {} }] },
+      ]);
+
+      for await (const _ of strategy.stream({ messages: [], tier: LlmTier.PRO })) {
+        // consumir
+      }
+
+      expect(llamadas).toHaveLength(1);
+    });
   });
 
   it('el tool_call va antes del done, nunca después', async () => {

@@ -10,6 +10,7 @@ import { EMAIL_SENDER, GmailSender, MockSender } from './email/email-sender';
 import { ChatThreadsService } from './threads/chat-threads.service';
 import { CopilotContextService } from './context/copilot-context.service';
 import { CopilotAuditService } from './audit/copilot-audit.service';
+import { ToolRunnerService } from './tools/tool-runner.service';
 import { AuthModule } from '../auth/auth.module';
 import { TasksModule } from '../tasks/tasks.module';
 
@@ -34,6 +35,7 @@ import { TasksModule } from '../tasks/tasks.module';
     ChatThreadsService,
     CopilotContextService,
     CopilotAuditService,
+    ToolRunnerService,
     LlmFactory,
     AnthropicStrategy,
     GoogleStrategy,

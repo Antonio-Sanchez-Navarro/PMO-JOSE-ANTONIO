@@ -43,6 +43,16 @@ export interface LlmChatRequest {
    * seguirían gastando tokens en una respuesta que ya no lee nadie.
    */
   signal?: AbortSignal;
+
+  /**
+   * Ejecuta una herramienta de solo lectura y devuelve su resultado.
+   *
+   * Se inyecta en vez de que la estrategia conozca la base de datos: el
+   * proveedor sabe **cómo** se le devuelve un resultado a su modelo, y no tiene
+   * por qué saber qué es un correo. Sin esto, cada estrategia acabaría con su
+   * copia de las consultas.
+   */
+  execute?: (toolName: string, args: unknown) => Promise<unknown>;
 }
 
 /**

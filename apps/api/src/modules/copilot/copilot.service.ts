@@ -2,6 +2,7 @@ import { BadGatewayException, Inject, Injectable, Logger, NotFoundException } fr
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { TasksService } from '../tasks/tasks.service';
 import { CopilotAuditService } from './audit/copilot-audit.service';
+import { ToolRunnerService } from './tools/tool-runner.service';
 import { CreateTaskFromCopilotDto } from './dto/create-task-from-copilot.dto';
 import { LlmFactory } from './llm/llm.factory';
 import { LlmChunk, LlmMessage } from './llm/llm.types';
@@ -48,6 +49,7 @@ export class CopilotService {
     private readonly audit: CopilotAuditService,
     private readonly tasks: TasksService,
     private readonly prisma: PrismaService,
+    private readonly toolRunner: ToolRunnerService,
   ) {}
 
   /**
@@ -84,7 +86,16 @@ export class CopilotService {
     const messages: LlmMessage[] = [...history, { role: 'user', content: dto.message }];
 
     return this.run(
-      strategy.stream({ system: SYSTEM_PROMPT + contexto, messages, tier: dto.tier, signal }),
+      strategy.stream({
+        system: SYSTEM_PROMPT + contexto,
+        messages,
+        tier: dto.tier,
+        signal,
+        // Las de solo lectura las ejecuta el backend y el resultado vuelve al
+        // modelo dentro del mismo turno. El `userId` se cierra aquí: el modelo
+        // pide "busca X" sin saber de quién son los datos.
+        execute: (toolName, args) => this.toolRunner.run(userId, toolName, args),
+      }),
       { threadId: thread.id, userMessage: dto.message, provider: dto.provider, model },
     );
   }
