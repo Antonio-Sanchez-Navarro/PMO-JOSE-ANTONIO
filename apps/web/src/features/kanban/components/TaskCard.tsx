@@ -11,6 +11,7 @@ interface TaskCardProps {
   onReturnToInbox?: (emailId: string) => void;
   onStartTimer?: (id: string) => void;
   onStopTimer?: (id: string) => void;
+  onManageTime?: (id: string) => void;
 }
 
 const PRIORITY_COLORS: Record<TaskPriority, string> = {
@@ -65,7 +66,7 @@ const TaskTimer: React.FC<{
   const isRunning = !!activeTimeStartedAt;
 
   return (
-    <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-100">
+    <div className="flex items-center justify-between gap-2">
       <span className={`text-xs font-mono font-medium ${isRunning ? 'text-green-600 animate-pulse' : 'text-gray-500'}`}>
         ⏱ {formatTime(elapsed)}
       </span>
@@ -94,7 +95,7 @@ const TaskTimer: React.FC<{
   );
 };
 
-export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail, onReturnToInbox, onStartTimer, onStopTimer }) => {
+export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail, onReturnToInbox, onStartTimer, onStopTimer, onManageTime }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task.id });
 
   const style = {
@@ -226,12 +227,26 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
         )}
       </div>
 
-      <TaskTimer
-        totalTimeSec={task.totalTimeSec}
-        activeTimeStartedAt={task.activeTimeStartedAt}
-        onStart={() => onStartTimer?.(task.id)}
-        onStop={() => onStopTimer?.(task.id)}
-      />
+      <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-100">
+        <div className="flex-1">
+          <TaskTimer
+            totalTimeSec={task.totalTimeSec}
+            activeTimeStartedAt={task.activeTimeStartedAt}
+            onStart={() => onStartTimer?.(task.id)}
+            onStop={() => onStopTimer?.(task.id)}
+          />
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onManageTime?.(task.id);
+          }}
+          className="text-slate-400 hover:text-indigo-600 transition p-1"
+          title="Historial de tiempos"
+        >
+          🕒
+        </button>
+      </div>
     </div>
   );
 };

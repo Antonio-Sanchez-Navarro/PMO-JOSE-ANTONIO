@@ -19,9 +19,11 @@ import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus } from '../types';
 import { MOCK_TASKS } from './mockTasks';
 import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters, updateEmailStatus } from '../api/tasks.api';
-import { startTimer, stopTimer } from '../api/time.api';
+import { startTimer, stopTimer, getActiveTimeEntry } from '../api/time.api';
 import { TaskModal } from './TaskModal';
 import { TagManagerModal } from './TagManagerModal';
+import { TimeEntriesModal } from './TimeEntriesModal';
+import { TimeReportModal } from './TimeReportModal';
 import { EmailDetailModal } from '../../inbox/components/EmailDetailModal';
 import { useSocket } from '../hooks/useSocket';
 import { TaskPriority } from '@pmo/shared';
@@ -32,6 +34,8 @@ export const KanbanBoard: React.FC = () => {
   const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isTagModalOpen, setIsTagModalOpen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [managingTimeTaskId, setManagingTimeTaskId] = useState<string | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   
   const [searchFilter, setSearchFilter] = useState('');
@@ -47,7 +51,23 @@ export const KanbanBoard: React.FC = () => {
       if (priorityFilter) filters.priority = priorityFilter;
 
       const data = await fetchTasks(filters);
-      setTasks(data || []);
+      
+      // Hydrate active timer
+      let fetchedTasks = data || [];
+      try {
+        const activeEntry = await getActiveTimeEntry();
+        if (activeEntry && activeEntry.taskId) {
+          fetchedTasks = fetchedTasks.map(t => 
+            t.id === activeEntry.taskId 
+              ? { ...t, activeTimeStartedAt: activeEntry.startedAt, activeTimeEntryId: activeEntry.id }
+              : t
+          );
+        }
+      } catch (err) {
+        console.error("No se pudo obtener el timer activo", err);
+      }
+
+      setTasks(fetchedTasks);
     } catch (error) {
       console.error("Error al cargar tareas, usando mock de respaldo:", error);
       setTasks(MOCK_TASKS);
@@ -355,18 +375,26 @@ export const KanbanBoard: React.FC = () => {
             <option value={TaskPriority.URGENT}>Urgente</option>
           </select>
 
-          <button 
-            onClick={() => setIsTagModalOpen(true)}
-            className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 dark:bg-slate-700 dark:text-slate-200 transition-colors rounded-md hover:bg-slate-200 dark:hover:bg-slate-600 whitespace-nowrap"
-          >
-            Etiquetas
-          </button>
-          <button 
-            onClick={() => setIsModalOpen(true)}
-            className="px-4 py-2 text-sm font-medium text-white transition-colors bg-blue-600 rounded-md hover:bg-blue-700 whitespace-nowrap"
-          >
-            + Nueva Tarea
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsReportModalOpen(true)}
+              className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 dark:bg-indigo-900/30 dark:text-indigo-300 transition-colors rounded-md hover:bg-indigo-100 dark:hover:bg-indigo-900/50 whitespace-nowrap"
+            >
+              <span>📊</span> Reporte
+            </button>
+            <button 
+              onClick={() => setIsTagModalOpen(true)}
+              className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 dark:bg-slate-700 dark:text-slate-200 transition-colors rounded-md hover:bg-slate-200 dark:hover:bg-slate-600 whitespace-nowrap"
+            >
+              <span>🏷️</span> Etiquetas
+            </button>
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              className="px-4 py-2 text-sm font-medium text-white transition-colors bg-blue-600 rounded-md hover:bg-blue-700 whitespace-nowrap"
+            >
+              + Nueva Tarea
+            </button>
+          </div>
         </div>
       </div>
 
@@ -378,11 +406,11 @@ export const KanbanBoard: React.FC = () => {
         onDragEnd={handleDragEnd}
       >
         <div className="flex gap-6 p-6 overflow-x-auto grow">
-          <KanbanColumn id={TaskStatus.TODO} title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} />
-          <KanbanColumn id={TaskStatus.IN_PROGRESS} title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} />
-          <KanbanColumn id={TaskStatus.POSTPONED} title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} />
-          <KanbanColumn id={TaskStatus.DONE} title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} />
-          <KanbanColumn id={TaskStatus.OVERDUE} title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} />
+          <KanbanColumn id={TaskStatus.TODO} title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
+          <KanbanColumn id={TaskStatus.IN_PROGRESS} title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
+          <KanbanColumn id={TaskStatus.POSTPONED} title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
+          <KanbanColumn id={TaskStatus.DONE} title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
+          <KanbanColumn id={TaskStatus.OVERDUE} title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
         </div>
       </DndContext>
 
@@ -395,6 +423,17 @@ export const KanbanBoard: React.FC = () => {
       <TagManagerModal
         isOpen={isTagModalOpen}
         onClose={() => setIsTagModalOpen(false)}
+      />
+
+      <TimeEntriesModal
+        isOpen={managingTimeTaskId !== null}
+        onClose={() => setManagingTimeTaskId(null)}
+        taskId={managingTimeTaskId || ''}
+      />
+
+      <TimeReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
       />
 
       <EmailDetailModal

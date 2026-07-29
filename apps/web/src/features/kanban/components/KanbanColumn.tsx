@@ -13,6 +13,7 @@ interface KanbanColumnProps {
   onReturnToInbox?: (emailId: string) => void;
   onStartTimer?: (id: string) => void;
   onStopTimer?: (id: string) => void;
+  onManageTime?: (id: string) => void;
 }
 
 export const KanbanColumn: React.FC<KanbanColumnProps> = ({ 
@@ -23,7 +24,8 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   onViewEmail,
   onReturnToInbox,
   onStartTimer,
-  onStopTimer
+  onStopTimer,
+  onManageTime
 }) => {
   const { setNodeRef } = useDroppable({ id });
 
@@ -41,6 +43,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
               onReturnToInbox={onReturnToInbox}
               onStartTimer={onStartTimer}
               onStopTimer={onStopTimer}
+              onManageTime={onManageTime}
             />
           ))}
         </SortableContext>
