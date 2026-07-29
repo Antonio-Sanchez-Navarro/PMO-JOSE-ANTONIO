@@ -43,6 +43,46 @@ Y recuerda **`modules/emails/` es de Claude** (excepción escrita en
 
 ---
 
+## Cambio de contrato del 2026-07-29: la bandeja ya no retrocede sola
+
+`PATCH /emails/:id/status` **te va a devolver un 409 nuevo**. Léelo antes de
+tocar la bandeja.
+
+Encargo del usuario: la regla es que un correo ya despachado —`IN_PROGRESS`,
+`COMPLETED` o `DISMISSED`— **no vuelve a `PENDING` por las buenas**, porque si
+bastara un clic descuidado para que reapareciera trabajo dado por cerrado, el
+"Inbox Zero" dejaría de significar nada. Y él necesita poder saltársela cuando
+lo decide.
+
+```json
+{ "status": "PENDING", "force": true }
+```
+
+- Sin `force`, reabrir da **409** con el mensaje que dice qué hacer.
+- Con `force`, **200**, y queda un `Reapertura forzada` en el log de la API: es
+  el único rastro de una decisión que salta la regla.
+- **Todo lo demás sigue igual**: avanzar de pendiente a hecho, rectificar entre
+  estados despachados o volver a marcar el que ya estaba así no piden nada.
+  Marcar como pendiente lo que **ya** estaba pendiente tampoco: no reabre nada.
+- Reabrir **no** borra las tareas que el correo generó ni toca `processedAt`.
+  Que el worker lo analizara sigue siendo verdad aunque su dueño lo devuelva a
+  la bandeja.
+
+**Aviso, que esto te toca a ti**: la restricción que el cierre del Sprint 4 daba
+por hecha ("validación en el backend y frontend") **no existía en ninguno de los
+dos lados**. En el backend `updateStatus` escribía cualquier estado sin mirar el
+anterior; ya está implementada y probada. En el frontend lo que no existe es lo
+contrario: **no hay ningún botón que mande `PENDING`**, así que desde el
+navegador no se puede reabrir un correo aunque la API ya lo permita.
+
+**Tu encargo**: un botón "Devolver a pendientes" en la fila del correo, visible
+cuando su `status` no sea `PENDING`, que mande `{ status: 'PENDING', force: true
+}`. El 409 no lo verás si mandas el `force`, pero enseña su `message` igual que
+haces con los demás: si mañana la regla cambia, el mensaje del servidor será el
+que explique por qué.
+
+---
+
 ## Lo que ya está hecho del Sprint 5 (backend)
 
 El módulo que empezaste (`modules/time/`) lo completé y lo endurecí, **sin

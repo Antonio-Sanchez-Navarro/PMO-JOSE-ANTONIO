@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { EmailStatus, TaskSource } from '@prisma/client';
 import { EmailsService } from './emails.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -807,12 +807,20 @@ describe('EmailsService — PATCH /emails/:id/status (Inbox Zero)', () => {
     _count: { tasks: 2 },
   };
 
+  let tx: any;
+
   beforeEach(() => {
-    prisma = {
+    tx = {
       email: {
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-        findFirstOrThrow: jest.fn().mockResolvedValue(fila),
+        // De partida, el correo está sin despachar: cada prueba que necesite
+        // otro punto de salida lo dice.
+        findFirst: jest.fn().mockResolvedValue({ status: EmailStatus.PENDING }),
+        update: jest.fn().mockResolvedValue({}),
       },
+    };
+    prisma = {
+      email: { findFirstOrThrow: jest.fn().mockResolvedValue(fila) },
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
 
     service = new EmailsService(
@@ -826,25 +834,36 @@ describe('EmailsService — PATCH /emails/:id/status (Inbox Zero)', () => {
   it('mueve el correo al estado pedido', async () => {
     await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED);
 
-    expect(prisma.email.updateMany).toHaveBeenCalledWith({
-      where: { id: 'email-1', userId: USER_ID },
+    expect(tx.email.update).toHaveBeenCalledWith({
+      where: { id: 'email-1' },
       data: { status: EmailStatus.COMPLETED },
     });
   });
 
-  it('comprueba la propiedad en la misma escritura, sin hueco entre leer y escribir', async () => {
+  it('comprueba la propiedad al leer el estado de partida', async () => {
     await service.updateStatus(USER_ID, 'email-1', EmailStatus.DISMISSED);
 
-    // El filtro por userId va en el where del update, no en una lectura previa.
-    expect(prisma.email.updateMany.mock.calls[0][0].where.userId).toBe(USER_ID);
+    expect(tx.email.findFirst.mock.calls[0][0].where).toEqual({
+      id: 'email-1',
+      userId: USER_ID,
+    });
+  });
+
+  it('lee y escribe en la misma transacción, para que la regla mire el estado real', async () => {
+    await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED);
+
+    // Fuera de la transacción, entre comprobar de dónde viene y guardar cabría
+    // otra pestaña moviendo el mismo correo.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it('devuelve 404 si el correo no es del usuario', async () => {
-    prisma.email.updateMany.mockResolvedValue({ count: 0 });
+    tx.email.findFirst.mockResolvedValue(null);
 
     await expect(service.updateStatus(USER_ID, 'ajeno', EmailStatus.COMPLETED)).rejects.toThrow(
       NotFoundException,
     );
+    expect(tx.email.update).not.toHaveBeenCalled();
     expect(prisma.email.findFirstOrThrow).not.toHaveBeenCalled();
   });
 
@@ -885,7 +904,92 @@ describe('EmailsService — PATCH /emails/:id/status (Inbox Zero)', () => {
       await service.updateStatus(USER_ID, 'email-1', estado);
     }
 
-    expect(prisma.email.updateMany).toHaveBeenCalledTimes(4);
+    expect(tx.email.update).toHaveBeenCalledTimes(4);
+  });
+
+  describe('la bandeja avanza pero no retrocede sola', () => {
+    it.each([EmailStatus.IN_PROGRESS, EmailStatus.COMPLETED, EmailStatus.DISMISSED])(
+      'devolver a PENDING desde %s sin force da 409 y no escribe',
+      async (desde) => {
+        tx.email.findFirst.mockResolvedValue({ status: desde });
+
+        await expect(
+          service.updateStatus(USER_ID, 'email-1', EmailStatus.PENDING),
+        ).rejects.toThrow(ConflictException);
+        expect(tx.email.update).not.toHaveBeenCalled();
+        expect(gateway.emitEmailUpdated).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([EmailStatus.IN_PROGRESS, EmailStatus.COMPLETED, EmailStatus.DISMISSED])(
+      'con force sí lo reabre desde %s',
+      async (desde) => {
+        tx.email.findFirst.mockResolvedValue({ status: desde });
+
+        await service.updateStatus(USER_ID, 'email-1', EmailStatus.PENDING, undefined, true);
+
+        expect(tx.email.update).toHaveBeenCalledWith({
+          where: { id: 'email-1' },
+          data: { status: EmailStatus.PENDING },
+        });
+      },
+    );
+
+    it('marcar como pendiente lo que ya lo estaba no necesita force: no reabre nada', async () => {
+      tx.email.findFirst.mockResolvedValue({ status: EmailStatus.PENDING });
+
+      await service.updateStatus(USER_ID, 'email-1', EmailStatus.PENDING);
+
+      expect(tx.email.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('la regla solo mira las vueltas a PENDING, no el resto de movimientos', async () => {
+      tx.email.findFirst.mockResolvedValue({ status: EmailStatus.COMPLETED });
+
+      // Rectificar entre estados despachados es cosa de quien gestiona su
+      // bandeja: aquí no hay nada que proteger.
+      await service.updateStatus(USER_ID, 'email-1', EmailStatus.DISMISSED);
+      await service.updateStatus(USER_ID, 'email-1', EmailStatus.IN_PROGRESS);
+
+      expect(tx.email.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('force no cambia nada cuando no hay regla que saltarse', async () => {
+      await service.updateStatus(USER_ID, 'email-1', EmailStatus.COMPLETED, undefined, true);
+
+      expect(tx.email.update).toHaveBeenCalledWith({
+        where: { id: 'email-1' },
+        data: { status: EmailStatus.COMPLETED },
+      });
+    });
+
+    it('reabrir no toca lo que el correo ya generó ni la marca del worker', async () => {
+      tx.email.findFirst.mockResolvedValue({ status: EmailStatus.COMPLETED });
+
+      await service.updateStatus(USER_ID, 'email-1', EmailStatus.PENDING, undefined, true);
+
+      // Solo el estado: `processedAt` dice que el worker lo analizó, y eso
+      // sigue siendo verdad aunque su dueño lo devuelva a la bandeja.
+      expect(tx.email.update.mock.calls[0][0].data).toEqual({ status: EmailStatus.PENDING });
+    });
+
+    it('la reapertura forzada queda anotada en el log', async () => {
+      tx.email.findFirst.mockResolvedValue({ status: EmailStatus.DISMISSED });
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await service.updateStatus(USER_ID, 'email-1', EmailStatus.PENDING, undefined, true);
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Reapertura forzada'));
+      warn.mockRestore();
+    });
+
+    it('la reapertura sale por socket como cualquier otro movimiento', async () => {
+      tx.email.findFirst.mockResolvedValue({ status: EmailStatus.COMPLETED });
+
+      await service.updateStatus(USER_ID, 'email-1', EmailStatus.PENDING, 'socket-abc', true);
+
+      expect(gateway.emitEmailUpdated.mock.calls[0][1]).toBe('socket-abc');
+    });
   });
 });
 
@@ -956,12 +1060,18 @@ describe('EmailsService — aviso a la bandeja al mover un correo', () => {
     _count: { tasks: 0 },
   };
 
+  let tx: any;
+
   beforeEach(() => {
-    prisma = {
+    tx = {
       email: {
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-        findFirstOrThrow: jest.fn().mockResolvedValue(fila),
+        findFirst: jest.fn().mockResolvedValue({ status: EmailStatus.PENDING }),
+        update: jest.fn().mockResolvedValue({}),
       },
+    };
+    prisma = {
+      email: { findFirstOrThrow: jest.fn().mockResolvedValue(fila) },
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
     service = new EmailsService(
       prisma as unknown as PrismaService,
@@ -999,7 +1109,7 @@ describe('EmailsService — aviso a la bandeja al mover un correo', () => {
   });
 
   it('no anuncia nada si el correo no era suyo', async () => {
-    prisma.email.updateMany.mockResolvedValue({ count: 0 });
+    tx.email.findFirst.mockResolvedValue(null);
 
     await expect(service.updateStatus(USER_ID, 'ajeno', EmailStatus.COMPLETED)).rejects.toThrow(
       NotFoundException,
@@ -1009,9 +1119,9 @@ describe('EmailsService — aviso a la bandeja al mover un correo', () => {
 
   it('anuncia después de escribir, no antes', async () => {
     const orden: string[] = [];
-    prisma.email.updateMany.mockImplementation(async () => {
+    tx.email.update.mockImplementation(async () => {
       orden.push('escritura');
-      return { count: 1 };
+      return {};
     });
     gateway.emitEmailUpdated.mockImplementation(() => {
       orden.push('evento');

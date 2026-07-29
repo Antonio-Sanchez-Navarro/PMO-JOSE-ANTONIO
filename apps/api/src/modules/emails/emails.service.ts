@@ -118,6 +118,24 @@ export interface ToTaskResult {
   tasks: Task[];
 }
 
+/**
+ * Estados desde los que volver a `PENDING` es una reapertura, no un movimiento
+ * más: el correo ya lo despachó su dueño.
+ *
+ * `PENDING` no está en la lista a propósito — marcar como pendiente lo que ya
+ * lo está no reabre nada, así que no hay nada que proteger ni que forzar.
+ */
+const YA_DESPACHADOS: EmailStatus[] = [
+  EmailStatus.IN_PROGRESS,
+  EmailStatus.COMPLETED,
+  EmailStatus.DISMISSED,
+];
+
+/** ¿Este movimiento saca al correo de "despachado" y lo devuelve a la bandeja? */
+function esReapertura(actual: EmailStatus, destino: EmailStatus): boolean {
+  return destino === EmailStatus.PENDING && YA_DESPACHADOS.includes(actual);
+}
+
 /** Una tarea propuesta: todavía no existe en la base de datos, por eso no hay `id`. */
 export interface ProposedTask {
   title: string;
@@ -155,24 +173,59 @@ export class EmailsService {
    * su dueño todavía no lo ha despachado. Por eso es una columna aparte y no
    * una lectura derivada de las marcas que ya había.
    *
-   * `updateMany` filtrando por `userId` en vez de `update` por id: así la
-   * comprobación de propiedad y la escritura son la misma operación y no queda
-   * hueco entre leer y escribir.
+   * **La bandeja avanza, no retrocede.** Un correo ya despachado —en proceso,
+   * hecho o descartado— no vuelve a `PENDING` por las buenas: si lo hiciera,
+   * bastaría un clic descuidado para que reapareciera en la bandeja trabajo que
+   * alguien ya dio por cerrado, y el "Inbox Zero" dejaría de significar nada.
+   * Reabrirlo responde **409** y hace falta insistir con `force`.
+   *
+   * `force` es la excepción del dueño: reabrir es legítimo —el correo se
+   * despachó por error, o el asunto ha vuelto— pero tiene que ser deliberado.
+   * Queda anotado en el log, que es el único rastro de una decisión que salta
+   * la regla.
+   *
+   * El resto de movimientos no se juzgan: de pendiente a hecho, de descartado a
+   * en proceso o volver a marcar lo que ya estaba igual son cosa de quien
+   * gestiona su bandeja.
    */
   async updateStatus(
     userId: string,
     emailId: string,
     status: EmailStatus,
     socketId?: string,
+    force = false,
   ): Promise<TriageEmail> {
-    const { count } = await this.prisma.email.updateMany({
-      where: { id: emailId, userId },
-      data: { status },
-    });
+    // Leer y escribir dentro de la misma transacción: entre comprobar el estado
+    // de partida y guardar el nuevo cabe otra pestaña moviendo el mismo correo,
+    // y la regla se aplicaría sobre un estado que ya no es el que hay.
+    await this.prisma.$transaction(async (tx) => {
+      const actual = await tx.email.findFirst({
+        // Por `userId` además de por `id`: sin esto, cualquier sesión válida
+        // movería el correo de otra persona con solo conocer su id.
+        where: { id: emailId, userId },
+        select: { status: true },
+      });
 
-    if (count === 0) {
-      throw new NotFoundException(`No existe el correo ${emailId}`);
-    }
+      if (!actual) {
+        throw new NotFoundException(`No existe el correo ${emailId}`);
+      }
+
+      if (esReapertura(actual.status, status) && !force) {
+        throw new ConflictException(
+          `El correo ${emailId} ya está en ${actual.status} y la bandeja no retrocede. ` +
+            `Reenvía con "force": true para devolverlo a ${EmailStatus.PENDING}.`,
+        );
+      }
+
+      await tx.email.update({ where: { id: emailId }, data: { status } });
+
+      if (esReapertura(actual.status, status)) {
+        // El único rastro de que alguien saltó la regla a propósito.
+        this.logger.warn(
+          `Reapertura forzada del correo ${emailId}: ${actual.status} → ${status}`,
+        );
+      }
+    });
 
     this.logger.log(`Correo ${emailId} movido a ${status}`);
 

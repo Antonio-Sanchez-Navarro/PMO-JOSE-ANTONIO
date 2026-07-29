@@ -90,9 +90,14 @@ export class EmailsController {
    * Es el motor del "Inbox Zero" (Sprint 4). El estado lo decide la persona,
    * así que el cuerpo es obligatorio: `{ "status": "COMPLETED" }`.
    *
+   * La bandeja avanza pero no retrocede sola: devolver a `PENDING` un correo ya
+   * despachado responde **409**, y se insiste con
+   * `{ "status": "PENDING", "force": true }` — la excepción del dueño, que
+   * queda anotada en el log.
+   *
    * Respuestas: 200 con el correo ya actualizado, en la misma forma que
    * devuelve `GET /emails` · 400 si el estado no está en el vocabulario · 404
-   * si el correo no es suyo o no existe.
+   * si el correo no es suyo o no existe · 409 al reabrir sin `force`.
    *
    * El cambio sale además por socket como `email.updated`. Quien manda su
    * `X-Socket-Id` no recibe el eco: ya tiene el correo en la respuesta.
@@ -104,7 +109,7 @@ export class EmailsController {
     @Body() dto: UpdateEmailStatusDto,
     @Headers(SOCKET_ID_HEADER) socketId?: string,
   ): Promise<TriageEmail> {
-    return this.emailsService.updateStatus(user.userId, id, dto.status, socketId);
+    return this.emailsService.updateStatus(user.userId, id, dto.status, socketId, dto.force);
   }
 
   /**
