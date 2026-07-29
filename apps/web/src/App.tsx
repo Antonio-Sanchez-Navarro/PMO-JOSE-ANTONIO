@@ -12,6 +12,7 @@ type Health = {
 };
 
 import { InboxPage } from "./features/inbox/InboxPage";
+import { CopilotDrawer } from "./features/copilot";
 
 export function App() {
   const { user, status, logout } = useSession();
@@ -43,6 +44,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"inbox" | "kanban">("inbox");
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   useEffect(() => {
     // Vía el proxy de Vite: /api -> http://localhost:3000
@@ -131,7 +133,18 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
           </Card>
         </div>
       </main>
+
+      <CopilotDrawer isOpen={isCopilotOpen} onClose={() => setIsCopilotOpen(false)} />
+
+      <button
+        onClick={() => setIsCopilotOpen(true)}
+        className="fixed bottom-6 right-6 p-4 bg-indigo-600 text-white rounded-full shadow-xl hover:bg-indigo-700 transition-transform hover:scale-105 z-40 flex items-center justify-center gap-2"
+        title="Abrir Copiloto de IA"
+      >
+        <span className="text-xl">✨</span>
+      </button>
     </div>
+
   );
 }
 
