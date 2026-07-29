@@ -8,6 +8,9 @@ interface TaskCardProps {
   task: Task;
   onDelete?: (id: string) => void;
   onViewEmail?: (emailId: string) => void;
+  onReturnToInbox?: (emailId: string) => void;
+  onStartTimer?: (id: string) => void;
+  onStopTimer?: (id: string) => void;
 }
 
 const PRIORITY_COLORS: Record<TaskPriority, string> = {
@@ -23,7 +26,75 @@ const SOURCE_LABELS: Record<TaskSource, { icon: string; label: string; style: st
   [TaskSource.WHATSAPP]: { icon: '🤖', label: 'WhatsApp', style: 'bg-emerald-100 text-emerald-700' },
 };
 
-export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail }) => {
+const TaskTimer: React.FC<{
+  totalTimeSec?: number;
+  activeTimeStartedAt?: string | null;
+  onStart?: () => void;
+  onStop?: () => void;
+}> = ({ totalTimeSec = 0, activeTimeStartedAt, onStart, onStop }) => {
+  const [elapsed, setElapsed] = React.useState(totalTimeSec);
+
+  React.useEffect(() => {
+    if (!activeTimeStartedAt) {
+      setElapsed(totalTimeSec);
+      return;
+    }
+
+    const start = new Date(activeTimeStartedAt).getTime();
+    
+    const update = () => {
+      const now = new Date().getTime();
+      const currentElapsed = Math.floor((now - start) / 1000);
+      setElapsed(totalTimeSec + currentElapsed);
+    };
+
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [activeTimeStartedAt, totalTimeSec]);
+
+  const formatTime = (sec: number) => {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+
+  const isRunning = !!activeTimeStartedAt;
+
+  return (
+    <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-100">
+      <span className={`text-xs font-mono font-medium ${isRunning ? 'text-green-600 animate-pulse' : 'text-gray-500'}`}>
+        ⏱ {formatTime(elapsed)}
+      </span>
+      {isRunning ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onStop?.();
+          }}
+          className="text-[10px] uppercase font-bold tracking-wide bg-red-100 text-red-700 px-2 py-0.5 rounded hover:bg-red-200 transition"
+        >
+          ⏹ Stop
+        </button>
+      ) : (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onStart?.();
+          }}
+          className="text-[10px] uppercase font-bold tracking-wide bg-green-100 text-green-700 px-2 py-0.5 rounded hover:bg-green-200 transition"
+        >
+          ▶ Start
+        </button>
+      )}
+    </div>
+  );
+};
+
+export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail, onReturnToInbox, onStartTimer, onStopTimer }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task.id });
 
   const style = {
@@ -133,6 +204,20 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail 
               <span>Leer</span>
             </button>
           )}
+          {/* Return to Inbox Button */}
+          {task.sourceEmailId && onReturnToInbox && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onReturnToInbox(task.sourceEmailId!);
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 transition"
+              title="Devolver a la bandeja"
+            >
+              <span>↩️</span>
+              <span>Bandeja</span>
+            </button>
+          )}
         </div>
         {task.dueDate && (
           <span className="text-gray-500 font-medium whitespace-nowrap">
@@ -140,6 +225,13 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail 
           </span>
         )}
       </div>
+
+      <TaskTimer
+        totalTimeSec={task.totalTimeSec}
+        activeTimeStartedAt={task.activeTimeStartedAt}
+        onStart={() => onStartTimer?.(task.id)}
+        onStop={() => onStopTimer?.(task.id)}
+      />
     </div>
   );
 };

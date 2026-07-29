@@ -10,9 +10,21 @@ interface KanbanColumnProps {
   tasks: Task[];
   onDeleteTask?: (id: string) => void;
   onViewEmail?: (emailId: string) => void;
+  onReturnToInbox?: (emailId: string) => void;
+  onStartTimer?: (id: string) => void;
+  onStopTimer?: (id: string) => void;
 }
 
-export const KanbanColumn: React.FC<KanbanColumnProps> = ({ id, title, tasks, onDeleteTask, onViewEmail }) => {
+export const KanbanColumn: React.FC<KanbanColumnProps> = ({ 
+  id, 
+  title, 
+  tasks, 
+  onDeleteTask,
+  onViewEmail,
+  onReturnToInbox,
+  onStartTimer,
+  onStopTimer
+}) => {
   const { setNodeRef } = useDroppable({ id });
 
   return (
@@ -21,7 +33,15 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({ id, title, tasks, on
       <div ref={setNodeRef} className="flex-1 min-h-[200px]">
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
-            <TaskCard key={task.id} task={task} onDelete={onDeleteTask} onViewEmail={onViewEmail} />
+            <TaskCard 
+              key={task.id} 
+              task={task} 
+              onDelete={onDeleteTask}
+              onViewEmail={onViewEmail}
+              onReturnToInbox={onReturnToInbox}
+              onStartTimer={onStartTimer}
+              onStopTimer={onStopTimer}
+            />
           ))}
         </SortableContext>
       </div>

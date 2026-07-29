@@ -168,7 +168,7 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
   return json.data || json;
 };
 
-export const updateEmailStatus = async (emailId: string, status: string): Promise<any> => {
+export const updateEmailStatus = async (emailId: string, status: string, force?: boolean): Promise<any> => {
   const socketId = getSocketId();
 
   const response = await fetch(`/api/emails/${emailId}/status`, {
@@ -178,7 +178,7 @@ export const updateEmailStatus = async (emailId: string, status: string): Promis
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
     credentials: 'include',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, force }),
   });
 
   if (!response.ok) {

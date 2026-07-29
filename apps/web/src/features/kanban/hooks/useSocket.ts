@@ -13,6 +13,11 @@ export const EMAIL_EVENTS = {
   updated: 'email.updated',
 } as const;
 
+export const TIME_EVENTS = {
+  started: 'time.started',
+  stopped: 'time.stopped',
+} as const;
+
 export interface ColumnOrder {
   status: TaskStatus;
   taskIds: string[];
@@ -42,6 +47,8 @@ interface UseSocketProps {
   onTaskDeleted?: (payload: { id: string; status: TaskStatus; userId: string }) => void;
   onTasksReordered?: (payload: { userId: string; columns: ColumnOrder[] }) => void;
   onEmailUpdated?: (email: any) => void;
+  onTimeStarted?: (timeEntry: any) => void;
+  onTimeStopped?: (timeEntry: any) => void;
 }
 
 export const useSocket = ({
@@ -50,6 +57,8 @@ export const useSocket = ({
   onTaskDeleted,
   onTasksReordered,
   onEmailUpdated,
+  onTimeStarted,
+  onTimeStopped,
 }: UseSocketProps) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -58,6 +67,8 @@ export const useSocket = ({
   const savedOnTaskDeleted = useRef(onTaskDeleted);
   const savedOnTasksReordered = useRef(onTasksReordered);
   const savedOnEmailUpdated = useRef(onEmailUpdated);
+  const savedOnTimeStarted = useRef(onTimeStarted);
+  const savedOnTimeStopped = useRef(onTimeStopped);
 
   useEffect(() => {
     savedOnTaskCreated.current = onTaskCreated;
@@ -65,6 +76,8 @@ export const useSocket = ({
     savedOnTaskDeleted.current = onTaskDeleted;
     savedOnTasksReordered.current = onTasksReordered;
     savedOnEmailUpdated.current = onEmailUpdated;
+    savedOnTimeStarted.current = onTimeStarted;
+    savedOnTimeStopped.current = onTimeStopped;
   });
 
   useEffect(() => {
@@ -97,12 +110,18 @@ export const useSocket = ({
       savedOnTasksReordered.current?.(data);
     const onEmailUpdatedHandler = (data: any) =>
       savedOnEmailUpdated.current?.(data);
+    const onTimeStartedHandler = (data: any) =>
+      savedOnTimeStarted.current?.(data);
+    const onTimeStoppedHandler = (data: any) =>
+      savedOnTimeStopped.current?.(data);
 
     socket.on(TASK_EVENTS.created, onCreated);
     socket.on(TASK_EVENTS.updated, onUpdated);
     socket.on(TASK_EVENTS.deleted, onDeleted);
     socket.on(TASK_EVENTS.reordered, onReordered);
     socket.on(EMAIL_EVENTS.updated, onEmailUpdatedHandler);
+    socket.on(TIME_EVENTS.started, onTimeStartedHandler);
+    socket.on(TIME_EVENTS.stopped, onTimeStoppedHandler);
 
     return () => {
       socket.off(TASK_EVENTS.created, onCreated);
@@ -110,6 +129,8 @@ export const useSocket = ({
       socket.off(TASK_EVENTS.deleted, onDeleted);
       socket.off(TASK_EVENTS.reordered, onReordered);
       socket.off(EMAIL_EVENTS.updated, onEmailUpdatedHandler);
+      socket.off(TIME_EVENTS.started, onTimeStartedHandler);
+      socket.off(TIME_EVENTS.stopped, onTimeStoppedHandler);
 
       subscribers -= 1;
 
