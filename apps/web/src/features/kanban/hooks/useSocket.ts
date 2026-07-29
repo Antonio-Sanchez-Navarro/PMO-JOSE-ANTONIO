@@ -9,6 +9,10 @@ export const TASK_EVENTS = {
   deleted: 'task.deleted',
 } as const;
 
+export const EMAIL_EVENTS = {
+  updated: 'email.updated',
+} as const;
+
 export interface ColumnOrder {
   status: TaskStatus;
   taskIds: string[];
@@ -37,6 +41,7 @@ interface UseSocketProps {
   onTaskUpdated?: (task: Task) => void;
   onTaskDeleted?: (payload: { id: string; status: TaskStatus; userId: string }) => void;
   onTasksReordered?: (payload: { userId: string; columns: ColumnOrder[] }) => void;
+  onEmailUpdated?: (email: any) => void;
 }
 
 export const useSocket = ({
@@ -44,6 +49,7 @@ export const useSocket = ({
   onTaskUpdated,
   onTaskDeleted,
   onTasksReordered,
+  onEmailUpdated,
 }: UseSocketProps) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -51,12 +57,14 @@ export const useSocket = ({
   const savedOnTaskUpdated = useRef(onTaskUpdated);
   const savedOnTaskDeleted = useRef(onTaskDeleted);
   const savedOnTasksReordered = useRef(onTasksReordered);
+  const savedOnEmailUpdated = useRef(onEmailUpdated);
 
   useEffect(() => {
     savedOnTaskCreated.current = onTaskCreated;
     savedOnTaskUpdated.current = onTaskUpdated;
     savedOnTaskDeleted.current = onTaskDeleted;
     savedOnTasksReordered.current = onTasksReordered;
+    savedOnEmailUpdated.current = onEmailUpdated;
   });
 
   useEffect(() => {
@@ -87,17 +95,21 @@ export const useSocket = ({
       savedOnTaskDeleted.current?.(data);
     const onReordered = (data: { userId: string; columns: ColumnOrder[] }) =>
       savedOnTasksReordered.current?.(data);
+    const onEmailUpdatedHandler = (data: any) =>
+      savedOnEmailUpdated.current?.(data);
 
     socket.on(TASK_EVENTS.created, onCreated);
     socket.on(TASK_EVENTS.updated, onUpdated);
     socket.on(TASK_EVENTS.deleted, onDeleted);
     socket.on(TASK_EVENTS.reordered, onReordered);
+    socket.on(EMAIL_EVENTS.updated, onEmailUpdatedHandler);
 
     return () => {
       socket.off(TASK_EVENTS.created, onCreated);
       socket.off(TASK_EVENTS.updated, onUpdated);
       socket.off(TASK_EVENTS.deleted, onDeleted);
       socket.off(TASK_EVENTS.reordered, onReordered);
+      socket.off(EMAIL_EVENTS.updated, onEmailUpdatedHandler);
 
       subscribers -= 1;
 

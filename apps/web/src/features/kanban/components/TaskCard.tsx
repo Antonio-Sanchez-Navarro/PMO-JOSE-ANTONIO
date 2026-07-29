@@ -72,6 +72,37 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail 
           )}
         </div>
       </div>
+
+      {/* Etiquetas curadas del usuario */}
+      {task.labels && task.labels.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {task.labels.map(label => (
+            <span
+              key={label.id}
+              style={{
+                backgroundColor: label.color + '20',
+                color: label.color,
+                borderColor: label.color,
+              }}
+              className="text-[10px] px-1.5 py-0.5 rounded-sm border font-medium truncate max-w-[120px]"
+              title={label.name}
+            >
+              {label.name}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Etiquetas automáticas del modelo AI */}
+      {task.tags && task.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {task.tags.map((t, idx) => (
+            <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded-sm">
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2 mt-3 text-xs">
         <div className="flex flex-wrap gap-2">
           {/* Priority Badge */}

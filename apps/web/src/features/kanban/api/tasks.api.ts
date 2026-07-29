@@ -167,3 +167,31 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
   const json = await response.json();
   return json.data || json;
 };
+
+export const updateEmailStatus = async (emailId: string, status: string): Promise<any> => {
+  const socketId = getSocketId();
+
+  const response = await fetch(`/api/emails/${emailId}/status`, {
+    method: 'PATCH',
+    headers: { 
+      'Content-Type': 'application/json',
+      ...(socketId ? { 'x-socket-id': socketId } : {})
+    },
+    credentials: 'include',
+    body: JSON.stringify({ status }),
+  });
+
+  if (!response.ok) {
+    let errorMsg = 'Error al actualizar el estado del correo';
+    try {
+      const errorBody = await response.json();
+      if (errorBody.message) {
+        errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
+      }
+    } catch (parseError) {}
+    throw new Error(errorMsg);
+  }
+
+  const json = await response.json();
+  return json.data || json;
+};

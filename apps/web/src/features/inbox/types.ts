@@ -14,6 +14,7 @@ export interface EmailSnippet {
   category?: string | null;
   taskCount?: number;
   isConverted?: boolean;
+  status?: string;
 }
 
 /** Mensajes de un mismo hilo, del más reciente al más antiguo. */

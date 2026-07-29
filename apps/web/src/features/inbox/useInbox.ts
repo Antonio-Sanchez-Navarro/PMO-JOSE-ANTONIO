@@ -40,7 +40,7 @@ function groupByThread(emails: EmailSnippet[]): EmailThread[] {
  * La sesión viaja en cookies httpOnly: `apiFetch` ya usa `credentials: "include"`
  * y renueva el token una vez si la API responde 401.
  */
-export function useInbox(initialMaxResults = 20) {
+export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 20) {
   const [emails, setEmails] = useState<EmailSnippet[]>([]);
   const [status, setStatus] = useState<InboxStatus>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +54,7 @@ export function useInbox(initialMaxResults = 20) {
     setError(null);
 
     try {
-      const data = await apiFetch<EmailSnippet[]>(`/emails?take=${limit}`);
+      const data = await apiFetch<EmailSnippet[]>(`/emails?status=${activeStatus}&take=${limit}`);
       setEmails(data);
       setStatus("ready");
     } catch (err) {
@@ -67,13 +67,12 @@ export function useInbox(initialMaxResults = 20) {
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [activeStatus]);
 
   useEffect(() => {
-    void load(maxResults, { silent: emails.length > 0 });
-    // `emails.length` solo decide si el refresco es silencioso; no debe re-disparar la carga.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, maxResults]);
+    // Cuando activeStatus cambia, forzamos recarga y limpiamos la lista actual
+    void load(maxResults, { silent: false });
+  }, [load, maxResults, activeStatus]);
 
   /** Etiquetas presentes en los resultados, ordenadas por frecuencia. */
   const labels = useMemo<LabelFacet[]>(() => {
@@ -95,6 +94,22 @@ export function useInbox(initialMaxResults = 20) {
 
   const threads = useMemo(() => groupByThread(visible), [visible]);
 
+  const updateEmail = useCallback((updatedEmail: EmailSnippet) => {
+    setEmails((prev) => {
+      // Si el email cambia de status, lo quitamos de la lista si no coincide con activeStatus
+      if (updatedEmail.status !== activeStatus) {
+        return prev.filter(e => e.id !== updatedEmail.id);
+      }
+      
+      const exists = prev.some(e => e.id === updatedEmail.id);
+      if (exists) {
+        return prev.map(e => e.id === updatedEmail.id ? updatedEmail : e);
+      } else {
+        return [updatedEmail, ...prev];
+      }
+    });
+  }, [activeStatus]);
+
   return {
     emails: visible,
     totalEmails: emails.length,
@@ -105,8 +120,8 @@ export function useInbox(initialMaxResults = 20) {
     status,
     error,
     isRefreshing,
-    maxResults,
     refresh: () => load(maxResults, { silent: true }),
     loadMore: () => setMaxResults((current) => current + 20),
+    updateEmail,
   };
 }

@@ -52,9 +52,27 @@ export interface Task {
   sourceEmailId?: string | null;
   source: TaskSource;
   tags: string[];
+  labels?: {
+    id: string;
+    name: string;
+    color: string;
+  }[];
   position: number;
+  totalTimeSec?: number;
+  activeTimeEntryId?: string | null;
+  activeTimeStartedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TimeEntry {
+  id: string;
+  taskId: string;
+  userId: string;
+  startedAt: string;
+  endedAt?: string | null;
+  durationSec?: number | null;
+  note?: string | null;
 }
 
 /**
@@ -67,6 +85,7 @@ export interface ProposedTask {
   description: string;
   priority: TaskPriority;
   tags: string[];
+  tagIds?: string[];
   /** ISO 8601, o `null` si el correo no menciona fecha límite. */
   dueDate?: string | null;
 }

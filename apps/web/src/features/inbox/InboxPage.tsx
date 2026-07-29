@@ -14,8 +14,12 @@ import { classifyEmail, createTasksFromEmail } from "../kanban/api/tasks.api";
 import { EmailClassification } from "@pmo/shared";
 import { Toaster, toast } from 'sonner';
 import { EmailDetailModal } from "./components/EmailDetailModal";
+import { updateEmailStatus } from "../kanban/api/tasks.api";
+import { useSocket } from "../kanban/hooks/useSocket";
 
 export function InboxPage() {
+  const [activeTab, setActiveTab] = useState<'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED'>('PENDING');
+
   const {
     threads,
     emails,
@@ -28,12 +32,18 @@ export function InboxPage() {
     isRefreshing,
     refresh,
     loadMore,
-  } = useInbox();
+    updateEmail,
+  } = useInbox(activeTab);
+
+  useSocket({
+    onEmailUpdated: (email) => {
+      updateEmail(email);
+    }
+  });
 
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiProposal, setAiProposal] = useState<EmailClassification | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'PENDING' | 'IN_PROGRESS' | 'DONE' | 'DISMISSED'>('PENDING');
 
   const handleAnalyzeEmail = async (emailId: string) => {
     try {
@@ -79,7 +89,7 @@ export function InboxPage() {
         {[
           { id: 'PENDING', label: 'Pendientes' },
           { id: 'IN_PROGRESS', label: 'En Proceso' },
-          { id: 'DONE', label: 'Completados' },
+          { id: 'COMPLETED', label: 'Completados' },
           { id: 'DISMISSED', label: 'Descartados' }
         ].map(tab => (
           <button
@@ -131,6 +141,14 @@ export function InboxPage() {
                 thread={thread} 
                 onAnalyze={handleAnalyzeEmail} 
                 onRead={(id) => setSelectedEmailId(id)}
+                onUpdateStatus={async (id, newStatus) => {
+                  try {
+                    const updated = await updateEmailStatus(id, newStatus);
+                    updateEmail(updated);
+                  } catch (e: any) {
+                    toast.error(e.message || 'Error al cambiar estado');
+                  }
+                }}
               />
             ))}
           </ul>
@@ -185,11 +203,13 @@ export function InboxPage() {
 function ThreadRow({ 
   thread, 
   onAnalyze,
-  onRead
+  onRead,
+  onUpdateStatus,
 }: { 
   thread: EmailThread; 
   onAnalyze: (id: string) => void; 
   onRead: (id: string) => void;
+  onUpdateStatus: (id: string, status: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasReplies = thread.messages.length > 1;
@@ -203,6 +223,7 @@ function ThreadRow({
         onToggle={hasReplies ? () => setExpanded((open) => !open) : undefined}
         onAnalyze={() => onAnalyze(thread.latest.id)}
         onRead={() => onRead(thread.latest.id)}
+        onUpdateStatus={(status) => onUpdateStatus(thread.latest.id, status)}
       />
 
       {expanded && (
@@ -214,6 +235,7 @@ function ThreadRow({
                 nested 
                 onAnalyze={() => onAnalyze(message.id)} 
                 onRead={() => onRead(message.id)}
+                onUpdateStatus={(status) => onUpdateStatus(message.id, status)}
               />
             </li>
           ))}
@@ -231,6 +253,7 @@ function EmailRow({
   nested = false,
   onAnalyze,
   onRead,
+  onUpdateStatus,
 }: {
   email: EmailSnippet;
   threadCount?: number;
@@ -239,6 +262,7 @@ function EmailRow({
   nested?: boolean;
   onAnalyze?: () => void;
   onRead?: () => void;
+  onUpdateStatus?: (status: string) => void;
 }) {
   const sender = parseSender(email.from);
   const interactive = Boolean(onToggle);
@@ -315,25 +339,25 @@ function EmailRow({
           {formatEmailDate(email.date)}
         </time>
 
-        {/* Botones de Inbox Zero (Inactivos) */}
-        {!nested && (
+        {/* Botones de Inbox Zero (Activos) */}
+        {!nested && onUpdateStatus && (
           <div className="flex items-center gap-1">
             <button
-              onClick={(e) => { e.stopPropagation(); console.log('TODO: conectar PATCH (Descartar)'); }}
+              onClick={(e) => { e.stopPropagation(); onUpdateStatus('DISMISSED'); }}
               className="px-2 py-1 text-[11px] font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 rounded transition"
               title="Descartar"
             >
               Descartar
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); console.log('TODO: conectar PATCH (En Proceso)'); }}
+              onClick={(e) => { e.stopPropagation(); onUpdateStatus('IN_PROGRESS'); }}
               className="px-2 py-1 text-[11px] font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded transition"
               title="Marcar en proceso"
             >
               En Proceso
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); console.log('TODO: conectar PATCH (Completado)'); }}
+              onClick={(e) => { e.stopPropagation(); onUpdateStatus('COMPLETED'); }}
               className="px-2 py-1 text-[11px] font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded transition"
               title="Marcar como completado"
             >

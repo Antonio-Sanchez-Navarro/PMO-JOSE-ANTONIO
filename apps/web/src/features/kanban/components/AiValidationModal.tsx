@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { EmailClassification, EmailCategory, ProposedTask } from '@pmo/shared';
+import { EmailClassification, EmailCategory, ProposedTask, TaskPriority } from '@pmo/shared';
+import { useTags } from '../hooks/useTags';
+import { TagManagerModal } from './TagManagerModal';
 
 interface AiValidationModalProps {
   isOpen: boolean;
@@ -17,6 +19,34 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
   const [category, setCategory] = useState<EmailCategory>(EmailCategory.OTHER);
   const [isCategoryModified, setIsCategoryModified] = useState(false);
   const [tasks, setTasks] = useState<ProposedTask[]>([]);
+  const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+  const { tags, refreshTags } = useTags();
+
+  const handleToggleTag = (taskIndex: number, tagId: string) => {
+    setTasks(prev => prev.map((t, i) => {
+      if (i !== taskIndex) return t;
+      const currentTags = t.tagIds || [];
+      const isSelected = currentTags.includes(tagId);
+      return {
+        ...t,
+        tagIds: isSelected ? currentTags.filter(id => id !== tagId) : [...currentTags, tagId],
+      };
+    }));
+  };
+
+  const handleAddTask = () => {
+    setTasks(prev => [
+      ...prev,
+      {
+        title: '',
+        description: '',
+        priority: TaskPriority.MEDIUM,
+        tags: [],
+        tagIds: [],
+        dueDate: null,
+      },
+    ]);
+  };
 
   // Sincronizar el estado interno con la propuesta que llega
   useEffect(() => {
@@ -104,35 +134,78 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
           </div>
 
           <div className="pt-2">
-            <label className="block mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
-              Tareas Propuestas ({tasks.length})
-            </label>
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                Tareas Propuestas ({tasks.length})
+              </label>
+              <button
+                onClick={handleAddTask}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+              >
+                + Añadir Tarea
+              </button>
+            </div>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
               {tasks.length === 0 && (
                 <div className="p-4 text-center text-slate-500 border border-dashed rounded-lg border-slate-300 dark:border-slate-700">
                   No hay tareas propuestas
                 </div>
               )}
               {tasks.map((t, index) => (
-                <div key={index} className="flex items-center gap-3 p-3 bg-white border rounded-lg shadow-sm group border-slate-200 hover:border-indigo-300 hover:shadow-md dark:bg-slate-800 dark:border-slate-700 dark:hover:border-indigo-500 transition-all">
-                  <div className="flex-shrink-0 flex items-center justify-center w-6 h-6 text-xs font-bold text-indigo-600 bg-indigo-100 rounded-full dark:bg-indigo-500/20 dark:text-indigo-400">
-                    {index + 1}
+                <div key={index} className="flex flex-col p-3 bg-white border rounded-lg shadow-sm group border-slate-200 hover:border-indigo-300 hover:shadow-md dark:bg-slate-800 dark:border-slate-700 dark:hover:border-indigo-500 transition-all">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0 flex items-center justify-center w-6 h-6 text-xs font-bold text-indigo-600 bg-indigo-100 rounded-full dark:bg-indigo-500/20 dark:text-indigo-400">
+                      {index + 1}
+                    </div>
+                    <input
+                      type="text"
+                      value={t.title}
+                      placeholder="Título de la tarea"
+                      onChange={(e) => handleUpdateTaskTitle(index, e.target.value)}
+                      className="flex-grow px-2 py-1 text-sm bg-transparent border-b border-transparent outline-none focus:border-indigo-400 dark:text-slate-200 transition-colors"
+                    />
+                    <button
+                      onClick={() => handleRemoveTask(index)}
+                      className="p-1.5 text-slate-400 rounded-md opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all"
+                      title="Descartar tarea"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
                   </div>
-                  <input
-                    type="text"
-                    value={t.title}
-                    onChange={(e) => handleUpdateTaskTitle(index, e.target.value)}
-                    className="flex-grow px-2 py-1 text-sm bg-transparent border-b border-transparent outline-none focus:border-indigo-400 dark:text-slate-200 transition-colors"
-                  />
-                  <button
-                    onClick={() => handleRemoveTask(index)}
-                    className="p-1.5 text-slate-400 rounded-md opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all"
-                    title="Descartar tarea"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
+                  {/* Selector de Etiquetas */}
+                  <div className="pl-9 mt-2 flex flex-wrap gap-1 items-center">
+                    {tags.map((tag) => {
+                      const isSelected = (t.tagIds || []).includes(tag.id);
+                      return (
+                        <button
+                          key={tag.id}
+                          onClick={() => handleToggleTag(index, tag.id)}
+                          style={{
+                            backgroundColor: isSelected ? tag.color + '20' : 'transparent',
+                            color: tag.color,
+                            borderColor: tag.color,
+                          }}
+                          className={`text-xs px-2 py-0.5 rounded-full border transition-all ${
+                            isSelected ? 'font-medium' : 'opacity-70 hover:opacity-100 border-dashed'
+                          }`}
+                        >
+                          {tag.name}
+                        </button>
+                      );
+                    })}
+                    {tags.length === 0 && (
+                      <span className="text-xs text-slate-400 italic mr-2">No hay etiquetas creadas</span>
+                    )}
+                    <button
+                      onClick={() => setIsTagManagerOpen(true)}
+                      className="text-xs px-2 py-0.5 rounded-full border border-dashed border-slate-300 text-slate-500 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
+                      title="Gestionar etiquetas"
+                    >
+                      + Gestionar
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -155,6 +228,15 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Modal de gestión de etiquetas */}
+      <TagManagerModal
+        isOpen={isTagManagerOpen}
+        onClose={() => {
+          setIsTagManagerOpen(false);
+          refreshTags(); // recargar por si creamos alguna
+        }}
+      />
     </div>
   );
 };
