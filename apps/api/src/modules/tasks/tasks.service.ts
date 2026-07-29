@@ -144,12 +144,41 @@ export class TasksService {
   }
 
   async findAll(userId: string, params: QueryTasksDto) {
-    const { skip = 0, take = 50, status, priority, search } = params;
+    const { skip = 0, take = 50, status, priority, search, tagId, dueFrom, dueTo } = params;
+
+    // Los ids repetidos en la query no son un error que merezca un 400: filtrar
+    // dos veces por la misma etiqueta da el mismo resultado.
+    const etiquetas = tagId?.length ? [...new Set(tagId.filter(Boolean))] : [];
 
     const where: Prisma.TaskWhereInput = {
       userId,
       ...(status && { status }),
       ...(priority && { priority }),
+      /**
+       * Etiquetas del usuario (la relación `labels`, el modelo `Tag`), **no** el
+       * arreglo de texto `tags` que extrae la IA.
+       *
+       * `some` y no `every`: marcar dos etiquetas en un filtro de facetas amplía
+       * la vista. Y no hace falta comprobar de quién son —una etiqueta ajena
+       * simplemente no casa con ninguna tarea de este `userId`—, así que un id
+       * inventado devuelve lista vacía en vez de un 404 que delataría su
+       * existencia.
+       */
+      ...(etiquetas.length ? { labels: { some: { id: { in: etiquetas } } } } : {}),
+      /**
+       * Rango de vencimiento: `dueFrom` incluye, `dueTo` excluye. Filtrar por
+       * fecha deja fuera lo que no la tiene, porque `null` no cae en ningún
+       * rango — y eso es lo correcto: "qué vence esta semana" no incluye lo que
+       * no vence nunca.
+       */
+      ...(dueFrom || dueTo
+        ? {
+            dueDate: {
+              ...(dueFrom ? { gte: new Date(dueFrom) } : {}),
+              ...(dueTo ? { lt: new Date(dueTo) } : {}),
+            },
+          }
+        : {}),
       // `mode: 'insensitive'` es el ILIKE de Postgres. Sin índice adicional:
       // con volúmenes de tablero (miles de filas) el escaneo secuencial es más
       // rápido que mantener un GIN, y `contains` con comodín por delante no

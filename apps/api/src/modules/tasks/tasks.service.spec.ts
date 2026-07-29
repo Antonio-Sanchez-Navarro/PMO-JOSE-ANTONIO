@@ -382,6 +382,88 @@ describe('TasksService.findAll — filtros y búsqueda', () => {
     expect(where()).toEqual({ userId: USER });
   });
 
+  describe('filtro por etiqueta del usuario', () => {
+    it('filtra por la relación labels, no por el arreglo de texto de la IA', async () => {
+      await service.findAll(USER, { tagId: ['tag-1'] } as never);
+
+      // `tags` (texto libre del modelo) y `labels` (el modelo Tag, con color)
+      // son dos cosas distintas: el desplegable de la interfaz se llena de las
+      // segundas.
+      expect(where().labels).toEqual({ some: { id: { in: ['tag-1'] } } });
+      expect(where().tags).toBeUndefined();
+    });
+
+    it('varias etiquetas amplían la vista, no la vacían', async () => {
+      await service.findAll(USER, { tagId: ['tag-1', 'tag-2'] } as never);
+
+      // `some` y no `every`: es lo que hace un filtro de facetas.
+      expect(where().labels).toEqual({ some: { id: { in: ['tag-1', 'tag-2'] } } });
+    });
+
+    it('un id repetido no cambia el resultado ni da 400', async () => {
+      await service.findAll(USER, { tagId: ['tag-1', 'tag-1'] } as never);
+
+      expect(where().labels.some.id.in).toEqual(['tag-1']);
+    });
+
+    it('sin etiquetas no acota por ellas', async () => {
+      await service.findAll(USER, {});
+
+      expect(where().labels).toBeUndefined();
+    });
+  });
+
+  describe('filtro por rango de vencimiento', () => {
+    it('incluye por abajo y excluye por arriba', async () => {
+      await service.findAll(USER, {
+        dueFrom: '2026-08-01T00:00:00.000Z',
+        dueTo: '2026-08-08T00:00:00.000Z',
+      } as never);
+
+      // Exclusivo por arriba para que dos rangos consecutivos no cuenten dos
+      // veces la misma tarea, igual que en el informe de tiempos.
+      expect(where().dueDate).toEqual({
+        gte: new Date('2026-08-01T00:00:00.000Z'),
+        lt: new Date('2026-08-08T00:00:00.000Z'),
+      });
+    });
+
+    it('acepta solo el extremo de abajo', async () => {
+      await service.findAll(USER, { dueFrom: '2026-08-01T00:00:00.000Z' } as never);
+
+      expect(where().dueDate).toEqual({ gte: new Date('2026-08-01T00:00:00.000Z') });
+    });
+
+    it('acepta solo el extremo de arriba', async () => {
+      await service.findAll(USER, { dueTo: '2026-08-08T00:00:00.000Z' } as never);
+
+      expect(where().dueDate).toEqual({ lt: new Date('2026-08-08T00:00:00.000Z') });
+    });
+
+    it('sin rango no acota por fecha: las tareas sin vencimiento siguen saliendo', async () => {
+      await service.findAll(USER, {});
+
+      expect(where().dueDate).toBeUndefined();
+    });
+  });
+
+  it('los filtros se combinan entre sí', async () => {
+    await service.findAll(USER, {
+      status: 'TODO' as never,
+      search: 'obra',
+      tagId: ['tag-1'],
+      dueFrom: '2026-08-01T00:00:00.000Z',
+    } as never);
+
+    expect(where()).toMatchObject({
+      userId: USER,
+      status: 'TODO',
+      labels: { some: { id: { in: ['tag-1'] } } },
+      dueDate: { gte: new Date('2026-08-01T00:00:00.000Z') },
+    });
+    expect(where().OR).toHaveLength(2);
+  });
+
   it('pagina con 0/50 por defecto', async () => {
     await service.findAll(USER, {});
 
