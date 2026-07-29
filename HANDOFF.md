@@ -1,480 +1,238 @@
-# Handoff — Prueba E2E de la cuarentena (para Gravity)
+# Handoff — Sprint 5: Registro de tiempos
 
-> **Estado: TRABAJAR** · puesto por **Doc** el 2026-07-27, vigente el 2026-07-28
-> **Asignado a:** Gravity (cuarentena montada; toca cerrarla con la prueba E2E)
+> **Estado: EN PAUSA** · actualizado por **Claude Code** el 2026-07-29
+> **Asignado a:** Gravity — cronómetro en la tarjeta, entradas manuales y gráfica
 >
-> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el
-> encargo de abajo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún
-> no existe. Doc no tiene acceso al repositorio, así que quien escribe el cambio
-> es el agente que lo tenga a mano; la decisión sigue siendo suya y queda
-> firmada aquí.
+> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe o el sprint ha concluido.
 >
-> **Ya no falta ninguna pieza del backend.** `classify` (`6fd683f`), `to-task`
-> con `tasks[]` (`79c5adf`) y el aviso por socket (`9b65ae6`) están en la rama y
-> verificados contra la app.
-
-**Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí,
-no es un encargo. Cuando te digan "lee tu md", vuelve a este archivo y trabaja
-lo que marque el Estado.
-
-Órdenes de **Doc** del 2026-07-28, redactadas por **Claude Code**. Cierran lo
-que le falta al **Sprint 3** (la tubería de IA); el Sprint 5 sigue siendo
-Registro de Tiempos. Lo anterior quedó al final, bajo "Histórico".
-
-## Lo que pide Doc — en este orden
-
-### 0. 🚨 URGENTE: monta `InboxPage`. Sin eso no hay E2E posible
-
-Encargo de **Doc** el 2026-07-28 ("Bloqueo de Enrutamiento"), con el diagnóstico
-afinado por **Claude Code** contra el código.
-
-**El problema no es una ruta mal configurada.** Doc supuso que `/inbox` estaba
-cayendo en un comodín de React Router; la realidad es más simple y más profunda:
-
-- **`react-router-dom` no está instalado.** No aparece en las dependencias de
-  `apps/web/package.json` ni se importa en ningún archivo. No hay archivo de
-  rutas que revisar: nunca ha habido router.
-- **`InboxPage` no la monta nadie.** Cero importaciones fuera de su propio
-  archivo. `App.tsx` renderiza `<KanbanBoard />` directamente.
-- Por eso `http://localhost:5173/inbox` pinta el tablero: el servidor de Vite
-  sirve el mismo `index.html` para cualquier ruta y la app solo tiene un árbol
-  de componentes.
-
-Resultado: el flujo de IA completo —`classifyEmail` → `AiValidationModal` →
-`createTasksFromEmail`— vive **exclusivamente** dentro de `InboxPage`, y desde
-el navegador **no hay forma de llegar a él**. Al quitar el `TriageSidebar` en
-`6985cc1`, el único acceso que quedaba desapareció.
-
-**Dos formas de arreglarlo. Elige tú, que la UI es tuya:**
-
-1. **Sin dependencia nueva** (lo más rápido): un conmutador en el `Dashboard` de
-   `App.tsx` — dos pestañas, "Bandeja" y "Tablero", con un `useState`. Nada más.
-2. **Con React Router**: instalar `react-router-dom` y declarar las rutas. Ojo:
-   `package.json` es **zona compartida** según `AI_ROLES.md`, así que avisa
-   antes de tocarlo.
-
-**Avísanos en cuanto la bandeja sea alcanzable desde el navegador.**
-
-### 0-bis. Lo que ya está probado, para que no lo repitas
-
-Claude Code ejecutó el 2026-07-28 la mitad de la E2E que sí era alcanzable, con
-tres pestañas reales y el flujo real por HTTP desde el contexto de la pestaña A
-(sus cookies y su `x-socket-id`, igual que haría tu modal):
-
-- `classify` real sobre el correo de Escrituración → 200 con **4 tareas
-  propuestas** por el modelo.
-- Aprobadas 2 de las 4, con un título editado → `to-task` con `force: true` →
-  **201**, `mode: "confirmed"`, ambas `MANUAL`, en `TODO`, posiciones 9 y 10.
-- **La pestaña que confirmó no recibió eco**; las **otras dos pintaron las
-  tarjetas solas, sin recargar**. Al borrarlas, el `task.deleted` las quitó de
-  las demás pestañas.
-- Limpieza hecha: 0 restos en la base y el correo devuelto a su estado.
-
-**Lo único que falta por probar es tuyo**: que la pestaña que confirma pinte las
-tarjetas **desde la respuesta 201** sin duplicarlas. Eso lo hace tu `onConfirm`,
-y no se pudo comprobar porque el modal es inalcanzable. En cuanto montes la
-bandeja, esa es la parte que hay que mirar.
-
-### 1. Commitea lo tuyo antes de probar — ✅ hecho
-
-Doc pidió aislar tu trabajo antes de probar, para que un fallo de la E2E no se
-confundiera con código flotante. Ya está: `d4097a8` (`AiValidationModal.tsx`,
-`KanbanBoard.tsx`, `tasks.api.ts`, `types/index.ts`), commiteado por ti el
-2026-07-28 a las 10:18. El árbol está limpio; se puede probar.
-
-### 2. La prueba E2E la lideras tú
-
-Es puramente visual, así que es tuya. Doc fija el escenario:
-
-- Levanta el entorno (la API y los contenedores ya están corriendo).
-- Abre **dos pestañas** con el tablero.
-- En la **pestaña A**, procesa un correo por el modal de cuarentena y confirma.
-- **Criterio de éxito**: la **A** refleja las tareas nuevas de inmediato —vía la
-  respuesta 201 y **sin duplicarlas**, porque manda `x-socket-id`— y la **B** las
-  pinta sola, en tiempo real, sin recargar.
-
-Reporta el hash del commit y lo que viste en las dos pestañas.
-
-**El primer intento falló, y no fue culpa tuya ni de los sockets.** Salió
-"Error al crear las tareas propuestas" porque el `window.prompt` del botón
-**Test IA Modal** propone por defecto el correo `cmrzlm1lc000hju1mu8rhe83u`,
-que **ya tiene 3 tareas** de una conversión anterior. El endpoint responde
-**409** a propósito: es el guardarraíl contra duplicados. Reproducido contra el
-3000 y por el proxy de Vite, 409 en los dos casos.
-
-Usa un correo sin tareas. Del mismo usuario y limpios a día de hoy:
-
-| Id | Asunto |
-|---|---|
-| `cmrzl7ybd00017po8j7ifuwqx` | Banregio - Transferencia Procesada |
-| `cmrzl7ycl00037po8l5z7d3nz` | Estamos entre las 500 empresas más importantes… |
-| `cmrzl7ycw00057po8qx6ybmdm` | Banregio - Transferencia Procesada |
-
-Con cualquiera de esos la confirmación devuelve 201 y la prueba sí se ve. Ojo:
-cada correo sirve **una vez**; al segundo intento dará 409 con razón.
-
-### 3. Micro-misión de Doc: que el error diga qué pasó
-
-Antes de los badges. `createTasksFromEmail` lanza el mismo `Error` genérico para
-cualquier respuesta no-ok, así que un 409 (correo ya convertido), un 400
-(payload inválido) y un 401 (sesión caída) se ven idénticos en pantalla — por
-eso este fallo costó un rato de investigación. Lee el `statusCode` y el
-`message` del cuerpo:
-
-- **409** → avisar de que ese correo ya fue convertido.
-- **400** / **401** → el error que corresponda.
-
-### 4. Después: badges de prioridad con el origen
-
-En cuanto la E2E pase en verde, tu siguiente encargo (Sprint 4) son los badges
-de prioridad en la tarjeta con el **indicador visual de origen** (`Task.source`,
-que ya viaja en la API), para distinguir de un vistazo lo creado o validado a
-mano (`MANUAL`) de lo que no.
-
-**Falsa alarma que conviene aclarar**: Doc estuvo a punto de encargarte el
-cliente de socket.io del tablero. Ya lo tienes hecho (`c06cb73`, `ae2dceb`,
-`d35e1c8`) y el error fue de Claude Code, que leyó una línea desactualizada de
-`TASKS.md` en vez de mirar tu código. El checklist ya está corregido (`b87b42d`).
-
-## De qué partes — la cuarentena que ya montaste
-
-**Componente de cuarentena (UI).** Un modal o drawer de validación.
-
-- **Flujo**: cuando se reciba el JSON de la IA, el componente se abre
-  automáticamente para que el usuario actúe como *human in the loop*.
-- **Interacción**: revisar, editar el título, cambiar la categoría en un
-  desplegable y aprobar o eliminar las subtareas propuestas antes de
-  confirmarlas y lanzarlas a la base de datos y al tablero.
-
-## Contra qué trabajas
-
-## 🚧 Dos cosas rompen el flujo tras el refactor `6985cc1` + `acc402d`
-
-Comprobadas contra la app, no deducidas. Léelas antes de hacer la E2E, porque
-con el código de ahora no puede pasar.
-
-**1. `InboxPage` analiza con el id equivocado — daría 404 siempre.**
-
-La lista sale de `useInbox` → `GET /gmail/inbox`, que va **en vivo a Google** y
-devuelve el **id de mensaje de Gmail**. `onAnalyze(thread.latest.id)` le pasa
-ese id a `classifyEmail`, pero `classify` y `to-task` esperan el `Email.id` de
-nuestra base. Son dos identificadores distintos del mismo correo:
-
-| | |
-|---|---|
-| `Email.id` (lo que aceptan classify/to-task) | `cmrzl7ycl00037po8l5z7d3nz` |
-| `gmailMessageId` (lo que devuelve `/gmail/inbox`) | `19f95edbf2b0650a` |
-
-Probado: `POST /emails/19f95edbf2b0650a/classify` → **404 "No existe el correo
-19f95edbf2b0650a"**. Este era exactamente el agujero que `GET /emails` vino a
-tapar, y el refactor que quitó el `TriageSidebar` volvió a dejar la vista
-colgada de la lista de Gmail.
-
-**2. `email.tasks` no existe en ningún contrato.**
-
-`InboxPage.tsx:210` hace `Boolean(email.tasks && email.tasks.length > 0)`. Ni
-`EmailSnippet` ni `GET /emails` traen `tasks`. Campos reales que devuelvo:
-`id, subject, from, date, category, taskCount, isConverted`. Así que ese
-`isProcessed` es **siempre false** y el botón nunca se deshabilita. Usa
-`email.isConverted` (o `taskCount > 0`), que es lo que dice el contrato de
-abajo.
-
-**Cómo salir de esto.** La vista de correos debe alimentarse de `GET /emails`,
-no de `/gmail/inbox`: es la única lista cuyos ids sirven y la única que sabe qué
-está convertido.
-
-**Ya no pierdes nada al cambiar de fuente.** `GET /emails` devuelve también
-`threadId` (para agrupar por hilo como hoy), `labels` (para la barra de
-filtros), `snippet` (vista previa) y `gmailMessageId` (por si necesitas casar
-una fila con la lista de Gmail). Comprobado sobre los datos reales: los 26
-correos traen etiquetas y vista previa, y salen 20 hilos distintos. En la
-práctica `useInbox` puede apuntar a `/emails` y `groupByThread` seguir igual.
-
-El cuerpo (`bodyText`) **no** viaja en el listado: son ~8 KB por correo y en una
-página de 50 serían 400 KB para pintar una lista. Los 26 de hoy pesan 14 KB en
-total. Si te hace falta el cuerpo para una vista de detalle, pídemelo y añado
-`GET /emails/:id`.
-
-**Con qué correo probar** (me lo preguntaste). Los ids salen de `GET /emails`,
-nunca de la bandeja de Gmail:
-
-- **Camino "Reprocesar"** — hoy es el único que produce tareas, porque los 13
-  accionables ya están convertidos: `cmrzlm1lc000hju1mu8rhe83u` ("Escrituración
-  Lote 36", 3 tareas). Necesita `force: true`; sin él, 409. Avísame cuando
-  termines y limpio las tareas duplicadas que deje la prueba.
-- **Camino limpio (201 sin `force`)**: `cmrzl7ybd00017po8j7ifuwqx` ("Banregio -
-  Transferencia Procesada"), sin tareas. Es no accionable, así que puede que el
-  modelo proponga pocas tareas o ninguna: eso **no** es un fallo, es el caso
-  `isActionable: false` que el modal debe saber enseñar.
-
-### `GET /emails` — la bandeja de triage · **nuevo, ya en la rama**
-
-Lo que le faltaba a `useTriageEmails`. Devuelve **el arreglo sin envoltorio**
-(como `POST /tasks`), del correo más reciente al más antiguo:
-
-```json
-[
-  {
-    "id": "cmrzm8nhx0001bgaendpebue5",
-    "subject": "Pendientes proyecto Torre Citrotarte",
-    "from": "Astrid Robles <astrid@example.test>",
-    "date": "2026-07-25T00:13:24.584Z",
-    "category": "PROJECT_MANAGEMENT",
-    "taskCount": 3,
-    "isConverted": true,
-    "threadId": "auditoria-thread-001",
-    "labels": ["INBOX", "UNREAD"],
-    "snippet": "Después de la junta de ayer quedaron tres pendientes...",
-    "gmailMessageId": "auditoria-msg-001"
-  }
-]
-```
-
-`id` es el `Email.id` que exigen `classify` y `to-task` — **ya no hace falta
-pegar cuids a mano**, y no es lo mismo que `gmailMessageId`. `date` va en ISO
-para que la formatees tú. `subject` nunca llega vacío: si el correo no lo trae,
-se sustituye por `(sin asunto)` para que no aparezca una fila muda. `snippet`
-llega como cadena vacía cuando falta, no como `null`. `category` sí puede ser
-`null` (correo aún sin clasificar).
-
-`isConverted` sale de **tener tareas**, no de `processedAt`: el worker marca
-como procesado incluso lo que no generó ninguna tarea, así que esa marca no te
-sirve para saber si `to-task` va a darte 409. Es exactamente la condición que
-dispara ese 409, así que con este campo sabes de antemano cuándo hace falta
-`force: true`.
-
-Filtros, todos opcionales: `?actionable=true|false`, `?converted=true|false`,
-`?skip=` y `?take=` (por defecto 50, tope 200). Un valor que no sea `true` ni
-`false` da **400**, no se interpreta por su cuenta. Sin cookie, **401**.
-
-**Ojo, esto cambió a mitad de la tarde del 2026-07-28.** Antes los 13 correos
-accionables estaban todos convertidos y la barra iba a salir entera en modo
-*Reprocesar*. Ya no: **el tablero se vació**. Alguien borró las 26 tarjetas
-desde la interfaz —28 `task.deleted` en el log de la API, una por tarjeta, más
-las 2 de mi prueba— así que ahora mismo **ningún correo tiene tareas**:
-`isConverted` es `false` en los 26 y `?converted=false` los devuelve todos.
-
-Para ti es mejor noticia que la anterior: el camino limpio (**201 sin `force`**)
-ya funciona con cualquier correo accionable, que es el flujo natural que hay que
-enseñar. El de *Reprocesar* solo volverá a aparecer cuando algo vuelva a
-convertir un correo.
-
-### `PATCH /emails/:id/status` — el motor del Inbox Zero · **nuevo**
-
-Lo que le falta a tus botones. Cuerpo obligatorio con un solo campo:
-
-```json
-{ "status": "COMPLETED" }
-```
-
-Vocabulario: `PENDING` · `IN_PROGRESS` · `COMPLETED` · `DISMISSED`. Devuelve
-**200 con el correo ya actualizado, en la misma forma que una fila de
-`GET /emails`**, así que puedes sustituir la fila en tu estado con lo que
-responde en vez de recargar la lista.
-
-- **400** si el estado no está en el vocabulario **o si el cuerpo va vacío**.
-  Mover un correo es una decisión explícita: un `{}` es un error del cliente,
-  no un "déjalo como está".
-- **404** si el correo no es tuyo · **401** sin cookie.
-
-Además, **cada fila del listado ya trae su `status`** y `GET /emails` acepta
-`?status=PENDING`, que es la bandeja de verdad: lo que queda por despachar. Para
-las pestañas, o filtras en el cliente por el campo o pides cada una con su
-`?status=`; las dos valen.
-
-**Descartar un correo no borra las tareas que ya generó.** Son cosas distintas:
-la tarjeta vive en el tablero por su cuenta desde que se creó.
-
-**Ya emite por socket** (antes no; queda corregido aquí). Cada cambio de estado
-sale como **`email.updated`** con el correo entero, la misma forma que una fila
-de `GET /emails`, así que puedes sustituir la tuya sin volver a pedir la lista.
-
-Va por el **mismo socket que ya tienes** —el de `useSocket`—, no por uno nuevo:
-un segundo gateway obligaría a otro handshake y rompería la supresión del eco,
-que depende de que haya un solo socket por pestaña. Basta con añadir el
-`socket.on('email.updated', …)` junto a los cuatro de tareas.
-
-El payload lleva `userId` porque es lo que encamina el evento a la sala de su
-dueño; para pintar, ignóralo igual que haces con las tareas.
-
-Manda tu `X-Socket-Id` en el `PATCH`: quien mueve el correo ya lo tiene en la
-respuesta 200 y el eco solo le haría repintar.
-
-### `GET /emails/:id` — el correo completo, para leerlo · **nuevo**
-
-Lo pidió Doc para que se pueda leer el correo antes de aprobar las tareas. Es la
-contraparte del listado: allí el `bodyText` se excluye por peso, aquí se incluye
-porque es justo lo que se va a leer.
-
-Mismos campos que una fila del listado **más** estos:
-
-| Campo | Qué es |
-|---|---|
-| `bodyText` | El texto completo. **Puede ser `null`** si el correo se guardó sin cuerpo: en ese caso cae al `snippet` en vez de pintar un panel en blanco. Ojo al tamaño: el de Escrituración son **55 688 caracteres**. |
-| `isActionable` | Lo que dijo el modelo al clasificarlo. |
-| `processedAt` | ISO, o `null` si el worker aún no lo ha despachado. |
-| `tasks[]` | Las tareas que **ya** salieron de este correo (`id`, `title`, `status`, `priority`), en el orden del tablero. Sirve para enseñar, al reprocesar, contra qué se compara la propuesta nueva. |
-
-**404** si el correo no existe o es de otra persona · **401** sin cookie.
-
-Verificado contra la app: 200 con el cuerpo completo, 404 con un id inventado,
-401 sin cookie, 200 por el proxy de Vite, y el listado sigue sin traer el cuerpo.
-
-**El panel de lectura conviene que sea desplazable y no un modal ajustado**: hay
-correos de más de 50 KB de texto.
-
-### `POST /emails/:id/classify` — la propuesta, sin crear nada
-
-**Ya existía** desde `6fd683f`; no había que programarlo. Está verificado y es
-el que alimenta tu modal.
-
-Es el que alimenta la cuarentena. Analiza el correo y devuelve lo que
-propondría **sin escribir una sola fila**: ni tareas, ni la marca de procesado
-del correo. Puedes llamarlo tantas veces como quieras (cuesta tokens, eso sí).
-
-- **200** con la propuesta. Es 200 y no 201 porque no nace ningún recurso.
-- **404** si el correo no existe o no es del usuario.
-- **409** si el correo no tiene texto que analizar.
-
-Cuerpo de la respuesta, tipado en `EmailClassification`
-(`packages/shared/src/index.ts`):
+> **El backend del Sprint 5 está terminado y verificado.** Los contratos de abajo
+> son los definitivos; lo que queda del sprint es de interfaz.
+
+**Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
+
+## Antes de nada: dos cosas que arreglé de lo tuyo
+
+**1. El frontend no compilaba.** El cierre del Sprint 4 decía que "todos los
+tests y builds están en verde"; `npm --workspace @pmo/web run build` fallaba con
+dos errores. Los dejé arreglados en `ac32073` para poder seguir:
+
+- `tags.api.ts` importaba `../../../lib/axios`, que no existe — **axios no es
+  dependencia del frontend**. Lo reescribí con `fetch` y `credentials: 'include'`,
+  como el resto de la capa de API. Si querías axios, hay que añadirlo a
+  `package.json`, que es zona compartida y se avisa antes.
+- `AiValidationModal` creaba la tarea nueva con `priority: 'MEDIUM'` en crudo, y
+  `ProposedTask.priority` es el enum `TaskPriority`.
+
+**Mira el build antes de dar un sprint por cerrado**: `npm run build` en la raíz
+compila los tres paquetes.
+
+**2. Las etiquetas se colgaban sin mirar de quién eran.** En
+`emails.service.ts` metiste `tagIds` directo a `connect`. Con un id inventado
+Prisma reventaba dentro de la transacción con un error opaco, y con el id de
+otra persona la etiqueta ajena acababa colgada de la tarea. Corregido en
+`a266111` con la misma comprobación que ya hacía `POST /tasks`
+(`TagsService.resolveIds`, que devuelve **400** diciendo qué ids fallan).
+
+Ahí va también algo que te sirve: **las tarjetas creadas desde la cuarentena
+vuelven con sus `labels`**, igual que las de `POST /tasks`. Antes la respuesta
+201 y el `task.created` llegaban sin los colores que la persona acababa de
+elegir.
+
+Y recuerda **`modules/emails/` es de Claude** (excepción escrita en
+`AI_ROLES.md`): si necesitas otro campo, pídelo en vez de tocarlo.
+
+---
+
+## Lo que ya está hecho del Sprint 5 (backend)
+
+El módulo que empezaste (`modules/time/`) lo completé y lo endurecí, **sin
+cambiarte las rutas**: `POST /time/:taskId/start` y `POST /time/:taskId/stop`
+siguen siendo las que llama tu `time.api.ts`. Lo que cambió por dentro:
+
+- **Un solo cronómetro por persona lo arbitra la base**, no un `findFirst`. Hay
+  una columna centinela `TimeEntry.activeFor` con índice único: lleva el
+  `userId` mientras el fichaje corre y `null` cuando se cierra. Dos pestañas
+  pulsando play a la vez pasaban las dos por la comprobación y acababan con dos
+  relojes contando; ahora la segunda recibe **409**. _Verificado contra Postgres:
+  el segundo insert activo lo rechaza el índice y los cerrados no molestan._
+- **Los eventos salen por el gateway** (`emitTimeStarted` / `emitTimeStopped` /
+  `emitTimeDeleted`) y no por `gateway.server.to(...)` a pelo. Así respetan el
+  `X-Socket-Id` igual que las tareas y los correos, dejan rastro en el log y no
+  tumban la petición HTTP si el socket falla.
+- **El cambio de tarea es atómico**: cerrar el anterior y abrir el nuevo van en
+  la misma transacción. Sueltos, un fallo en medio dejaba el tiempo anterior
+  contando sobre una tarea que ya nadie mira.
+- **Play sobre la tarea que ya corría devuelve el fichaje que había**, no abre
+  otro: el doble clic no parte el tramo en dos.
+
+### El contrato, endpoint por endpoint
+
+Todo bajo `/time`, todo con cookie de sesión (**401** sin ella) y todo
+respetando `X-Socket-Id` — mándalo siempre, que ya tienes la respuesta y el eco
+solo te haría repintar.
+
+Un `TimeEntry` se ve así (con su tarea dentro, para que puedas pintar sin
+cruzar nada):
 
 ```json
 {
-  "emailId": "cmrzlm1lc000hju1mu8rhe83u",
-  "category": "PROJECT_MANAGEMENT",
-  "isActionable": true,
-  "aiConfidence": 0.92,
-  "tasks": [
-    {
-      "title": "Confirmar respuesta del área contable sobre el Tipo de Cambio",
-      "description": "…",
-      "priority": "URGENT",
-      "tags": ["TC", "impuestos", "notaría"],
-      "dueDate": null
-    }
-  ]
+  "id": "cmt...",
+  "taskId": "cmr...",
+  "userId": "cmr...",
+  "startedAt": "2026-07-29T10:00:00.000Z",
+  "endedAt": null,
+  "durationSec": null,
+  "note": null,
+  "activeFor": "cmr...",
+  "task": { "id": "cmr...", "title": "Escrituración Lote 36" }
 }
 ```
 
-Las tareas propuestas **no traen `id`**: todavía no existen. La `priority` ya
-viene pasada por la capa determinista, así que es la que se guardaría de verdad
-— píntala tal cual y no la recalcules.
+`endedAt` y `durationSec` son `null` **mientras corre**; al pararlo se rellenan
+los dos. `activeFor` es fontanería nuestra: ignóralo para pintar.
 
-Si `isActionable` es `false`, `tasks` viene vacío y no se fuerza nada: el modelo
-no vio trabajo ahí. Enseña ese caso en vez de inventar una tarjeta.
-
-### Corrección importante sobre las categorías
-
-En la versión anterior de este archivo te dije que el desplegable saliera de
-`EmailCategory` con los valores `cliente`, `interno`, `proveedor`,
-`administrativo` y `spam`. **Eso era falso** y venía de un enum del Sprint 0 que
-no importaba nadie y que no coincidía con lo que el backend produce. Ya está
-corregido en `packages/shared`. Los valores reales son:
-
-`PROJECT_MANAGEMENT` · `INVOICING` · `MEETING` · `INFORMATIONAL` · `OTHER`
-
-Una categoría fuera de esa lista degrada a `OTHER` en el backend, así que el
-desplegable puede asumir esos cinco y nada más. La misma corrección afecta al
-resto de `EmailClassification`: el `summary` que declaraba no lo produce el
-modelo, y la confianza es una sola por análisis (`aiConfidence`), no una por
-tarea.
-
-### `POST /emails/:id/to-task` — el paso que sí crea
-
-**Ya acepta las tareas editadas.** El botón de Confirmar puede dejar de apuntar
-a un stub. Manda en el cuerpo lo que el usuario aprobó:
-
-```json
-{
-  "category": "INVOICING",
-  "tasks": [
-    {
-      "title": "Remitir KYC con las correcciones",
-      "description": "…",
-      "priority": "HIGH",
-      "tags": ["KYC"],
-      "dueDate": "2026-08-10T00:00:00.000Z"
-    }
-  ]
-}
-```
-
-- **201** con las tareas creadas, ya con `id`. Píntalas con lo que devuelve el
-  servidor.
-- **400** si una prioridad o una categoría no está en su vocabulario, o si una
-  tarea viene sin `title`.
-- **404** si el correo no es del usuario · **409** si ya tenía tareas
-  (`"force": true` para insistir).
+| Verbo y ruta | Qué hace |
+|---|---|
+| `POST /time/:taskId/start` | **201** con el fichaje. Cuerpo opcional `{ "note": "…" }`. Si ya corría sobre esa tarea devuelve el mismo; si corría sobre otra, la cierra y abre esta. **404** si la tarea no es tuya · **409** si otra pestaña ganó la carrera |
+| `POST /time/:taskId/stop` | **200** con el fichaje cerrado. **409** si esa tarea no tenía ninguno en marcha |
+| `POST /time/stop` | Igual, pero detiene **el que esté corriendo**, sea de la tarea que sea. Es el botón global de "parar" |
+| `GET /time/active` | El fichaje en marcha o **`null`**. Pídelo al montar: recargar la página no debería perder de vista un reloj que sigue corriendo en la base |
+| `GET /time/entries` | Los fichajes, del más reciente al más antiguo. Filtros: `?taskId=`, `?from=`, `?to=`, `?skip=`, `?take=` (50 por defecto, tope 200) |
+| `POST /time/entries` | Tramo apuntado a mano: `{ taskId, startedAt, endedAt, note? }`, las dos fechas en ISO. **201**. Nace cerrado, así que no interfiere con el cronómetro |
+| `PATCH /time/entries/:id` | Corrige `startedAt`, `endedAt` o `note`. **200** con el fichaje ya recalculado |
+| `DELETE /time/entries/:id` | **204** sin cuerpo |
+| `GET /time/report` | Sumas. `?groupBy=task\|day\|week` (por defecto `task`), `?from=`, `?to=` |
 
 Detalles que te ahorran sorpresas:
 
-- Solo `title` y `priority` son obligatorios en cada tarea. `category` es
-  opcional: **mándala solo si el usuario la cambió**, porque si va, pisa la que
-  tenía el correo.
-- Un `tasks[]` **vacío no vale** como confirmación: si el usuario descarta todo,
-  no llames a este endpoint. Un arreglo vacío cae a la vía antigua y acabarías
-  creando una tarea que nadie aprobó.
-- Las tareas confirmadas se guardan con `source: MANUAL`, aunque las propusiera
-  el modelo: las aprobó una persona y así el reproceso del worker no las borra.
-- Se anexan al final de **Por hacer**, no al principio.
-- El correo queda marcado como procesado en la misma transacción.
+- **400** si un tramo acaba antes de empezar (o en el mismo instante), y **400**
+  si el `PATCH` va sin ningún campo: corregir un fichaje es una decisión
+  explícita.
+- **`taskId` no se puede cambiar** en el `PATCH`. Mover un tramo de una tarea a
+  otra falsearía el informe de las dos; para eso se borra y se apunta donde toca.
+- Poner `endedAt` con el `PATCH` sobre el fichaje **que está corriendo lo cierra
+  de verdad** — libera el centinela y calcula la duración. Es el caso de "me
+  olvidé de pararlo ayer".
+- Los rangos `from`/`to` son **cerrados por abajo y abiertos por arriba**, para
+  que dos rangos consecutivos no cuenten dos veces el mismo tramo.
 
-**Ya emite por socket** (antes no lo hacía; queda corregido aquí). Cada tarjeta
-creada sale como un `task.created` con la tarea completa —el mismo evento y el
-mismo formato que `POST /tasks`, así que el cliente no tiene que aprender nada
-nuevo— y las demás pestañas del usuario ven aparecer las tarjetas sin recargar.
+El informe responde así:
 
-Manda tu `X-Socket-Id` en la confirmación, igual que en el resto del tablero:
-las tareas ya te llegan en la respuesta 201 y sin la cabecera las pintarías dos
-veces, una por la respuesta y otra por el eco. Recuerda que el `socket.id`
-cambia en cada reconexión, así que léelo en el momento de la petición.
+```json
+{
+  "groupBy": "task",
+  "from": null,
+  "to": null,
+  "totalSec": 4200,
+  "rows": [
+    { "key": "cmr...", "label": "Escrituración Lote 36", "seconds": 3600 },
+    { "key": "cmr...", "label": "Remitir KYC", "seconds": 600 }
+  ]
+}
+```
 
-Verificado contra la app con dos pestañas del mismo usuario: la que confirmó
-mandando la cabecera no recibió nada y la otra vio aparecer las dos tarjetas;
-sin cabecera llegaron a las dos. Un correo ya convertido responde 409 y no
-emite nada, así que un reintento no te ensucia el tablero.
+Con `groupBy=task` el `key` es el id de la tarea y el `label` su título, ya
+ordenado de más a menos tiempo. Con `day` o `week`, los dos son la fecha en
+`YYYY-MM-DD` (en semanas, el lunes), en orden cronológico. `rows` está pensado
+para entrar tal cual en la gráfica.
 
-Las tareas del flujo están en `TASKS.md`, dentro del Sprint 3.
+**Dos avisos sobre los números**:
+
+1. **El informe solo cuenta fichajes cerrados.** El que está corriendo aún no
+   tiene duración, y estimarla haría que dos lecturas seguidas del mismo informe
+   dieran cifras distintas. Si quieres enseñar "lo de hoy incluyendo lo que va
+   corriendo", suma en el cliente el reloj vivo, que ya tienes en
+   `GET /time/active`.
+2. **Los días y las semanas se cortan en UTC**, que es como Postgres guarda las
+   marcas. Con husos alejados, un tramo de última hora puede caer en el día
+   siguiente. Si el dashboard necesita el huso local, pídemelo: se pasa la zona
+   como parámetro, no se reinterpreta en el cliente.
+
+### Eventos de socket — por el que ya tienes
+
+Van por el **mismo socket** de `useSocket`, como `email.updated`:
+
+| Evento | Cuándo |
+|---|---|
+| `time.started` | Arrancó un cronómetro |
+| `time.stopped` | Se detuvo, o se apuntó o corrigió un tramo a mano |
+| `time.deleted` | `{ id, taskId, userId }` — se borró un fichaje: resta ese tramo del total de la tarjeta |
+
+`time.started` y `time.stopped` llevan el fichaje entero, con su `task` dentro.
+Ojo con un caso que sí verás: **cambiar de tarea emite los dos**, primero el
+`time.stopped` del anterior y luego el `time.started` del nuevo.
+
+---
+
+## Lo que falta del Sprint 5 — tuyo
+
+1. **Terminar el cronómetro de la tarjeta.** Ya pintas el reloj con
+   `totalTimeSec`, `activeTimeEntryId` y `activeTimeStartedAt`, que `GET /tasks`
+   manda por tarjeta. Falta que:
+   - la tarjeta se entere por socket de los tres eventos de arriba, y no solo de
+     la respuesta HTTP;
+   - al montar se pida `GET /time/active`, para que una recarga no pierda el
+     reloj;
+   - el 409 se enseñe con su mensaje (léelo del cuerpo, como hiciste con el de
+     `to-task`), aunque con el cambio de tarea automático es difícil de provocar.
+
+2. **Interfaz de entradas manuales.** `POST /time/entries`,
+   `PATCH /time/entries/:id` y `DELETE /time/entries/:id` están listos. La lista
+   por tarea sale de `GET /time/entries?taskId=…`.
+
+3. **Gráfica de tiempos (Recharts).** `GET /time/report` te da `rows` listo. Ojo:
+   **Recharts no está instalado** y `package.json` es zona compartida — avisa
+   antes de añadirlo.
+
+4. **La prueba E2E de las dos pestañas sigue pendiente desde el Sprint 4.** Es
+   visual, así que es tuya. Ahora que la bandeja es alcanzable, el criterio no ha
+   cambiado: la pestaña A pinta las tarjetas nuevas **desde la respuesta 201 y
+   sin duplicarlas** (porque manda `X-Socket-Id`), y la B las ve aparecer sola.
+   Reporta el hash del commit y lo que viste en cada pestaña.
+
+---
+
+## Nota de coordinación — chocamos en `apps/api` esta mañana
+
+Mientras yo escribía el módulo de tiempos, tú escribías otro con el mismo nombre
+y en la misma carpeta. No se perdió nada, pero fue por poco: **`modules/time/`
+era backend, o sea dominio mío**, igual que `emails/`.
+
+Lo que hice fue quedarme con **tus rutas** y reescribir la implementación, para
+no romper el `time.api.ts` que ya tenías escrito. Tu `GET /tasks` con
+`totalTimeSec` se queda como está; le añadí las pruebas que le faltaban (dos
+tarjetas del `findAll` se caían con `task.timeEntries is not iterable`).
+
+Para la próxima: si el backend te bloquea, **pídelo aquí** en vez de escribirlo.
+Es más rápido que deshacer un choque.
+
+---
+
+## Estado del repo
+
+- `280 pruebas en 9 suites`, todas en verde. Build de los tres paquetes, en verde.
+- Migración `20260729153000_add_time_tracking` aplicada.
+- La API y Vite están levantados. Recuerda: **un solo `dev:api` a la vez**
+  (ver `AI_ROLES.md`, notas de operación).
 
 ---
 
 # Histórico
 
-## Sprint 2 — Inbox (entregado)
+## Sprint 4 — cerrado el 2026-07-29
 
-Endpoints que se consumieron y siguen vigentes:
+Etiquetas del usuario (`Tag` + `TagManagerModal`), cuarentena de IA con edición
+completa, máquina de estados de correos (Inbox Zero) y tarjetas que pintan las
+etiquetas de la persona junto a las que extrae el modelo.
 
-### `GET /auth/me`
-- **Autenticación**: cookie `pmo_session` (la gestiona el navegador).
-- **Respuesta (200)**: `{ id, email, name, role, hasGoogleTokens }`.
+Contratos que siguen vigentes y no se repiten aquí: `GET /emails`,
+`GET /emails/:id`, `PATCH /emails/:id/status`, `POST /emails/:id/classify`,
+`POST /emails/:id/to-task`, `GET`/`POST /tags`, `GET /auth/me` y
+`GET /gmail/inbox`. Están en el histórico de este archivo en git
+(`git show 7232c17:HANDOFF.md`) y en `TASKS.md`, sprint por sprint.
 
-Esquema de sesión vigente: **dos** cookies httpOnly con `path: "/"`.
-
-| Cookie | Contenido | Vigencia |
-|---|---|---|
-| `pmo_session` | JWT de acceso (`typ: "access"`) | 15 min |
-| `pmo_refresh` | JWT de refresco (`typ: "refresh"`) | 30 días |
-
-Cuando el acceso expira la API responde 401 y el frontend renueva con
-`POST /auth/refresh`; `POST /auth/logout` borra ambas. El claim `typ` impide que
-un refresh se use como token de acceso.
-
-### `GET /gmail/inbox`
-- **Query**: `?maxResults=20` (por defecto 20).
-- **Autenticación**: cookie `pmo_session` (peticiones con `credentials: 'include'`).
-- **Contrato interno**: el `AuthGuard` deja el usuario en `req.user` como
-  `{ userId, email }` — usa `user.userId`, **no** `user.id` (ver `auth.types.ts`).
-- **Respuesta (200)**: array de `EmailSnippet`
-  (`{ id, threadId, snippet, from, subject, date }`).
-
-Entregado: `apps/web/src/features/inbox/` — `InboxPage` + hook `useInbox`, con
-agrupación por `threadId` y estados de carga / error / vacío.
-
-**Refresco de tokens centralizado**: la lógica vive solo en
-`AuthService.getAuthorizedClient(userId)`. Si hace falta llamar a otra API de
-Google, usar ese método en lugar de construir un `OAuth2Client` propio.
-
-**Nota de tipos**: `googleapis-common` ancla su propia copia de
-`google-auth-library`, así que pasar nuestro `OAuth2Client` a `google.gmail()`
-exige un cast acotado. Está documentado en `gmail.service.ts`.
+**Esquema de sesión** (vigente desde el Sprint 1): dos cookies httpOnly con
+`path: "/"` — `pmo_session` (JWT de acceso, 15 min) y `pmo_refresh` (JWT de
+refresco, 30 días). Ante un 401 el frontend renueva con `POST /auth/refresh`;
+`POST /auth/logout` borra las dos. El claim `typ` impide que un refresco se use
+como token de acceso, y el socket exige `typ: access` en su handshake.
