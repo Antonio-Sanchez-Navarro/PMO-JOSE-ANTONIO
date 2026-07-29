@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpException,
   HttpStatus,
   Logger,
+  Param,
   Post,
   Res,
   UseGuards,
@@ -16,6 +18,7 @@ import type { Response } from 'express';
 import { CopilotService } from './copilot.service';
 import { StartChatDto } from './dto/start-chat.dto';
 import { SendEmailDto } from './dto/send-email.dto';
+import { ChatThreadsService } from './threads/chat-threads.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserContext } from '../auth/auth.types';
@@ -56,12 +59,34 @@ const EVENTO_POR_TIPO: Record<string, string> = {
 export class CopilotController {
   private readonly logger = new Logger(CopilotController.name);
 
-  constructor(private readonly copilot: CopilotService) {}
+  constructor(
+    private readonly copilot: CopilotService,
+    private readonly threadsService: ChatThreadsService,
+  ) {}
 
   /** Qué proveedores puede ofrecer esta instalación, para pintar el selector. */
   @Get('providers')
   providers() {
     return this.copilot.providers();
+  }
+
+  /** Las conversaciones del usuario, de la más reciente a la más antigua. */
+  @Get('threads')
+  threads(@CurrentUser() user: CurrentUserContext) {
+    return this.threadsService.list(user.userId);
+  }
+
+  /** Una conversación con todos sus mensajes, para reabrirla en el panel. */
+  @Get('threads/:id')
+  thread(@CurrentUser() user: CurrentUserContext, @Param('id') id: string) {
+    return this.threadsService.findOne(user.userId, id);
+  }
+
+  /** Borra una conversación y sus mensajes. 204 sin cuerpo. */
+  @Delete('threads/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  removeThread(@CurrentUser() user: CurrentUserContext, @Param('id') id: string) {
+    return this.threadsService.remove(user.userId, id);
   }
 
   /**
@@ -141,14 +166,10 @@ export class CopilotController {
     const abort = new AbortController();
     res.on('close', () => abort.abort());
 
-    let stream: AsyncIterable<unknown>;
-    try {
-      stream = this.copilot.chat(user.userId, dto, abort.signal);
-    } catch (error) {
-      // Todavía no se ha escrito nada: esto puede salir como un error HTTP de
-      // los de siempre, con su código y su cuerpo.
-      throw error;
-    }
+    // Se espera aquí a propósito: `chat` resuelve el proveedor, el hilo y el
+    // contexto **antes** de devolver el iterable, así que un 503 o un 404 sale
+    // como error HTTP normal. Todavía no se ha escrito ninguna cabecera.
+    const stream = await this.copilot.chat(user.userId, dto, abort.signal);
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',

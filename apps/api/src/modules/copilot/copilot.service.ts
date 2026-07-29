@@ -4,6 +4,8 @@ import { LlmChunk, LlmMessage } from './llm/llm.types';
 import { StartChatDto } from './dto/start-chat.dto';
 import { SendEmailDto } from './dto/send-email.dto';
 import { EMAIL_SENDER, EmailSender, SendResult } from './email/email-sender';
+import { ChatThreadsService } from './threads/chat-threads.service';
+import { CopilotContextService } from './context/copilot-context.service';
 
 /**
  * Instrucciones de sistema del copiloto.
@@ -37,6 +39,8 @@ export class CopilotService {
   constructor(
     private readonly factory: LlmFactory,
     @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
+    private readonly threads: ChatThreadsService,
+    private readonly context: CopilotContextService,
   ) {}
 
   /**
@@ -48,24 +52,87 @@ export class CopilotService {
    * del generador, el fallo no aparecería hasta el primer `next()`, con las
    * cabeceras SSE ya enviadas.
    */
-  chat(userId: string, dto: StartChatDto, signal?: AbortSignal): AsyncIterable<LlmChunk> {
+  async chat(
+    userId: string,
+    dto: StartChatDto,
+    signal?: AbortSignal,
+  ): Promise<AsyncIterable<LlmChunk>> {
     const strategy = this.factory.get(dto.provider);
 
+    // Todo lo que puede fallar se resuelve **antes** de devolver el iterable:
+    // el 503 del proveedor, el 404 del hilo ajeno y el 404 del contexto que no
+    // es suyo. Dentro del generador ya no habría forma de responder con un
+    // código: el controlador habría mandado las cabeceras SSE.
+    const thread = await this.threads.resolve(userId, dto.threadId, dto.message);
+    const [history, contexto] = await Promise.all([
+      this.threads.history(thread.id),
+      this.context.build(userId, dto.context),
+    ]);
+
+    const model = strategy.modelFor(dto.tier);
     this.logger.log(
-      `Copiloto: ${dto.provider}/${dto.tier} → ${strategy.modelFor(dto.tier)}` +
-        (dto.threadId ? ` (hilo ${dto.threadId})` : ''),
+      `Copiloto: ${dto.provider}/${dto.tier} → ${model} (hilo ${thread.id}, ${history.length} turnos previos)`,
     );
 
-    // Un turno suelto mientras no exista la persistencia de hilos. Cuando
-    // llegue, aquí se leerá el historial de `threadId` y se antepondrá.
-    const messages: LlmMessage[] = [{ role: 'user', content: dto.message }];
+    const messages: LlmMessage[] = [...history, { role: 'user', content: dto.message }];
 
-    return strategy.stream({
-      system: SYSTEM_PROMPT,
-      messages,
-      tier: dto.tier,
-      signal,
-    });
+    return this.run(
+      strategy.stream({ system: SYSTEM_PROMPT + contexto, messages, tier: dto.tier, signal }),
+      { threadId: thread.id, userMessage: dto.message, provider: dto.provider, model },
+    );
+  }
+
+  /**
+   * Envuelve el stream del proveedor para guardar el turno cuando termina.
+   *
+   * El texto se va acumulando según sale hacia el cliente —no se retiene nada—
+   * y se persiste al final, cuando ya está completo. Guardar por trozos
+   * escribiría en la base una vez por token.
+   *
+   * El `threadId` se añade al evento de cierre porque el cliente lo necesita
+   * para el turno siguiente y en una conversación nueva no lo conoce todavía.
+   *
+   * Si el cliente corta a media respuesta, el `finally` guarda **lo que se
+   * alcanzó a decir**: perderlo dejaría el hilo con una pregunta sin respuesta,
+   * que al rehidratarlo el modelo leería como que se quedó callado.
+   */
+  private async *run(
+    stream: AsyncIterable<LlmChunk>,
+    turno: { threadId: string; userMessage: string; provider: string; model: string },
+  ): AsyncIterable<LlmChunk> {
+    let respuesta = '';
+    let guardado = false;
+
+    const guardar = async () => {
+      if (guardado) return;
+      guardado = true;
+
+      try {
+        await this.threads.saveTurn(turno.threadId, turno.userMessage, {
+          content: respuesta,
+          provider: turno.provider,
+          model: turno.model,
+        });
+      } catch (error) {
+        // No se propaga: la respuesta ya la recibió el usuario y tumbar el
+        // stream por un fallo al archivar sería cambiar un problema pequeño
+        // por uno visible.
+        this.logger.error(
+          `No se pudo guardar el turno del hilo ${turno.threadId}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
+    };
+
+    try {
+      for await (const chunk of stream) {
+        if (chunk.type === 'text') respuesta += chunk.text;
+
+        yield chunk.type === 'done' ? { ...chunk, threadId: turno.threadId } : chunk;
+      }
+    } finally {
+      await guardar();
+    }
   }
 
   /** Qué proveedores puede ofrecer esta instalación. */

@@ -58,6 +58,73 @@ model User {
   tasks          Task[]
   timeEntries    TimeEntry[]
   tags           Tag[]
+  chatThreads    ChatThread[]
+  copilotAudit   CopilotAuditLog[]
+}
+
+/// Quién dijo cada cosa en una conversación con el copiloto.
+enum ChatRole {
+  USER
+  ASSISTANT
+}
+
+/// Una conversación con el copiloto (Sprint 6).
+///
+/// El hilo guarda **con qué se habló** además de los mensajes: cambiar de
+/// proveedor o de nivel a mitad de conversación es legítimo —empezar en `light`
+/// y subir a `pro` cuando la cosa se pone seria— y sin este registro no habría
+/// forma de saber quién escribió cada respuesta al releerla.
+model ChatThread {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id])
+  /// Se compone del primer mensaje; es lo que se pinta en la lista de hilos.
+  title     String
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+  /// Se toca en cada turno: la lista se ordena por conversación reciente, no por creación.
+  updatedAt DateTime      @updatedAt
+
+  /// La lista del panel pregunta siempre "mis hilos, del más reciente al más antiguo".
+  @@index([userId, updatedAt])
+}
+
+model ChatMessage {
+  id        String     @id @default(cuid())
+  threadId  String
+  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role      ChatRole
+  content   String
+  /// Con qué se generó la respuesta. `null` en los mensajes del usuario.
+  provider  String?
+  model     String?
+  createdAt DateTime   @default(now())
+
+  /// Se leen siempre en orden, para rehidratar la conversación.
+  @@index([threadId, createdAt])
+}
+
+/// Rastro de lo que el copiloto hizo de verdad (Sprint 6, nombrado por Doc).
+///
+/// No es el log del proceso: eso se rota y se pierde. Esto responde meses
+/// después a "quién mandó ese correo y qué decía", que es la pregunta que
+/// aparece cuando algo sale mal — y la razón por la que importa está en las
+/// acciones que salen hacia afuera o destruyen algo.
+model CopilotAuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  /// Qué herramienta o acción: `draft_email`, `create_task`, `send_email`…
+  toolName  String
+  /// Los argumentos con los que se ejecutó, tal cual llegaron.
+  arguments Json
+  /// Qué salió: el id del correo enviado, el de la tarea creada, o el error.
+  result    Json?
+  /// `false` cuando la acción falló; el motivo va en `result`.
+  ok        Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model Email {

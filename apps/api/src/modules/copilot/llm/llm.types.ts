@@ -62,8 +62,19 @@ export type LlmChunk =
    * confiar en su forma sin defenderse de lo que devolvió el modelo.
    */
   | { type: 'tool_call'; toolName: string; payload: unknown }
-  /** Cierre limpio: el modelo terminó y estos son los contadores de la llamada. */
-  | { type: 'done'; model: string; usage?: { inputTokens: number; outputTokens: number } };
+  /**
+   * Cierre limpio: el modelo terminó y estos son los contadores de la llamada.
+   *
+   * `threadId` lo añade el servicio, no el proveedor: el cliente lo necesita
+   * para el turno siguiente y en una conversación nueva no lo conoce hasta que
+   * el backend la crea.
+   */
+  | {
+      type: 'done';
+      model: string;
+      usage?: { inputTokens: number; outputTokens: number };
+      threadId?: string;
+    };
 
 /**
  * La estrategia: lo que tiene que saber hacer un proveedor para servir al

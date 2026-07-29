@@ -1,4 +1,9 @@
-import { BadGatewayException, ServiceUnavailableException, ValidationPipe } from '@nestjs/common';
+import {
+  BadGatewayException,
+  NotFoundException,
+  ServiceUnavailableException,
+  ValidationPipe,
+} from '@nestjs/common';
 import { SendEmailDto } from './dto/send-email.dto';
 import { buildRawMessage, encodeHeader } from './email/mime';
 import { MockSender } from './email/email-sender';
@@ -176,7 +181,8 @@ describe('POST /copilot/emails/send', () => {
     body: 'Cuerpo',
   } as never;
 
-  const servicio = (send: jest.Mock) => new CopilotService(new LlmFactory([]), { send } as never);
+  const servicio = (send: jest.Mock) =>
+    new CopilotService(new LlmFactory([]), { send } as never, hilos(), sinContexto());
 
   it('devuelve lo que responde el transporte', async () => {
     const send = jest.fn().mockResolvedValue({ id: 'msg-1', threadId: 'hilo-1', transport: 'gmail' });
@@ -544,17 +550,26 @@ describe('LlmFactory — elegir proveedor', () => {
 /** Emisor de correo de mentira: estas pruebas son del chat, no del envío. */
 const SIN_CORREO = { send: jest.fn() } as never;
 
+/** Hilos y contexto de mentira. Cada prueba que los mire se los redefine. */
+const hilos = () =>
+  ({
+    resolve: jest.fn().mockResolvedValue({ id: 'hilo-1', title: 'x' }),
+    history: jest.fn().mockResolvedValue([]),
+    saveTurn: jest.fn().mockResolvedValue(undefined),
+  }) as never;
+const sinContexto = () => ({ build: jest.fn().mockResolvedValue('') }) as never;
+
 describe('CopilotService', () => {
-  it('el proveedor no configurado falla en la llamada, antes de abrir el stream', () => {
+  it('el proveedor no configurado falla en la llamada, antes de abrir el stream', async () => {
     const factory = new LlmFactory([estrategia(LlmProvider.GOOGLE, false)]);
-    const service = new CopilotService(factory, SIN_CORREO);
+    const service = new CopilotService(factory, SIN_CORREO, hilos(), sinContexto());
 
     // Si el 503 saliera dentro del generador, el controlador ya habría mandado
     // las cabeceras SSE y el cliente vería una respuesta cortada en vez de un
     // error con su código.
-    expect(() =>
+    await expect(
       service.chat('user-1', { ...CUERPO_MINIMO, provider: LlmProvider.GOOGLE }),
-    ).toThrow(ServiceUnavailableException);
+    ).rejects.toThrow(ServiceUnavailableException);
   });
 
   it('pasa el nivel y el mensaje a la estrategia, con las instrucciones de sistema delante', async () => {
@@ -562,10 +577,15 @@ describe('CopilotService', () => {
       yield { type: 'text', text: 'hola' } as LlmChunk;
     })());
     const anthropic = { ...estrategia(LlmProvider.ANTHROPIC), stream };
-    const service = new CopilotService(new LlmFactory([anthropic]), SIN_CORREO);
+    const service = new CopilotService(
+      new LlmFactory([anthropic]),
+      SIN_CORREO,
+      hilos(),
+      sinContexto(),
+    );
 
     const trozos: LlmChunk[] = [];
-    for await (const chunk of service.chat('user-1', CUERPO_MINIMO)) {
+    for await (const chunk of await service.chat('user-1', CUERPO_MINIMO)) {
       trozos.push(chunk);
     }
 
@@ -576,15 +596,162 @@ describe('CopilotService', () => {
     expect(trozos).toEqual([{ type: 'text', text: 'hola' }]);
   });
 
+  /** Un servicio con estrategia controlable, para mirar qué recibe el modelo. */
+  function conHilos(
+    threads: Record<string, jest.Mock>,
+    context: Record<string, jest.Mock> = { build: jest.fn().mockResolvedValue('') },
+    trozos: LlmChunk[] = [{ type: 'text', text: 'hola' }],
+  ) {
+    const stream = jest.fn().mockReturnValue((async function* () {
+      for (const t of trozos) yield t;
+    })());
+
+    const service = new CopilotService(
+      new LlmFactory([{ ...estrategia(LlmProvider.ANTHROPIC), stream }]),
+      SIN_CORREO,
+      threads as never,
+      context as never,
+    );
+
+    return { service, stream };
+  }
+
+  const HILOS_BASE = () => ({
+    resolve: jest.fn().mockResolvedValue({ id: 'hilo-1', title: 'x' }),
+    history: jest.fn().mockResolvedValue([]),
+    saveTurn: jest.fn().mockResolvedValue(undefined),
+  });
+
+  const consumir = async (iterable: AsyncIterable<LlmChunk>) => {
+    const trozos: LlmChunk[] = [];
+    for await (const chunk of iterable) trozos.push(chunk);
+    return trozos;
+  };
+
+  describe('persistencia de hilos', () => {
+    it('antepone el historial al mensaje nuevo', async () => {
+      const threads = HILOS_BASE();
+      threads.history.mockResolvedValue([
+        { role: 'user', content: '¿de quién era el correo?' },
+        { role: 'assistant', content: 'De Astrid.' },
+      ]);
+      const { service, stream } = conHilos(threads);
+
+      await consumir(await service.chat('user-1', CUERPO_MINIMO));
+
+      // Sin esto, "¿y ese correo de quién era?" no se puede responder: cada
+      // turno empezaría de cero.
+      expect(stream.mock.calls[0][0].messages).toEqual([
+        { role: 'user', content: '¿de quién era el correo?' },
+        { role: 'assistant', content: 'De Astrid.' },
+        { role: 'user', content: CUERPO_MINIMO.message },
+      ]);
+    });
+
+    it('guarda el turno al terminar, con el texto completo', async () => {
+      const threads = HILOS_BASE();
+      const { service } = conHilos(threads, undefined, [
+        { type: 'text', text: 'Según ' },
+        { type: 'text', text: 'el correo' },
+        { type: 'done', model: 'claude-opus-5' },
+      ]);
+
+      await consumir(await service.chat('user-1', CUERPO_MINIMO));
+
+      expect(threads.saveTurn).toHaveBeenCalledWith(
+        'hilo-1',
+        CUERPO_MINIMO.message,
+        expect.objectContaining({ content: 'Según el correo', model: 'modelo-de-prueba' }),
+      );
+    });
+
+    it('el threadId viaja en el cierre: en una conversación nueva el cliente no lo sabe', async () => {
+      const { service } = conHilos(HILOS_BASE(), undefined, [
+        { type: 'done', model: 'claude-opus-5' },
+      ]);
+
+      const trozos = await consumir(await service.chat('user-1', CUERPO_MINIMO));
+
+      expect(trozos.at(-1)).toMatchObject({ type: 'done', threadId: 'hilo-1' });
+    });
+
+    it('si el cliente corta a media respuesta se guarda lo que se alcanzó a decir', async () => {
+      const threads = HILOS_BASE();
+      const { service } = conHilos(threads, undefined, [
+        { type: 'text', text: 'media res' },
+        { type: 'text', text: 'puesta' },
+      ]);
+
+      // Cortar el bucle es lo que hace el controlador cuando se cierra la
+      // conexión SSE. Perder el turno dejaría una pregunta sin respuesta, que
+      // al rehidratar el hilo el modelo leería como un silencio.
+      for await (const chunk of await service.chat('user-1', CUERPO_MINIMO)) {
+        if (chunk.type === 'text') break;
+      }
+
+      expect(threads.saveTurn).toHaveBeenCalledWith(
+        'hilo-1',
+        CUERPO_MINIMO.message,
+        expect.objectContaining({ content: 'media res' }),
+      );
+    });
+
+    it('un fallo al archivar no tumba la respuesta que el usuario ya recibió', async () => {
+      const threads = HILOS_BASE();
+      threads.saveTurn.mockRejectedValue(new Error('se cayó la base'));
+      const { service } = conHilos(threads);
+
+      await expect(consumir(await service.chat('user-1', CUERPO_MINIMO))).resolves.toHaveLength(1);
+    });
+
+    it('el hilo se resuelve antes de abrir el stream: un id ajeno da 404, no un stream cortado', async () => {
+      const threads = HILOS_BASE();
+      threads.resolve.mockRejectedValue(new NotFoundException('No existe la conversación'));
+      const { service, stream } = conHilos(threads);
+
+      await expect(service.chat('user-1', { ...CUERPO_MINIMO, threadId: 'ajeno' })).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(stream).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('contexto adjunto', () => {
+    it('el contexto va detrás de las instrucciones de sistema, no en los mensajes', async () => {
+      const context = { build: jest.fn().mockResolvedValue('\n<correo_seleccionado>…') };
+      const { service, stream } = conHilos(HILOS_BASE(), context);
+
+      await consumir(
+        await service.chat('user-1', { ...CUERPO_MINIMO, context: { emailId: 'cmr1' } }),
+      );
+
+      expect(context.build).toHaveBeenCalledWith('user-1', { emailId: 'cmr1' });
+      expect(stream.mock.calls[0][0].system).toContain('<correo_seleccionado>');
+      // En el sistema y no en el historial: así no se confunde con lo que dijo
+      // la persona, y no se guarda como parte de la conversación.
+      expect(JSON.stringify(stream.mock.calls[0][0].messages)).not.toContain('correo_seleccionado');
+    });
+
+    it('sin contexto el prompt de sistema queda como estaba', async () => {
+      const { service, stream } = conHilos(HILOS_BASE());
+
+      await consumir(await service.chat('user-1', CUERPO_MINIMO));
+
+      expect(stream.mock.calls[0][0].system).not.toContain('<');
+    });
+  });
+
   it('propaga la señal de cancelación para no seguir generando sin nadie al otro lado', async () => {
     const stream = jest.fn().mockReturnValue((async function* () {})());
     const service = new CopilotService(
       new LlmFactory([{ ...estrategia(LlmProvider.ANTHROPIC), stream }]),
       SIN_CORREO,
+      hilos(),
+      sinContexto(),
     );
     const abort = new AbortController();
 
-    service.chat('user-1', CUERPO_MINIMO, abort.signal);
+    await service.chat('user-1', CUERPO_MINIMO, abort.signal);
 
     expect(stream.mock.calls[0][0].signal).toBe(abort.signal);
   });

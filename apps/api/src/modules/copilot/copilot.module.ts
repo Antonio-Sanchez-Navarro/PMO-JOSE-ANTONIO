@@ -7,6 +7,8 @@ import { LlmFactory, LLM_STRATEGIES } from './llm/llm.factory';
 import { AnthropicStrategy } from './llm/anthropic.strategy';
 import { GoogleStrategy } from './llm/google.strategy';
 import { EMAIL_SENDER, GmailSender, MockSender } from './email/email-sender';
+import { ChatThreadsService } from './threads/chat-threads.service';
+import { CopilotContextService } from './context/copilot-context.service';
 import { AuthModule } from '../auth/auth.module';
 
 /**
@@ -24,6 +26,8 @@ import { AuthModule } from '../auth/auth.module';
   controllers: [CopilotController],
   providers: [
     CopilotService,
+    ChatThreadsService,
+    CopilotContextService,
     LlmFactory,
     AnthropicStrategy,
     GoogleStrategy,
