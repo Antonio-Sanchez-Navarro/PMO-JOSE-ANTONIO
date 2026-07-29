@@ -113,6 +113,24 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
               }
               return msg;
             }));
+          } else if (evento === 'tool_call') {
+            if (data.toolName === 'draft_email' && data.payload) {
+              setMessages((prev) => prev.map(msg => {
+                if (msg.id === assistantMessageId) {
+                  return { 
+                    ...msg, 
+                    status: 'complete',
+                    draftEmail: {
+                      id: Date.now().toString(),
+                      to: Array.isArray(data.payload.to) ? data.payload.to.join(', ') : (data.payload.to || ''),
+                      subject: data.payload.subject || '',
+                      body: data.payload.body || ''
+                    }
+                  };
+                }
+                return msg;
+              }));
+            }
           } else if (evento === 'error') {
             throw new Error(data.message || 'Stream error');
           } else if (evento === 'done') {

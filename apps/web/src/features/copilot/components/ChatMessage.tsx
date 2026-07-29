@@ -36,28 +36,30 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <span>{isUser ? 'Tú' : 'Copiloto'}</span>
           </div>
           
-          <div className={`rounded-2xl px-4 py-2.5 shadow-sm text-sm ${
-            isUser ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-white border border-gray-100 text-gray-800 rounded-tl-sm'
-          }`}>
-            
-            {message.status === 'pending' && !isUser && (
-              <div className="flex items-center gap-1 h-5">
-                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
-              </div>
-            )}
+          {(message.content || message.status === 'streaming' || message.status === 'pending') && (
+            <div className={`rounded-2xl px-4 py-2.5 shadow-sm text-sm ${
+              isUser ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-white border border-gray-100 text-gray-800 rounded-tl-sm'
+            }`}>
+              
+              {message.status === 'pending' && !isUser && (
+                <div className="flex items-center gap-1 h-5">
+                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                </div>
+              )}
 
-            {(message.status === 'streaming' || message.status === 'complete') && (
-              <div className="whitespace-pre-wrap leading-relaxed">
-                {message.content}
-                {message.status === 'streaming' && (
-                  <span className="inline-block w-1.5 h-4 ml-1 bg-gray-400 animate-pulse align-middle"></span>
-                )}
-              </div>
-            )}
+              {(message.content || message.status === 'streaming') && (
+                <div className="whitespace-pre-wrap leading-relaxed">
+                  {message.content}
+                  {message.status === 'streaming' && (
+                    <span className="inline-block w-1.5 h-4 ml-1 bg-gray-400 animate-pulse align-middle"></span>
+                  )}
+                </div>
+              )}
 
-          </div>
+            </div>
+          )}
 
           {/* Render Tool Call Component (e.g., DraftEmailCard) */}
           {message.draftEmail && (
