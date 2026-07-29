@@ -15,7 +15,9 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
+import { THROTTLE_COPILOT } from '../../common/security/throttle.config';
 import { CopilotService } from './copilot.service';
 import { StartChatDto } from './dto/start-chat.dto';
 import { SendEmailDto } from './dto/send-email.dto';
@@ -59,6 +61,15 @@ const EVENTO_POR_TIPO: Record<string, string> = {
 
 @Controller('copilot')
 @UseGuards(AuthGuard)
+/**
+ * Límite propio para todo el copiloto: es el único sitio de la API donde una
+ * petición cuesta dinero de verdad —cada turno son tokens del modelo— y donde
+ * un bucle del cliente se nota en la factura y no solo en la CPU.
+ *
+ * Pisa el cubo `default` en vez de añadir uno nuevo; el por qué está en
+ * `throttle.config.ts`.
+ */
+@Throttle(THROTTLE_COPILOT)
 export class CopilotController {
   private readonly logger = new Logger(CopilotController.name);
 

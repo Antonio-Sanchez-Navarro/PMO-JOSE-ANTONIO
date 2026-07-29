@@ -1,6 +1,9 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
+import { APP_GUARD } from "@nestjs/core";
+import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { BullModule } from '@nestjs/bullmq';
+import { THROTTLE_OPTIONS } from "./common/security/throttle.config";
 import { PrismaModule } from "./common/prisma/prisma.module";
 import { CryptoModule } from "./common/crypto/crypto.module";
 import { HealthModule } from "./modules/health/health.module";
@@ -22,6 +25,11 @@ import { TasksModule } from "./modules/tasks/tasks.module";
 
 @Module({
   imports: [
+    /**
+     * Límite de peticiones por IP (Sprint 8). Los cubos y el por qué de cada
+     * uno están en `throttle.config.ts`.
+     */
+    ThrottlerModule.forRoot(THROTTLE_OPTIONS),
     ConfigModule.forRoot({
       isGlobal: true,
       // Lee el .env de la raíz del monorepo (y un .env local si existiera).
@@ -49,6 +57,15 @@ import { TasksModule } from "./modules/tasks/tasks.module";
       }),
       inject: [ConfigService],
     }),
+  ],
+  providers: [
+    /**
+     * El límite se aplica a **toda** la API, no ruta por ruta: una ruta nueva
+     * nace protegida en vez de esperar a que alguien se acuerde de decorarla.
+     * Donde no debe aplicarse se marca explícitamente con `@SkipThrottle()`,
+     * que se lee y se revisa; un olvido, no.
+     */
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule {}

@@ -11,6 +11,7 @@ import {
   Logger,
   HttpCode,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { GmailService, EmailSnippet } from './gmail.service';
@@ -61,6 +62,16 @@ export class GmailController {
    */
   @Post('webhooks/gmail')
   @UseGuards(PubSubAuthGuard)
+  /**
+   * Exento del límite de peticiones a propósito.
+   *
+   * Quien llama aquí es Pub/Sub de Google, no un navegador: un 429 no lo
+   * disuade, lo reintenta con backoff, y una ráfaga legítima —muchos correos
+   * entrando a la vez— se leería como abuso y perdería notificaciones. Lo que
+   * protege esta ruta es `PubSubAuthGuard`, que valida la firma OIDC: sin token
+   * válido no entra nada, con o sin límite.
+   */
+  @SkipThrottle()
   @HttpCode(200)
   async handleGmailWebhook(@Body() body: PubSubPushBody) {
     if (!body?.message?.data) {

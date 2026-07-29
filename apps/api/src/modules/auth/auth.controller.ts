@@ -11,6 +11,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Throttle } from "@nestjs/throttler";
+import { THROTTLE_AUTH } from "../../common/security/throttle.config";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { randomBytes } from "node:crypto";
@@ -24,6 +26,12 @@ import { CurrentUser } from "./current-user.decorator";
 import type { CurrentUserContext } from "./auth.types";
 
 @Controller("auth")
+/**
+ * Límite estrecho en autenticación: es donde se prueban credenciales, y donde
+ * un uso legítimo es raro — nadie inicia sesión diez veces por minuto. El
+ * motivo de que pise el cubo `default` está en `throttle.config.ts`.
+ */
+@Throttle(THROTTLE_AUTH)
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
 
