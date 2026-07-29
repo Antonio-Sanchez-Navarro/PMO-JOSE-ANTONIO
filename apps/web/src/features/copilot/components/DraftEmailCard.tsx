@@ -15,13 +15,33 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [emailData, setEmailData] = useState(draft);
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'discarded'>('idle');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     setStatus('sending');
-    // TODO: wire up with real backend API
-    setTimeout(() => {
+    setErrorMsg(null);
+    try {
+      const res = await fetch('/api/copilot/emails/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          to: emailData.to.split(',').map(e => e.trim()).filter(Boolean),
+          subject: emailData.subject,
+          body: emailData.body
+        })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ message: `Error HTTP ${res.status}` }));
+        throw new Error(errorData.message || 'Error al enviar el correo');
+      }
+
       setStatus('sent');
-    }, 1500);
+    } catch (err: any) {
+      setErrorMsg(err.message);
+      setStatus('idle');
+    }
   };
 
   const handleDiscard = () => {
@@ -96,37 +116,47 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
         </div>
       </div>
 
-      <div className="bg-gray-50 px-3 py-2 border-t border-gray-100 flex items-center justify-between gap-2">
         <button 
           onClick={handleDiscard}
-          className="text-xs text-gray-500 hover:text-red-600 font-medium px-2 py-1 rounded transition-colors"
           disabled={status === 'sending'}
+          className="text-xs text-red-600 font-medium hover:text-red-700 disabled:opacity-50"
         >
           Descartar
         </button>
-        <div className="flex gap-2">
+        
+        <div className="flex gap-2 items-center">
+          {errorMsg && (
+            <span className="text-xs text-red-500 mr-2" title={errorMsg}>
+              ⚠️ Falló el envío
+            </span>
+          )}
           <button 
             onClick={() => setIsEditing(!isEditing)}
-            className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 bg-blue-50 hover:bg-blue-100 rounded transition-colors"
             disabled={status === 'sending'}
+            className="text-xs text-blue-600 font-medium hover:text-blue-700 bg-blue-50 px-3 py-1.5 rounded disabled:opacity-50"
           >
             {isEditing ? 'Guardar Cambios' : 'Editar'}
           </button>
+          
           <button 
             onClick={handleSend}
             disabled={status === 'sending'}
-            className="text-xs text-white bg-blue-600 hover:bg-blue-700 font-medium px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50"
+            className="text-xs text-white font-medium bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {status === 'sending' ? (
               <>
-                <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <svg className="animate-spin h-3 w-3 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
                 Enviando...
               </>
             ) : (
-              'Aprobar y Enviar'
+              <>
+                <span>🚀</span> Enviar
+              </>
             )}
           </button>
-        </div>
       </div>
     </div>
   );
