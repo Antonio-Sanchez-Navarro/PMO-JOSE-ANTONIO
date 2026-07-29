@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CopilotHeader, AiProvider, AiTier, ProviderStatus } from './CopilotHeader';
 import { ChatMessage, Message } from './ChatMessage';
+import { useCopilot } from '../CopilotContext';
 
 interface CopilotDrawerProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface CopilotDrawerProps {
 export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose }) => {
   const [provider, setProvider] = useState<AiProvider>('anthropic');
   const [tier, setTier] = useState<AiTier>('pro');
+  const { copilotContext, setCopilotContext } = useCopilot();
   const [availableProviders, setAvailableProviders] = useState<ProviderStatus[]>([]);
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -73,7 +75,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ provider, tier, message: input }),
+        body: JSON.stringify({ provider, tier, message: input, context: copilotContext }),
         signal: abortController.signal,
       });
 
@@ -130,6 +132,23 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
                 }
                 return msg;
               }));
+            } else if (data.toolName === 'create_task' && data.payload) {
+              setMessages((prev) => prev.map(msg => {
+                if (msg.id === assistantMessageId) {
+                  return { 
+                    ...msg, 
+                    status: 'complete',
+                    createTask: {
+                      title: data.payload.title || '',
+                      description: data.payload.description || '',
+                      priority: data.payload.priority || 'MEDIUM',
+                      dueDate: data.payload.dueDate || null,
+                      sourceEmailId: data.payload.sourceEmailId || null
+                    }
+                  };
+                }
+                return msg;
+              }));
             }
           } else if (evento === 'error') {
             throw new Error(data.message || 'Stream error');
@@ -181,6 +200,26 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
         </div>
 
         <div className="p-4 bg-white border-t border-gray-200">
+          {copilotContext && (
+            <div className="mb-3 flex items-center justify-between rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-700">
+              <div className="flex items-center gap-2">
+                <span>📎</span>
+                <span className="font-medium">
+                  {copilotContext.taskId ? 'Tarea adjunta' : 'Correo adjunto'}
+                </span>
+                <span className="text-indigo-400 font-mono text-xs">
+                  ({copilotContext.taskId || copilotContext.emailId})
+                </span>
+              </div>
+              <button
+                onClick={() => setCopilotContext(null)}
+                className="rounded hover:bg-indigo-100 p-1 text-indigo-500 transition-colors"
+                title="Quitar contexto"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <div className="relative flex items-end">
             <textarea
               className="w-full resize-none rounded-xl border border-gray-300 p-3 pr-12 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm text-sm"

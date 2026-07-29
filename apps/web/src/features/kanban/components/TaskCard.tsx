@@ -3,6 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, TaskPriority, TaskSource } from '../types';
 import { AiAuditBadge } from './AiAuditBadge';
+import { useCopilot } from '../../copilot/CopilotContext';
 
 interface TaskCardProps {
   task: Task;
@@ -97,6 +98,7 @@ const TaskTimer: React.FC<{
 
 export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail, onReturnToInbox, onStartTimer, onStopTimer, onManageTime }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task.id });
+  const { openCopilotWithContext } = useCopilot();
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -177,10 +179,20 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 mt-3 text-xs">
         <div className="flex flex-wrap gap-2">
-          {/* Priority Badge */}
-          <span className={`px-2 py-0.5 rounded font-semibold tracking-wide text-[10px] uppercase ${PRIORITY_COLORS[task.priority]}`}>
-            {task.priority}
-          </span>
+          {/* Priority Badge & Audit Indicator */}
+          <div className="flex items-center gap-1">
+            <span className={`px-2 py-0.5 rounded font-semibold tracking-wide text-[10px] uppercase ${PRIORITY_COLORS[task.priority]}`}>
+              {task.priority}
+            </span>
+            {task.priorityReason && (
+              <span 
+                className="text-amber-500 cursor-help flex items-center justify-center w-4 h-4" 
+                title={`Prioridad ajustada automáticamente desde ${task.priorityAdjustedFrom || 'desconocida'}\nMotivo: ${task.priorityReason}\nFecha: ${task.priorityAdjustedAt ? new Date(task.priorityAdjustedAt).toLocaleString() : 'desconocida'}`}
+              >
+                ⚠️
+              </span>
+            )}
+          </div>
           {/* Source Badge */}
           {task.source && SOURCE_LABELS[task.source] && (
             <span 
@@ -219,6 +231,18 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
               <span>Bandeja</span>
             </button>
           )}
+          {/* Ask Copilot Button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              openCopilotWithContext({ taskId: task.id });
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition border border-indigo-200"
+            title="Preguntar al copiloto"
+          >
+            <span>✨</span>
+            <span>Copiloto</span>
+          </button>
         </div>
         {task.dueDate && (
           <span className="text-gray-500 font-medium whitespace-nowrap">

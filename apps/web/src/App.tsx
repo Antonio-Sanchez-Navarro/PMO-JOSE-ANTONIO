@@ -13,6 +13,8 @@ type Health = {
 
 import { InboxPage } from "./features/inbox/InboxPage";
 import { CopilotDrawer } from "./features/copilot";
+import { CopilotProvider, useCopilot } from "./features/copilot/CopilotContext";
+import { DashboardPage as MetricsPage } from "./features/dashboard/components/DashboardPage";
 
 export function App() {
   const { user, status, logout } = useSession();
@@ -37,14 +39,18 @@ export function App() {
     return <LoginPage />;
   }
 
-  return <Dashboard user={user} onLogout={logout} />;
+  return (
+    <CopilotProvider>
+      <Dashboard user={user} onLogout={logout} />
+    </CopilotProvider>
+  );
 }
 
 function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"inbox" | "kanban">("inbox");
-  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"inbox" | "kanban" | "metrics">("inbox");
+  const { isCopilotOpen, setIsCopilotOpen } = useCopilot();
 
   useEffect(() => {
     // Vía el proxy de Vite: /api -> http://localhost:3000
@@ -77,6 +83,14 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
               >
                 Tablero
               </button>
+              <button
+                onClick={() => setActiveTab("metrics")}
+                className={`rounded-md px-3 py-1.5 font-medium transition ${
+                  activeTab === "metrics" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Métricas
+              </button>
             </div>
             <span className="text-slate-500 ml-4 hidden sm:inline-block">{user.name ?? user.email}</span>
             <button
@@ -94,9 +108,13 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
           <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
              <InboxPage />
           </div>
-        ) : (
+        ) : activeTab === "kanban" ? (
           <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
              <KanbanBoard />
+          </div>
+        ) : (
+          <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+             <MetricsPage />
           </div>
         )}
 

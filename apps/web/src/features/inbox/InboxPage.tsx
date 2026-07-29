@@ -16,6 +16,7 @@ import { Toaster, toast } from 'sonner';
 import { EmailDetailModal } from "./components/EmailDetailModal";
 import { updateEmailStatus } from "../kanban/api/tasks.api";
 import { useSocket } from "../kanban/hooks/useSocket";
+import { useCopilot } from "../copilot/CopilotContext";
 
 export function InboxPage() {
   const [activeTab, setActiveTab] = useState<'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED'>('PENDING');
@@ -271,6 +272,8 @@ function EmailRow({
 
   // Según HANDOFF: isConverted indica si el correo ya fue convertido a tareas
   const isProcessed = Boolean(email.isConverted);
+  
+  const { openCopilotWithContext } = useCopilot();
 
   const content = (
     <div 
@@ -374,21 +377,34 @@ function EmailRow({
         )}
 
         {onAnalyze && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onAnalyze();
-            }}
-            disabled={isProcessed}
-            className={`px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border
-              ${isProcessed 
-                ? 'bg-green-50 text-green-700 border-green-200 cursor-default' 
-                : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
-              }
-            `}
-          >
-            {isProcessed ? "✅ Convertido a Tareas" : "🪄 Generar Tareas (IA)"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openCopilotWithContext({ emailId: email.id });
+              }}
+              className="px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50 flex items-center gap-1"
+              title="Preguntar al copiloto"
+            >
+              <span>✨</span>
+              <span>Copiloto</span>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAnalyze();
+              }}
+              disabled={isProcessed}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border
+                ${isProcessed 
+                  ? 'bg-green-50 text-green-700 border-green-200 cursor-default' 
+                  : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
+                }
+              `}
+            >
+              {isProcessed ? "✅ Convertido a Tareas" : "🪄 Generar Tareas (IA)"}
+            </button>
+          </div>
         )}
       </div>
     </div>
