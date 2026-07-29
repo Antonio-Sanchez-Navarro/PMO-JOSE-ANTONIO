@@ -141,9 +141,9 @@ export function InboxPage() {
                 thread={thread} 
                 onAnalyze={handleAnalyzeEmail} 
                 onRead={(id) => setSelectedEmailId(id)}
-                onUpdateStatus={async (id, newStatus) => {
+                onUpdateStatus={async (id, newStatus, force) => {
                   try {
-                    const updated = await updateEmailStatus(id, newStatus);
+                    const updated = await updateEmailStatus(id, newStatus, force);
                     updateEmail(updated);
                   } catch (e: any) {
                     toast.error(e.message || 'Error al cambiar estado');
@@ -209,7 +209,7 @@ function ThreadRow({
   thread: EmailThread; 
   onAnalyze: (id: string) => void; 
   onRead: (id: string) => void;
-  onUpdateStatus: (id: string, status: string) => void;
+  onUpdateStatus: (id: string, status: string, force?: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasReplies = thread.messages.length > 1;
@@ -223,7 +223,7 @@ function ThreadRow({
         onToggle={hasReplies ? () => setExpanded((open) => !open) : undefined}
         onAnalyze={() => onAnalyze(thread.latest.id)}
         onRead={() => onRead(thread.latest.id)}
-        onUpdateStatus={(status) => onUpdateStatus(thread.latest.id, status)}
+        onUpdateStatus={(status, force) => onUpdateStatus(thread.latest.id, status, force)}
       />
 
       {expanded && (
@@ -235,7 +235,7 @@ function ThreadRow({
                 nested 
                 onAnalyze={() => onAnalyze(message.id)} 
                 onRead={() => onRead(message.id)}
-                onUpdateStatus={(status) => onUpdateStatus(message.id, status)}
+                onUpdateStatus={(status, force) => onUpdateStatus(message.id, status, force)}
               />
             </li>
           ))}
@@ -262,7 +262,7 @@ function EmailRow({
   nested?: boolean;
   onAnalyze?: () => void;
   onRead?: () => void;
-  onUpdateStatus?: (status: string) => void;
+  onUpdateStatus?: (status: string, force?: boolean) => void;
 }) {
   const sender = parseSender(email.from);
   const interactive = Boolean(onToggle);
@@ -342,6 +342,13 @@ function EmailRow({
         {/* Botones de Inbox Zero (Activos) */}
         {!nested && onUpdateStatus && (
           <div className="flex items-center gap-1">
+            <button
+              onClick={(e) => { e.stopPropagation(); onUpdateStatus('PENDING', true); }}
+              className="px-2 py-1 text-[11px] font-medium text-amber-600 bg-amber-50 hover:bg-amber-100 rounded transition"
+              title="Devolver a Pendientes"
+            >
+              A Pendientes
+            </button>
             <button
               onClick={(e) => { e.stopPropagation(); onUpdateStatus('DISMISSED'); }}
               className="px-2 py-1 text-[11px] font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 rounded transition"
