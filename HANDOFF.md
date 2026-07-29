@@ -5,9 +5,9 @@
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe. `CERRADO` = el sprint ha concluido.
 >
-> Doc aprobó la arquitectura del copiloto el 2026-07-29 y dio luz verde a la
-> dependencia de Gemini. **El backend del chat está en pie y verificado contra
-> la app**; lo que sigue es la interfaz.
+> **Doc aprobó y cerró formalmente el backend del Sprint 6 el 2026-07-29.** Queda
+> la última pieza, que es de interfaz: ve directo a la sección 6, escrita después
+> de mirar tu código, con lo que falta de verdad.
 >
 > El Sprint 5 está cerrado; sus contratos siguen más abajo como referencia.
 
@@ -345,39 +345,47 @@ pero el primer `token` puede tardar varios segundos más. **No dejes el
 indicador de escritura atado al primer token**; enciéndelo al mandar la
 petición.
 
-## 6. Tu encargo
+## 6. Tu encargo — revisado el 2026-07-29 contra tu código
 
-**Partes de lo que ya hiciste, no de cero.** Commiteaste el panel en `a85a7bb`
-antes de que existiera este documento, y acertaste con el vocabulario: tu
-`CopilotHeader` ya maneja `provider` (`anthropic` | `google`) y `tier`
-(`light` | `pro`), que son exactamente los del contrato. Sobre eso:
+**Casi todo está hecho, y la lista anterior mentía.** Decía "cablear el envío:
+hoy es maqueta"; desde entonces commiteaste `91c0c4e` y `a121799` y eso ya no es
+verdad. Miré tu código antes de escribir esto, así que aquí solo queda lo que
+falta de verdad.
 
-1. **Cablear el envío.** Hoy `features/copilot/` es maqueta: no llama a la API
-   —comprobado, no hay un solo `fetch` en la carpeta—. Eso es bueno: llegas al
-   cableado con el contrato delante en vez de haberlo adivinado.
-2. **Consumir el stream** como en la sección 2, pintando los `token` según
-   llegan. Es aquí donde se pierde una tarde si se usa `EventSource`.
-3. **El selector tiene que preguntar.** `CopilotHeader` pinta los dos
-   proveedores fijos en el JSX. Hoy acierta —los dos están listos— pero por
-   casualidad: en un entorno sin `GEMINI_API_KEY` seguiría ofreciendo Google y
-   cada intento daría **503**. Sácalos de `GET /copilot/providers` y pinta solo
-   los `ready: true` (o enséñalos deshabilitados, pero no como si funcionaran).
-4. **Botón de parar** que aborte el `fetch` — es lo que corta la generación en
-   el backend.
-5. **Errores por código**: 400, 401 y 503 como respuesta normal; `event: error`
-   ya empezado el stream, sin perder lo pintado.
+**Confirmado hecho** (`CopilotDrawer.tsx` y compañía): consumes `/copilot/chat`,
+`/emails/send`, `/providers` y `/tasks/create`; lees el stream con `getReader` y
+**cero `EventSource`**; despachas `token`, `tool_call`, `error` y `done`;
+distingues `draft_email` de `create_task`; abortas con `AbortController`; y
+pintas el aviso de simulación con `transport`. El contrato está respetado.
 
-6. **El editor de borrador** sobre el evento `tool_call`, que ya sale de los dos
-   proveedores con el contrato que fijaste.
-7. **La tarjeta de tarea** sobre el `tool_call` de `create_task`, con su botón
-   de confirmar contra `POST /copilot/tasks/create`.
-8. **La lista de conversaciones** con `GET /copilot/threads`, y guardar el
-   `threadId` entre turnos.
-9. **Mandar `context`** con la tarea o el correo que la persona tenga abierto.
+Faltan dos cosas, y la primera importa más de lo que parece:
 
-**El backend del Sprint 6 está completo**: chat con streaming, hilos, contexto,
-las cuatro herramientas, envío de correo y bitácora. Lo que falta del sprint es
-tuyo. Si algo del contrato no te cuadra, pídelo antes de rodearlo.
+1. **Manda `threadId`.** Hoy el cuerpo de `/copilot/chat` va con
+   `{ provider, tier, message, context }` y **sin `threadId`**, así que cada
+   mensaje abre una conversación nueva: el copiloto no recuerda nada de lo
+   anterior aunque el backend lo guarde. Lee el `threadId` del evento `done`,
+   guárdalo en el estado del panel y mándalo en el turno siguiente. Es una
+   línea y es la diferencia entre un chat y una sucesión de preguntas sueltas.
+
+2. **La lista de conversaciones.** `GET /copilot/threads` (id, título y fechas),
+   `GET /copilot/threads/:id` (con todos los mensajes, para reabrirla) y
+   `DELETE /copilot/threads/:id`. Hoy no se consume ninguna: las conversaciones
+   se guardan y no hay forma de volver a ellas.
+
+Y una comprobación que conviene hacer: **el indicador de escritura no debe
+colgar del primer `token`**. Con las herramientas de lectura, el copiloto puede
+buscar antes de hablar y tardar varios segundos más en decir la primera palabra.
+Enciéndelo al mandar la petición, no al recibir el primer trozo.
+
+**El backend del Sprint 6 está completo y Doc lo aprobó y cerró formalmente el
+2026-07-29**: chat con streaming, hilos, contexto, las cuatro herramientas,
+envío de correo y bitácora. Lo que falta del sprint es esto de arriba. Si algo
+del contrato no te cuadra, pídelo antes de rodearlo.
+
+> **Antes de probar**: la API tiene que estar levantada (`npm run dev:api`), y
+> **una sola vez** — dos watchers escribiendo en `apps/api/dist` se pisan y el
+> síntoma engaña, porque el código fuente está bien y solo falla contra el
+> servidor (ver `AI_ROLES.md`, notas de operación).
 
 ---
 
