@@ -1,12 +1,13 @@
 # Handoff — Sprint 5: Registro de tiempos
 
-> **Estado: CERRADO** · actualizado por **Gravity** el 2026-07-29
-> **Asignado a:** -
+> **Estado: CERRADO** · actualizado por **Claude Code** el 2026-07-29
+> **Asignado a:** nadie — a la espera de la planeación del Sprint 6
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `CERRADO` = el sprint ha concluido.
 >
-> **El backend del Sprint 5 está terminado y verificado.** Los contratos de abajo
-> son los definitivos; lo que queda del sprint es de interfaz.
+> **Sprint 5 terminado y verificado**, backend e interfaz, con la revisión manual
+> del usuario sobre la app corriendo. Los contratos de abajo son los definitivos
+> y se quedan aquí como referencia mientras se planifica el Sprint 6.
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
 
@@ -204,31 +205,34 @@ Ojo con un caso que sí verás: **cambiar de tarea emite los dos**, primero el
 
 ---
 
-## Lo que falta del Sprint 5 — tuyo
+## El Sprint 5 está cerrado — no queda encargo abierto
 
-1. **Terminar el cronómetro de la tarjeta.** Ya pintas el reloj con
-   `totalTimeSec`, `activeTimeEntryId` y `activeTimeStartedAt`, que `GET /tasks`
-   manda por tarjeta. Falta que:
-   - la tarjeta se entere por socket de los tres eventos de arriba, y no solo de
-     la respuesta HTTP;
-   - al montar se pida `GET /time/active`, para que una recarga no pierda el
-     reloj;
-   - el 409 se enseñe con su mensaje (léelo del cuerpo, como hiciste con el de
-     `to-task`), aunque con el cambio de tarea automático es difícil de provocar.
+Lo que en la versión anterior de este archivo eran cuatro encargos tuyos está
+hecho y comprobado el 2026-07-29:
 
-2. **Interfaz de entradas manuales.** `POST /time/entries`,
-   `PATCH /time/entries/:id` y `DELETE /time/entries/:id` están listos. La lista
-   por tarea sale de `GET /time/entries?taskId=…`.
+1. **Cronómetro de la tarjeta** — `TaskCard` con reloj y botón (`d73637f`).
+2. **Entradas manuales** — `TimeEntriesModal.tsx` (`a431022`).
+3. **Gráfica de tiempos** — `TimeReportModal.tsx` con `BarChart` de Recharts
+   (`a431022`). Recharts `^3.10.1` quedó en `apps/web/package.json` con el
+   `package-lock.json` al día. _Aviso sin urgencia: el bundle pasó de 411 kB a
+   794 kB y Vite ya lo comenta. Cuando toque, se parte con `import()` dinámico._
+4. **Botón "A Pendientes"** — `c768db7`, mandando `{ status: 'PENDING',
+   force: true }`. Comprobado que el `force` viaja en el cuerpo y no se queda en
+   el cliente.
+5. **La E2E de las dos pestañas**, pendiente desde el Sprint 4, la dio por buena
+   el usuario en su revisión manual del mismo día.
 
-3. **Gráfica de tiempos (Recharts).** `GET /time/report` te da `rows` listo. Ojo:
-   **Recharts no está instalado** y `package.json` es zona compartida — avisa
-   antes de añadirlo.
+**Dos casillas que hubo que reabrir.** El commit de cierre `697784b` marcó
+además el *panel de auditoría de prioridad* y los *filtros por etiqueta y
+fecha*. Ninguna de las dos está hecha —lo dicen sus propias notas, y hoy lo
+comprobé en el código: no hay nada de auditoría en `apps/web` y
+`query-tasks.dto.ts` no tiene filtro de etiqueta ni de fechas— y ninguna
+pertenece al Sprint 4.5 ni al 5, que era lo que se cerraba. Están otra vez
+abiertas en `TASKS.md`, con la nota de por qué.
 
-4. **La prueba E2E de las dos pestañas sigue pendiente desde el Sprint 4.** Es
-   visual, así que es tuya. Ahora que la bandeja es alcanzable, el criterio no ha
-   cambiado: la pestaña A pinta las tarjetas nuevas **desde la respuesta 201 y
-   sin duplicarlas** (porque manda `X-Socket-Id`), y la B las ve aparecer sola.
-   Reporta el hash del commit y lo que viste en cada pestaña.
+No hace falta que las hagas ahora: son de sprints anteriores y las prioriza
+quien planifique el Sprint 6. Lo que no puede pasar es que el backlog diga que
+están hechas, porque entonces nadie vuelve a mirarlas.
 
 ---
 
@@ -250,7 +254,8 @@ Es más rápido que deshacer un choque.
 
 ## Estado del repo
 
-- `280 pruebas en 9 suites`, todas en verde. Build de los tres paquetes, en verde.
+- `293 pruebas en 9 suites`, todas en verde. Build de los tres paquetes, en
+  verde, ya con Recharts dentro.
 - Migración `20260729153000_add_time_tracking` aplicada.
 - La API y Vite están levantados. Recuerda: **un solo `dev:api` a la vez**
   (ver `AI_ROLES.md`, notas de operación).
