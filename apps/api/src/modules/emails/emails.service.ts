@@ -5,6 +5,7 @@ import { EmailClassificationService } from '../ai/email-classification.service';
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
 import { QueryEmailsDto } from './dto/query-emails.dto';
 import { TasksGateway } from '../tasks/tasks.gateway';
+import { TagsService } from '../tags/tags.service';
 
 /** Un correo tal y como lo necesita la bandeja de triage del tablero. */
 export interface TriageEmail {
@@ -143,6 +144,7 @@ export class EmailsService {
     private readonly prisma: PrismaService,
     private readonly classification: EmailClassificationService,
     private readonly gateway: TasksGateway,
+    private readonly tags: TagsService,
   ) {}
 
   /**
@@ -408,6 +410,10 @@ export class EmailsService {
 
     // Vía manual: la persona ya escribió el título, no hay nada que inferir.
     if (dto.title?.trim()) {
+      // 400 con el id que falla si alguna etiqueta no es suya, igual que en la
+      // confirmación de la cuarentena y en `POST /tasks`.
+      const labels = await this.tags.resolveIds(userId, dto.tagIds);
+
       const task = await this.prisma.task.create({
         data: {
           userId,
@@ -416,9 +422,11 @@ export class EmailsService {
           description: dto.description ?? email.snippet ?? '',
           priority: dto.priority ?? TaskPriority.MEDIUM,
           dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+          ...(labels.length > 0 ? { labels: { connect: labels } } : {}),
           // Origen que protege esta tarea del borrado en un reproceso posterior.
           source: TaskSource.MANUAL,
         },
+        include: { labels: true },
       });
 
       this.logger.log(`Tarea manual ${task.id} creada desde el correo ${emailId}`);
@@ -475,6 +483,15 @@ export class EmailsService {
     confirmed: ConfirmedTaskDto[],
     category?: string,
   ): Promise<ToTaskResult> {
+    // Antes de abrir la transacción, y de una sola consulta para todas las
+    // tareas: si alguna etiqueta no existe o es de otra persona, esto lanza un
+    // 400 diciendo cuál. Pasar los ids a `connect` sin mirar daría un error
+    // opaco de Prisma con un id inventado —y, con uno ajeno, colgaría en la
+    // tarea la etiqueta de otro usuario. Es la misma comprobación que hace
+    // `POST /tasks`.
+    const pedidos = confirmed.flatMap((task) => task.tagIds ?? []);
+    await this.tags.resolveIds(userId, pedidos);
+
     const tasks = await this.prisma.$transaction(async (tx) => {
       // Las tarjetas aprobadas se anexan al final de "Por hacer", igual que las
       // que crea `POST /tasks`: nacer en la posición 0 las metería por delante
@@ -499,7 +516,13 @@ export class EmailsService {
               title: task.title.trim(),
               description: task.description ?? '',
               priority: task.priority,
+              // Texto libre del modelo…
               tags: task.tags ?? [],
+              // …y etiquetas curadas por la persona, que son otra cosa. Los ids
+              // ya vienen comprobados de arriba.
+              ...(task.tagIds?.length
+                ? { labels: { connect: [...new Set(task.tagIds)].map((id) => ({ id })) } }
+                : {}),
               dueDate: task.dueDate ? new Date(task.dueDate) : null,
               position: position++,
               // MANUAL y no EMAIL aunque las propusiera el modelo: las aprobó
@@ -507,6 +530,10 @@ export class EmailsService {
               // EMAIL, y eso destruiría trabajo ya validado.
               source: TaskSource.MANUAL,
             },
+            // Con las etiquetas dentro, igual que `POST /tasks`: la tarjeta
+            // viaja en la respuesta 201 y en el `task.created`, y sin esto
+            // llegaría sin los colores que la persona acaba de elegir.
+            include: { labels: true },
           }),
         );
       }

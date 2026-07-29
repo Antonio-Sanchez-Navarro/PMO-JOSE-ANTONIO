@@ -1,9 +1,10 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { EmailStatus, TaskSource } from '@prisma/client';
 import { EmailsService } from './emails.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
 import { TasksGateway } from '../tasks/tasks.gateway';
+import { TagsService } from '../tags/tags.service';
 import { emailNoAccionable, emailSinTexto } from '../ai/__fixtures__/emails.fixture';
 
 const USER_ID = 'user-1';
@@ -14,8 +15,19 @@ const USER_ID = 'user-1';
  * que son los que construyen el servicio.
  */
 let gateway: { emitTaskCreated: jest.Mock; emitEmailUpdated: jest.Mock };
+/**
+ * Por defecto acepta las etiquetas que le pidan: las pruebas que comprueban el
+ * rechazo lo hacen fallar ellas mismas. Devuelve la forma de `connect` que
+ * espera Prisma.
+ */
+let tags: { resolveIds: jest.Mock };
 beforeEach(() => {
   gateway = { emitTaskCreated: jest.fn(), emitEmailUpdated: jest.fn() };
+  tags = {
+    resolveIds: jest.fn().mockImplementation((_userId: string, ids?: string[]) =>
+      Promise.resolve((ids ?? []).map((id) => ({ id }))),
+    ),
+  };
 });
 
 describe('EmailsService — POST /emails/:id/to-task', () => {
@@ -62,6 +74,7 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
       prisma as unknown as PrismaService,
       classification as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
     );
   });
 
@@ -259,6 +272,7 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
       prisma as unknown as PrismaService,
       classification as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
     );
   });
 
@@ -352,6 +366,47 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
     expect(gateway.emitTaskCreated.mock.calls[0][1]).toBe('socket-abc');
   });
 
+  describe('etiquetas del usuario en las tareas aprobadas', () => {
+    const conEtiquetas = [
+      { title: 'Con etiquetas', priority: 'HIGH' as any, tagIds: ['tag-1', 'tag-1', 'tag-2'] },
+    ];
+
+    it('las cuelga de la tarea, sin repetir un id que llegó dos veces', async () => {
+      await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: conEtiquetas });
+
+      expect(tx.task.create.mock.calls[0][0].data.labels).toEqual({
+        connect: [{ id: 'tag-1' }, { id: 'tag-2' }],
+      });
+    });
+
+    it('comprueba de quién son antes de abrir la transacción', async () => {
+      await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: conEtiquetas });
+
+      expect(tags.resolveIds).toHaveBeenCalledWith(USER_ID, ['tag-1', 'tag-1', 'tag-2']);
+    });
+
+    it('un id ajeno o inventado da 400 y no escribe nada', async () => {
+      tags.resolveIds.mockRejectedValue(new BadRequestException('no son tuyas'));
+
+      await expect(
+        service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: conEtiquetas }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('sin tagIds no toca el campo: una tarea sin etiquetas no es una tarea con cero', async () => {
+      await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
+
+      expect(tx.task.create.mock.calls[0][0].data).not.toHaveProperty('labels');
+    });
+
+    it('la tarjeta creada vuelve con sus etiquetas, para el 201 y para el socket', async () => {
+      await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: conEtiquetas });
+
+      expect(tx.task.create.mock.calls[0][0].include).toEqual({ labels: true });
+    });
+  });
+
   it('tasks[] manda sobre title si llegan los dos', async () => {
     const result = await service.convertToTask(USER_ID, emailNoAccionable.id, {
       tasks: aprobadas,
@@ -400,6 +455,7 @@ describe('EmailsService — POST /emails/:id/classify', () => {
       prisma as unknown as PrismaService,
       classification as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
     );
   });
 
@@ -501,6 +557,7 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
       prisma as unknown as PrismaService,
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
     );
   });
 
@@ -657,6 +714,7 @@ describe('EmailsService — GET /emails/:id (vista de lectura)', () => {
       prisma as unknown as PrismaService,
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
     );
   });
 
@@ -761,6 +819,7 @@ describe('EmailsService — PATCH /emails/:id/status (Inbox Zero)', () => {
       prisma as unknown as PrismaService,
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
     );
   });
 
@@ -840,6 +899,7 @@ describe('EmailsService — filtro por estado en el listado', () => {
       prisma as unknown as PrismaService,
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
     );
   });
 
@@ -907,6 +967,7 @@ describe('EmailsService — aviso a la bandeja al mover un correo', () => {
       prisma as unknown as PrismaService,
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
     );
   });
 
