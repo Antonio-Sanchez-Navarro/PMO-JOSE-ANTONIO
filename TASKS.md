@@ -123,12 +123,14 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 5 — Registro de tiempos (Time Tracking)
 **Objetivo:** medir tiempo dedicado por tarea y reportar.
 
-- [ ] 🔴 Modelo `TimeEntry` + endpoints `POST /time/start` · `/time/stop`
-- [ ] 🔴 Un solo timer activo por usuario (validación)
-- [ ] 🟡 UI: botón start/stop en tarjeta + cronómetro visible
-- [ ] 🟡 Registro manual de tiempo (edición de entradas)
-- [ ] 🟡 Reporte `GET /time/report` (por tarea/día/semana)
-- [ ] 🟢 Gráfica de tiempos (Recharts) en el dashboard
+- [x] 🔴 Modelo `TimeEntry` + endpoints de cronómetro (Claude Code) — ✅ El modelo existía desde la migración inicial; lo que se añade es `activeFor` y sus índices (`20260729153000_add_time_tracking`). Las rutas quedaron con la tarea en la ruta, que es como las llamaba ya el tablero: **`POST /time/:taskId/start`** (201 con el fichaje; si ya corría sobre esa misma tarea devuelve el que había, así el doble clic no parte el tramo en dos; si corría sobre otra, la cierra y abre esta **en la misma transacción**) y **`POST /time/:taskId/stop`** · **`POST /time/stop`** (200; 409 si no hay ninguno en marcha). Además **`GET /time/active`**, para que recargar la página no pierda de vista un reloj que sigue corriendo
+- [x] 🔴 Un solo timer activo por usuario (validación) (Claude Code) — ✅ Lo arbitra la **base**, con un índice único sobre `TimeEntry.activeFor` —lleva el `userId` mientras el fichaje corre y `null` al cerrarlo— y no una comprobación entre leer y escribir, que dejaría pasar dos pestañas pulsando play a la vez: las dos verían un `findFirst` vacío. Postgres considera distintos todos los `NULL` en un índice único, así que caben cuantos fichajes cerrados haga falta y solo uno abierto por dueño. Quien pierde la carrera recibe **409**, no un 500 de Prisma. No se usa un índice parcial (`WHERE "endedAt" IS NULL`) porque Prisma no sabe expresarlo y lo borraría en la migración siguiente
+- [x] 🟡 UI: botón start/stop en tarjeta + cronómetro visible (Gravity) — ✅ `TaskCard` pinta el reloj y el botón; `GET /tasks` manda ya `totalTimeSec`, `activeTimeEntryId` y `activeTimeStartedAt` por tarjeta. _Falta la prueba visual con dos pestañas_
+- [x] 🟡 Registro manual de tiempo (edición de entradas) (Claude Code) — ✅ **`POST /time/entries`** apunta un tramo que ya terminó (nace cerrado, sin tocar el centinela, así que no compite con el cronómetro), **`PATCH /time/entries/:id`** lo corrige —poner `endedAt` sobre el que corre lo cierra de verdad: es el "me olvidé de pararlo ayer"— y **`DELETE /time/entries/:id`** lo borra (204). **`GET /time/entries`** lista con `?taskId=`, `?from=`, `?to=`, `?skip=`, `?take=`. 400 si el tramo acaba antes de empezar o si el `PATCH` va sin campos; `taskId` no se puede cambiar, porque mover un tramo falsearía el informe de las dos tareas
+- [x] 🟡 Reporte `GET /time/report` (por tarea/día/semana) (Claude Code) — ✅ `?groupBy=task|day|week` (por defecto `task`), `?from=` y `?to=` (cerrado por abajo, abierto por arriba, para que dos rangos consecutivos no cuenten dos veces el mismo tramo). Solo entran los fichajes **cerrados**: el que corre no tiene duración, y estimarla haría que dos lecturas seguidas dieran números distintos. Por día y por semana agrupa con `date_trunc` en SQL —el `groupBy` de Prisma no trunca fechas— y corta en **UTC**, que es como Postgres guarda las marcas
+- [ ] 🟢 Gráfica de tiempos (Recharts) en el dashboard — _falta; `GET /time/report` ya devuelve `{ groupBy, from, to, totalSec, rows[] }` con `rows` listo para pintar_
+
+**Pruebas**: 30 nuevas en `time.service.spec.ts` (carrera entre pestañas, cambio de tarea, informes) más 2 en `tasks.service.spec.ts` por el resumen de tiempo de la tarjeta. Total: **280 en 9 suites**.
 
 **Entregable:** el usuario mide y consulta el tiempo invertido por tarea.
 

@@ -29,6 +29,16 @@ export const EMAIL_EVENTS = {
   updated: 'email.updated',
 } as const;
 
+/**
+ * Eventos del registro de tiempos (Sprint 5). Viven aquí por el mismo motivo
+ * que los de la bandeja: un solo socket por pestaña.
+ */
+export const TIME_EVENTS = {
+  started: 'time.started',
+  stopped: 'time.stopped',
+  deleted: 'time.deleted',
+} as const;
+
 /** Orden final de una columna del tablero. */
 export interface ColumnOrder {
   status: TaskStatus;
@@ -171,6 +181,32 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
    */
   emitEmailUpdated(email: { id: string; userId: string }, exceptSocketId?: string) {
     this.emit(EMAIL_EVENTS.updated, email, exceptSocketId);
+  }
+
+  /**
+   * Arrancó un cronómetro. Va el fichaje entero —con su tarea— para que las
+   * demás pestañas pinten el reloj sin volver a pedir nada.
+   *
+   * El tipo se declara de forma estructural, como en los correos: para
+   * encaminar solo hacen falta `userId` y `taskId`, y el módulo de tareas no
+   * tiene por qué depender del de tiempos.
+   */
+  emitTimeStarted(entry: { id: string; userId: string; taskId: string }, exceptSocketId?: string) {
+    this.emit(TIME_EVENTS.started, entry, exceptSocketId);
+  }
+
+  /**
+   * Se detuvo un cronómetro, o se apuntó o corrigió un tramo a mano. Los tres
+   * casos dejan un fichaje cerrado, que es lo único que la tarjeta necesita
+   * saber para actualizar su total.
+   */
+  emitTimeStopped(entry: { id: string; userId: string; taskId: string }, exceptSocketId?: string) {
+    this.emit(TIME_EVENTS.stopped, entry, exceptSocketId);
+  }
+
+  /** Se borró un fichaje: la tarjeta tiene que restarlo de su total. */
+  emitTimeDeleted(entry: { id: string; userId: string; taskId: string }, exceptSocketId?: string) {
+    this.emit(TIME_EVENTS.deleted, entry, exceptSocketId);
   }
 
   /**

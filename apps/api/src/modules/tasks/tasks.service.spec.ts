@@ -390,12 +390,55 @@ describe('TasksService.findAll — filtros y búsqueda', () => {
   });
 
   it('devuelve el total junto a la página pedida', async () => {
-    prisma.task.findMany.mockResolvedValue([{ id: 'a' }]);
+    prisma.task.findMany.mockResolvedValue([{ id: 'a', timeEntries: [] }]);
     prisma.task.count.mockResolvedValue(42);
 
     const res = await service.findAll(USER, { skip: 10, take: 5 });
 
-    expect(res).toEqual({ data: [{ id: 'a' }], total: 42, skip: 10, take: 5 });
+    expect(res).toEqual({
+      // Cada tarjeta viaja con su tiempo resumido (Sprint 5): sin fichajes, en
+      // cero y sin cronómetro.
+      data: [{ id: 'a', totalTimeSec: 0, activeTimeEntryId: null, activeTimeStartedAt: null }],
+      total: 42,
+      skip: 10,
+      take: 5,
+    });
+  });
+
+  describe('resumen de tiempo por tarjeta', () => {
+    const arrancado = new Date('2026-07-29T10:00:00.000Z');
+
+    it('suma los tramos cerrados y señala el cronómetro en marcha', async () => {
+      prisma.task.findMany.mockResolvedValue([
+        {
+          id: 'a',
+          timeEntries: [
+            { id: 'e1', durationSec: 600, startedAt: new Date(), endedAt: new Date() },
+            { id: 'e2', durationSec: 1800, startedAt: new Date(), endedAt: new Date() },
+            // El que corre: sin duración todavía.
+            { id: 'e3', durationSec: null, startedAt: arrancado, endedAt: null },
+          ],
+        },
+      ]);
+
+      const res = await service.findAll(USER, {});
+
+      expect(res.data[0]).toMatchObject({
+        totalTimeSec: 2400,
+        activeTimeEntryId: 'e3',
+        activeTimeStartedAt: arrancado,
+      });
+    });
+
+    it('no deja escapar los fichajes en crudo en la respuesta', async () => {
+      prisma.task.findMany.mockResolvedValue([
+        { id: 'a', timeEntries: [{ id: 'e1', durationSec: 60, startedAt: new Date(), endedAt: new Date() }] },
+      ]);
+
+      const res = await service.findAll(USER, {});
+
+      expect(res.data[0]).not.toHaveProperty('timeEntries');
+    });
   });
 });
 

@@ -136,6 +136,8 @@ model Tag {
   @@unique([userId, name])
 }
 
+/// Un fichaje sobre una tarea. Mientras corre, `endedAt` y `durationSec` son
+/// `null`; al detenerlo se rellenan los dos.
 model TimeEntry {
   id          String    @id @default(cuid())
   taskId      String
@@ -144,6 +146,24 @@ model TimeEntry {
   user        User      @relation(fields: [userId], references: [id])
   startedAt   DateTime
   endedAt     DateTime?
+  /// Segundos entre `startedAt` y `endedAt`. Se guarda en vez de calcularse en
+  /// cada lectura para que el informe sume en la base y no en memoria.
   durationSec Int?
   note        String?
+  /// Centinela del timer en marcha: lleva el `userId` mientras corre y vuelve a
+  /// `null` al detenerlo.
+  ///
+  /// Existe para que "un solo timer activo por persona" la arbitre la base y no
+  /// una comprobación entre leer y escribir, que dejaría pasar dos pestañas
+  /// pulsando play a la vez. Postgres considera distintos todos los `NULL` en
+  /// un índice único, así que caben cuantos fichajes cerrados haga falta y solo
+  /// uno abierto por dueño. No se usa un índice único parcial
+  /// (`WHERE "endedAt" IS NULL`) porque Prisma no sabe expresarlo y lo
+  /// borraría en la siguiente migración.
+  activeFor   String?   @unique
+
+  /// El informe pregunta por rangos de fechas de una persona.
+  @@index([userId, startedAt])
+  /// Y la tarjeta, por los fichajes de su tarea.
+  @@index([taskId])
 }

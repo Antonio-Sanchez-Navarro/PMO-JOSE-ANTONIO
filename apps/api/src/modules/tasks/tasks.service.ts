@@ -177,6 +177,9 @@ export class TasksService {
             }
           },
           labels: true,
+          timeEntries: {
+            select: { id: true, durationSec: true, startedAt: true, endedAt: true }
+          },
         },
         // Sin `orderBy`, Postgres devolvía las filas en orden de heap: al
         // actualizar una tarea la lista podía reordenarse sola. `status` ordena
@@ -187,7 +190,31 @@ export class TasksService {
       this.prisma.task.count({ where }),
     ]);
 
-    return { data, total, skip, take };
+    const formattedData = data.map((task) => {
+      let totalTimeSec = 0;
+      let activeTimeEntryId: string | null = null;
+      let activeTimeStartedAt: Date | null = null;
+
+      for (const entry of task.timeEntries) {
+        if (entry.durationSec) {
+          totalTimeSec += entry.durationSec;
+        }
+        if (!entry.endedAt) {
+          activeTimeEntryId = entry.id;
+          activeTimeStartedAt = entry.startedAt;
+        }
+      }
+
+      const { timeEntries, ...rest } = task;
+      return {
+        ...rest,
+        totalTimeSec,
+        activeTimeEntryId,
+        activeTimeStartedAt,
+      };
+    });
+
+    return { data: formattedData, total, skip, take };
   }
 
   /**
