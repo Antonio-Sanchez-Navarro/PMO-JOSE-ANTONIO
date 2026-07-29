@@ -43,6 +43,9 @@ cookie), y todas por el proxy de Vite igual que el resto: `/api/copilot/…`.
 | `GET /copilot/providers` | Qué proveedores puede ofrecer esta instalación. Para pintar el selector sin adivinar |
 | `POST /copilot/chat` | Un turno de conversación, servido como **stream** |
 | `POST /copilot/emails/send` | Despacha el borrador que la persona aprobó en la tarjeta |
+| `POST /copilot/tasks/create` | Crea la tarea que la persona aprobó en la tarjeta |
+| `GET /copilot/threads` · `/:id` · `DELETE /:id` | Las conversaciones guardadas, para la lista del panel |
+| `GET /copilot/audit` | La bitácora: qué hizo el copiloto, con qué y cómo acabó |
 
 `GET /copilot/providers` devuelve el arreglo sin envoltorio:
 
@@ -302,7 +305,47 @@ Detalles que te ahorran sorpresas:
 - **Un `error` no siempre va después de algún `token`**: puede ser el primer
   evento del stream.
 
-## 5. Tu encargo
+## 5. Lo que cambió el 2026-07-29 — léelo antes de seguir
+
+El backend del Sprint 6 quedó terminado. Cuatro cosas te afectan directamente:
+
+**1. `threadId` ya funciona.** Deja de ser decorativo: el copiloto recuerda la
+conversación. Guarda el `threadId` que llega en el evento `done` y mándalo en
+el turno siguiente; sin él se abre una conversación nueva cada vez. Para la
+lista del panel: `GET /copilot/threads` (id, título, fechas),
+`GET /copilot/threads/:id` (con todos los mensajes) y `DELETE` para borrarla.
+
+**2. `context` ya funciona.** Manda `{ taskId }` o `{ emailId }` de lo que la
+persona tenga abierto y el copiloto lo lee de la base. Compruébalo con un caso
+real: con un correo adjunto, preguntarle "¿quién manda esto?" responde con el
+remitente de verdad.
+
+**3. Hay una segunda tarjeta: `create_task`.** Mismo patrón que el correo —el
+copiloto propone, la persona confirma— pero con su propia ruta:
+
+```
+event: tool_call
+data: {"type":"tool_call","toolName":"create_task","payload":{"title":"…","description":"…","priority":"HIGH","dueDate":null,"sourceEmailId":"cmr…"}}
+```
+
+Se confirma con `POST /copilot/tasks/create` mandando ese mismo objeto (con las
+correcciones que haya hecho). Devuelve **201 con la tarea creada**, en la misma
+forma que `POST /tasks`, así que puedes insertarla en el tablero con lo que
+responde. `priority` siempre viene (`MEDIUM` si el modelo no la dijo),
+`dueDate` es `null` o una fecha ISO válida —nunca "Invalid Date"— y
+`sourceEmailId` trae el correo del que salió, si había uno abierto. **Manda el
+`x-socket-id`**: la tarea se anuncia por socket como cualquier otra y sin la
+cabecera la pintarías dos veces.
+
+**4. Puede que el copiloto tarde más en empezar a hablar.** Ahora tiene
+herramientas de solo lectura (`search_emails`, `get_metrics`) que ejecuta el
+backend **sin pasar por ti**: si le preguntas "¿cómo va todo?", busca y luego
+responde. Para el cliente no cambia nada —siguen llegando `token` y `done`—
+pero el primer `token` puede tardar varios segundos más. **No dejes el
+indicador de escritura atado al primer token**; enciéndelo al mandar la
+petición.
+
+## 6. Tu encargo
 
 **Partes de lo que ya hiciste, no de cero.** Commiteaste el panel en `a85a7bb`
 antes de que existiera este documento, y acertaste con el vocabulario: tu
@@ -326,12 +369,15 @@ antes de que existiera este documento, y acertaste con el vocabulario: tu
 
 6. **El editor de borrador** sobre el evento `tool_call`, que ya sale de los dos
    proveedores con el contrato que fijaste.
+7. **La tarjeta de tarea** sobre el `tool_call` de `create_task`, con su botón
+   de confirmar contra `POST /copilot/tasks/create`.
+8. **La lista de conversaciones** con `GET /copilot/threads`, y guardar el
+   `threadId` entre turnos.
+9. **Mandar `context`** con la tarea o el correo que la persona tenga abierto.
 
-Lo que **no** es tuyo todavía: la persistencia de hilos y las herramientas que
-faltan (`create_task`, `search_emails`, `get_metrics`) son las siguientes piezas
-del backend. Cuando existan, `threadId` empezará a funcionar sin cambiarte la
-firma, y las herramientas nuevas llegarán por el mismo evento `tool_call` con
-otro `toolName`.
+**El backend del Sprint 6 está completo**: chat con streaming, hilos, contexto,
+las cuatro herramientas, envío de correo y bitácora. Lo que falta del sprint es
+tuyo. Si algo del contrato no te cuadra, pídelo antes de rodearlo.
 
 ---
 
