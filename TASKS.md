@@ -78,10 +78,13 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [x] 🔴 `GET /emails/:id`: el correo completo para la vista de lectura (Claude Code) — ✅ Encargo de Doc: no se puede aprobar lo que propone la IA sin poder leer el correo. Contraparte del listado — allí el `bodyText` se excluye por peso, aquí se incluye porque es lo que se va a leer. Trae además `isActionable`, `processedAt` y las `tasks[]` que ese correo ya generó (id, título, estado, prioridad), para poder comparar al reprocesar. `bodyText` puede ser `null`, y así la vista distingue "sin cuerpo guardado" de "cuerpo vacío" y cae al snippet. 8 pruebas nuevas. _Verificado contra la app: 200 con 55 688 caracteres de cuerpo en el correo de Escrituración, 404 con un id inventado, 401 sin cookie, 200 por el proxy de Vite, y comprobado que el listado sigue sin arrastrar el cuerpo_
 - [x] 🟡 `POST /emails/:id/to-task` que acepte las tareas **ya editadas** por el usuario en vez de inferirlas (Claude Code) — ✅ Aditivo, no sustitutivo: con `tasks[]` en el cuerpo persiste exactamente lo aprobado sin volver a llamar al modelo, marca el correo como procesado (y su `category` solo si la persona la cambió) y devuelve 201; sin `tasks[]` se comporta como siempre. Las tareas confirmadas nacen con `source: MANUAL` — las propuso el modelo pero las aprobó una persona, y el reproceso del worker borra lo que tiene origen `EMAIL` — y se anexan al final de "Por hacer" en vez de colarse en la posición 0. Todo en una transacción: escribir tareas sin marcar el correo haría que el worker lo reclasificara y las duplicara. 10 pruebas nuevas. _Verificado contra la app: 201 con dos tareas, categoría actualizada, y 400 al mandar una categoría o prioridad inventada_
 - [x] 🟡 Que la conversión de un correo anuncie sus tarjetas al tablero (Claude Code) — ✅ `to-task` emite un `task.created` por tarea creada, con el mismo formato que `POST /tasks`, y respeta la cabecera `X-Socket-Id` para no devolverle el eco a quien confirmó (ya tiene las tareas en la respuesta 201; el eco se las duplicaría en pantalla). La emisión envuelve a las tres vías —cuarentena, título a mano y modelo— en vez de repetirse en cada una, para que ninguna vía futura nazca muda, y va después de la transacción: emitir dentro anunciaría tarjetas que aún podrían no llegar a existir. 6 pruebas nuevas. _Verificado contra la app con dos sockets del mismo usuario: al confirmar con `X-Socket-Id` la pestaña que confirmó recibió 0 eventos y la otra los 2 `task.created` (tarea completa, `source: MANUAL`, anexadas al final de "Por hacer"); sin la cabecera lo recibieron las dos; y un correo ya convertido devolvió 409 sin emitir nada_
-- [ ] 🟢 Panel de auditoría: ver por qué se asignó una prioridad — _no existe en el frontend_. **Se marcó como hecho en `697784b` y se ha vuelto a abrir el 2026-07-29**: el cierre del Sprint 5 solo alcanzaba al 4.5 y al 5, y esto es del Sprint 3. `adjustPriority` deja su motivo en el log de la API, pero no viaja en ninguna respuesta ni lo pinta nadie
 - [x] 🟢 Tests de extracción con correos de ejemplo (fixtures) — ✅ Jest configurado (`jest.config.js` + `tsconfig.spec.json`) y 39 pruebas en 3 suites: `ai.service.spec.ts`, `email-classification.service.spec.ts`, `emails.service.spec.ts`. Fixtures en `modules/ai/__fixtures__/`, con capturas reales de las salidas corruptas del modelo como regresión. Sin DB, Redis ni llamadas a Anthropic; corren en ~4 s y ya van en CI
 
 **Entregable:** un correo relevante genera automáticamente una tarea con prioridad.
+
+> El **panel de auditoría de prioridad** salió de este sprint sin hacerse y vive
+> ahora en [DEUDA TÉCNICA — Sprints anteriores](#deuda-técnica--sprints-anteriores),
+> al final del archivo.
 
 ---
 
@@ -93,12 +96,16 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [x] 🔴 Drag & drop con `@dnd-kit` + `PATCH /tasks/:id/move` (status+position) — ✅ **Completado**: El frontend ahora consume el endpoint, implementa UI optimista y se reconcilia sin efecto boomerang usando `MoveTaskResponse`.
 - [x] 🔴 Job cron: marcar `OVERDUE` (dueDate vencido) — ✅ `OverdueModule`: job repetible de BullMQ (cola `overdue-sweep`, patrón en `OVERDUE_CRON`, por defecto cada hora en el minuto 5, más un barrido al arrancar). Mueve a `OVERDUE` las tareas vencidas en `TODO`/`IN_PROGRESS`/`POSTPONED` anexándolas al final de la columna; una transacción por usuario y relectura dentro para no pisar cambios del tablero. En la misma pasada **reevalúa la prioridad** con `adjustPriority` (Sprint 3), así que una tarea sube sola conforme se acerca su fecha. 16 pruebas en `overdue.service.spec.ts`
 - [x] 🟡 Modal de creación/edición (React Hook Form + Zod) — ✅ `TaskModal.tsx` con `useForm` + `zodResolver`, conectado en `KanbanBoard.handleCreateTask` a `POST /tasks` y pintando la tarea **con lo que devuelve el servidor**, no con lo enviado (la prioridad y el estado pueden cambiar por las reglas de negocio). _La nota anterior decía que faltaba el `POST /tasks`; lleva implementado desde el Sprint 4_
-- [ ] 🟡 Filtros (prioridad, etiqueta, fecha) y búsqueda — **Se marcó como hecho en `697784b` y se ha vuelto a abrir el 2026-07-29**: es del Sprint 4, fuera del cierre encargado, y su propia nota dice qué falta — comprobado hoy en `query-tasks.dto.ts`, que no tiene ni etiqueta ni rango de fechas. ✅ En la API: `GET /tasks?status=&priority=&search=&skip=&take=`. `search` busca en título y descripción con `mode: 'insensitive'` (ILIKE). La validación vive en `QueryTasksDto`, así que un enum inválido da 400 y no un 500 desde Prisma. _La UI de filtros **sí existe** (buscador, desplegable de estado y de prioridad en `KanbanBoard`); lo que falta es el filtro por etiqueta y por rango de fechas en la API_
 - [x] 🟡 Realtime: `socket.io` emite `task.*` → UI se actualiza sin recargar — ✅ Backend: `TasksGateway` emite `task.created`, `task.updated` (desde `PATCH`, el arrastre, el barrido horario y ahora la conversión de un correo), `task.reordered` (orden de las columnas tras un arrastre) y `task.deleted`. El handshake se autentica con la cookie `pmo_session` y cada cliente entra en la sala de su `userId`, así que los eventos no salen de su dueño. ✅ Frontend (Gravity): `useSocket.ts` mantiene **un solo socket por pestaña** —dos sockets vivos rompían la supresión del eco, porque el backend excluye uno y el otro aplicaba el cambio— y `KanbanBoard` reacciona a los cuatro eventos; el alta ignora la tarjeta si ya está en el estado. Todas las peticiones que mutan mandan `x-socket-id` (`c06cb73`, `ae2dceb`, `d35e1c8`). _La línea anterior decía "falta el consumo en el frontend" y llevaba días siendo falsa_
 - [x] 🔴 Prefijo de contexto en el título de la tarea, `[Nombre R. - Proyecto n/N]` (Claude Code) — ✅ Encargo de Doc para que el tablero no sea una lista de frases sueltas. **El modelo extrae, el código compone**: el prompt y el esquema piden `senderName` y `project`, y `title.prefix.ts` —función pura, como `priority.rules.ts`— arma el prefijo y numera. Se hace en dos pasos porque el contador tiene que cuadrar con las tareas que de verdad van a existir (después del análisis todavía se descartan tareas: el filtro de accionables y el respaldo desde el asunto), y porque un formato pedido en prosa deriva mientras que compuesto sale idéntico siempre. Es idempotente —reprocesar no encadena prefijos— y recorta el cuerpo, nunca el prefijo, si se pasa de 300 caracteres. Sin remitente ni proyecto el título sale intacto en vez de inventar un `[Desconocido]`. **El remitente sale de la cabecera `From`, no del modelo** (decisión de Doc el 2026-07-28, tras ver que en un correo de Josmat Narváez el modelo eligió a la persona de la que hablaba el cuerpo): `senderFromHeader` abrevia a `Nombre A.`, entiende `"Apellido, Nombre"`, el correo pelado y las mayúsculas gritadas, y **descarta los tratamientos** — sin eso, `Arq. Elena Ruiz` salía como `Arq. R.`. Si la cabecera no da nada aprovechable se recurre a lo que dijera el modelo. 31 pruebas nuevas. _Verificado contra la app con dos correos reales: `[Astrid R. - Citrotarte 1/3] Enviar cotización actualizada…` y `[Dinorah L. - Lote 36 2/3] Remitir KYC…`_
 - [x] 🟢 Badges de prioridad, indicador de origen (correo/WhatsApp/manual) — ✅ `TaskCard` pinta la prioridad con color y el origen con icono y etiqueta (`📧 Email`, `👤 Manual`), con el origen en el `title` para lectores de pantalla (Gravity, `00a3c08`)
 
 **Entregable:** tablero Kanban funcional, con creación directa y movimiento por columnas.
+
+> Los **filtros por etiqueta y por rango de fechas** salieron de este sprint sin
+> hacerse y viven ahora en
+> [DEUDA TÉCNICA — Sprints anteriores](#deuda-técnica--sprints-anteriores), al
+> final del archivo. Lo que sí quedó: buscador y filtros de estado y prioridad.
 
 ---
 
@@ -195,3 +202,22 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [ ] Informes automáticos semanales (IA) por correo/WhatsApp
 - [ ] App móvil (PWA) y modo offline
 - [ ] Integraciones: Smartsheet / Make / Google Drive (ya disponibles vía MCP)
+
+---
+
+## [DEUDA TÉCNICA — Sprints anteriores]
+
+> Trabajo que se quedó fuera de su sprint y que **se acepta como deuda**:
+> decisión del usuario el 2026-07-29, al cerrar el Sprint 5. Sigue abierto a
+> propósito. No bloquea el sprint en curso, pero tampoco se da por hecho: vive
+> aquí para que se vea sin tener que releer sprints ya cerrados.
+>
+> Cada línea dice de qué sprint viene y qué falta exactamente, para que se pueda
+> retomar sin volver a investigarlo. Al hacerse, se marca aquí y no se devuelve
+> a su sprint de origen — un sprint cerrado no se reabre por una casilla.
+>
+> No confundir con la deuda de **arquitectura** que anota `AI_ROLES.md`, que es
+> sobre cómo está construido lo que sí existe.
+
+- [ ] 🟢 **Panel de auditoría de prioridad** — _del Sprint 3_. Ver por qué una tarea acabó con la prioridad que tiene. La información existe pero no sale del backend: `adjustPriority` (`priority.rules.ts`) decide por fecha de vencimiento y escribe el motivo en el log de la API, y ni la respuesta de `GET /tasks` ni la de `POST /tasks` lo llevan. Hacen falta las dos mitades: exponer el motivo en el contrato (Claude Code) y pintarlo en la tarjeta (Gravity). Estuvo marcado como hecho en `697784b` sin estarlo; reabierto el 2026-07-29
+- [ ] 🟡 **Filtros por etiqueta y por rango de fechas en `GET /tasks`** — _del Sprint 4_. Comprobado en `query-tasks.dto.ts`: hoy acepta `?status=`, `?priority=`, `?search=`, `?skip=` y `?take=`, y nada más. Falta filtrar por `Tag` (la relación `labels`, no el arreglo de texto `tags`) y por rango de `dueDate`. La UI de filtros que sí existe —buscador y desplegables de estado y prioridad en `KanbanBoard`— no tiene por tanto de dónde colgar esos dos. Estuvo marcado como hecho en `697784b` sin estarlo; reabierto el 2026-07-29

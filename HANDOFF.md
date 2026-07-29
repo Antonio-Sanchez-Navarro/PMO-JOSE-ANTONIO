@@ -227,12 +227,17 @@ además el *panel de auditoría de prioridad* y los *filtros por etiqueta y
 fecha*. Ninguna de las dos está hecha —lo dicen sus propias notas, y hoy lo
 comprobé en el código: no hay nada de auditoría en `apps/web` y
 `query-tasks.dto.ts` no tiene filtro de etiqueta ni de fechas— y ninguna
-pertenece al Sprint 4.5 ni al 5, que era lo que se cerraba. Están otra vez
-abiertas en `TASKS.md`, con la nota de por qué.
+pertenece al Sprint 4.5 ni al 5, que era lo que se cerraba.
 
-No hace falta que las hagas ahora: son de sprints anteriores y las prioriza
-quien planifique el Sprint 6. Lo que no puede pasar es que el backlog diga que
-están hechas, porque entonces nadie vuelve a mirarlas.
+Por decisión del usuario ese mismo día, **se aceptan como deuda**: siguen
+abiertas, pero fuera de sus sprints, en la sección
+**[DEUDA TÉCNICA — Sprints anteriores]** al final de `TASKS.md`, con lo que
+falta de cada una escrito para poder retomarlas sin volver a investigarlas. Así
+el sprint en curso queda libre y las dos siguen a la vista.
+
+No hace falta que las hagas ahora: las prioriza quien planifique el Sprint 6.
+El panel de auditoría, cuando llegue, es de los dos — exponer el motivo en el
+contrato es mío, pintarlo en la tarjeta es tuyo.
 
 ---
 
