@@ -3,10 +3,17 @@ import React from 'react';
 export type AiProvider = 'google' | 'anthropic';
 export type AiTier = 'light' | 'pro';
 
+export interface ProviderStatus {
+  provider: AiProvider;
+  ready: boolean;
+}
+
 interface CopilotHeaderProps {
   provider: AiProvider;
   tier: AiTier;
+  availableProviders: ProviderStatus[];
   onProviderChange: (provider: AiProvider) => void;
+
   onTierChange: (tier: AiTier) => void;
   onClose: () => void;
 }
@@ -14,10 +21,14 @@ interface CopilotHeaderProps {
 export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
   provider,
   tier,
+  availableProviders,
   onProviderChange,
   onTierChange,
   onClose,
 }) => {
+  const isGoogleReady = availableProviders.find(p => p.provider === 'google')?.ready ?? false;
+  const isAnthropicReady = availableProviders.find(p => p.provider === 'anthropic')?.ready ?? false;
+
   return (
     <div className="flex flex-col border-b border-gray-200 bg-white p-4 shrink-0">
       <div className="flex items-center justify-between mb-4">
@@ -37,7 +48,9 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
         <div className="flex bg-gray-100 p-1 rounded-lg">
           <button
             onClick={() => onProviderChange('google')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+            disabled={!isGoogleReady}
+            title={!isGoogleReady ? "Proveedor no configurado" : ""}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
               provider === 'google'
                 ? 'bg-white shadow-sm text-blue-600'
                 : 'text-gray-500 hover:text-gray-700'
@@ -47,7 +60,9 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
           </button>
           <button
             onClick={() => onProviderChange('anthropic')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+            disabled={!isAnthropicReady}
+            title={!isAnthropicReady ? "Proveedor no configurado" : ""}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
               provider === 'anthropic'
                 ? 'bg-white shadow-sm text-purple-600'
                 : 'text-gray-500 hover:text-gray-700'

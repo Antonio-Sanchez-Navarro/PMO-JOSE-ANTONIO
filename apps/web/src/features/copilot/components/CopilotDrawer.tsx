@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { CopilotHeader, AiProvider, AiTier } from './CopilotHeader';
+import React, { useState, useEffect, useRef } from 'react';
+import { CopilotHeader, AiProvider, AiTier, ProviderStatus } from './CopilotHeader';
 import { ChatMessage, Message } from './ChatMessage';
 
 interface CopilotDrawerProps {
@@ -10,6 +10,7 @@ interface CopilotDrawerProps {
 export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose }) => {
   const [provider, setProvider] = useState<AiProvider>('anthropic');
   const [tier, setTier] = useState<AiTier>('pro');
+  const [availableProviders, setAvailableProviders] = useState<ProviderStatus[]>([]);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
@@ -19,8 +20,33 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
     }
   ]);
   const [input, setInput] = useState('');
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const handleSend = () => {
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/copilot/providers', { credentials: 'include' })
+        .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to fetch providers')))
+        .then((data: ProviderStatus[]) => {
+          setAvailableProviders(data);
+          // If current provider is not ready, switch to the first ready one
+          const isCurrentReady = data.find(p => p.provider === provider)?.ready;
+          if (!isCurrentReady) {
+            const firstReady = data.find(p => p.ready);
+            if (firstReady) setProvider(firstReady.provider);
+          }
+        })
+        .catch(err => console.error('Error fetching copilot providers:', err));
+    }
+  }, [isOpen]);
+
+  const stopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleSend = async () => {
     if (!input.trim()) return;
 
     const userMessage: Message = {
@@ -33,36 +59,82 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
 
-    // Simulate AI response (this will be replaced with real SSE logic)
     const assistantMessageId = (Date.now() + 1).toString();
-    const assistantMessage: Message = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      status: 'pending'
-    };
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantMessageId, role: 'assistant', content: '', status: 'pending' }
+    ]);
 
-    setMessages((prev) => [...prev, assistantMessage]);
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
-    setTimeout(() => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, status: 'streaming', content: 'Estoy analizando tu solicitud...' }
-            : msg
-        )
-      );
-    }, 1000);
+    try {
+      const res = await fetch('/api/copilot/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ provider, tier, message: input }),
+        signal: abortController.signal,
+      });
 
-    setTimeout(() => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, status: 'complete', content: 'Estoy analizando tu solicitud... \n\n¡Listo! Dime si necesitas algo más.' }
-            : msg
-        )
-      );
-    }, 3000);
+      if (!res.ok) {
+        const { message } = await res.json().catch(() => ({ message: `Error ${res.status}` }));
+        throw new Error(message);
+      }
+
+      setMessages((prev) => prev.map(msg => msg.id === assistantMessageId ? { ...msg, status: 'streaming' } : msg));
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const bloques = buffer.split('\n\n');
+        buffer = bloques.pop() ?? '';
+
+        for (const bloque of bloques) {
+          const evento = bloque.match(/^event: (.+)$/m)?.[1];
+          const dataStr = bloque.match(/^data: (.+)$/m)?.[1] ?? '{}';
+          let data: any = {};
+          try {
+            data = JSON.parse(dataStr);
+          } catch (e) {
+            console.error('Failed to parse SSE data', dataStr);
+          }
+
+          if (evento === 'token' && data.text) {
+            setMessages((prev) => prev.map(msg => {
+              if (msg.id === assistantMessageId) {
+                return { ...msg, content: msg.content + data.text };
+              }
+              return msg;
+            }));
+          } else if (evento === 'error') {
+            throw new Error(data.message || 'Stream error');
+          } else if (evento === 'done') {
+            break;
+          }
+        }
+      }
+
+      setMessages((prev) => prev.map(msg => msg.id === assistantMessageId ? { ...msg, status: 'complete' } : msg));
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        setMessages((prev) => prev.map(msg => msg.id === assistantMessageId ? { ...msg, status: 'complete' } : msg));
+      } else {
+        setMessages((prev) => prev.map(msg => msg.id === assistantMessageId ? { 
+          ...msg, 
+          content: msg.content + (msg.content ? '\n\n' : '') + `⚠️ Error: ${err.message}`,
+          status: 'complete' 
+        } : msg));
+      }
+    } finally {
+      abortControllerRef.current = null;
+    }
   };
 
   return (
@@ -78,6 +150,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
         <CopilotHeader
           provider={provider}
           tier={tier}
+          availableProviders={availableProviders}
           onProviderChange={setProvider}
           onTierChange={setTier}
           onClose={onClose}
@@ -104,15 +177,27 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
                 }
               }}
             />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="absolute right-2 bottom-2 p-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-                <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
-              </svg>
-            </button>
+            {abortControllerRef.current ? (
+              <button
+                onClick={stopGeneration}
+                className="absolute right-2 bottom-2 p-2 text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+                title="Detener generación"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                  <path fillRule="evenodd" d="M4.5 7.5a3 3 0 013-3h9a3 3 0 013 3v9a3 3 0 01-3 3h-9a3 3 0 01-3-3v-9z" clipRule="evenodd" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className="absolute right-2 bottom-2 p-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                  <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+                </svg>
+              </button>
+            )}
           </div>
           <div className="text-center mt-2">
             <span className="text-[10px] text-gray-400">El modelo puede cometer errores. Verifica la información.</span>
