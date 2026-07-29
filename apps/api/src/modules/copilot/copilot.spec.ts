@@ -1,4 +1,6 @@
 import { ServiceUnavailableException, ValidationPipe } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
+import { GoogleStrategy } from './llm/google.strategy';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { StartChatDto } from './dto/start-chat.dto';
@@ -99,8 +101,48 @@ describe('Mapa de niveles', () => {
       .toBe('claude-opus-5');
   });
 
-  it('google no trae ids por defecto: los pone quien conecte la cuenta', () => {
-    expect(tierConfig(LlmProvider.GOOGLE, LlmTier.PRO, {}).model).toBe('');
+  it('google: light es el rápido y pro el capaz, con ids vigentes', () => {
+    expect(tierConfig(LlmProvider.GOOGLE, LlmTier.LIGHT, {}).model).toBe('gemini-3.5-flash-lite');
+    expect(tierConfig(LlmProvider.GOOGLE, LlmTier.PRO, {}).model).toBe('gemini-3.6-flash');
+  });
+
+  it('ningún nivel apunta a la familia 1.5, que Google apagó el 2025-09-29', () => {
+    // Regresión con fecha: el encargo del 2026-07-29 pedía `gemini-1.5-flash` y
+    // `gemini-1.5-pro` sin saber que llevaban diez meses retirados. Un id
+    // muerto aquí haría que el proveedor se anuncie listo y devuelva 404 en la
+    // primera pregunta.
+    for (const tier of Object.values(LlmTier)) {
+      expect(tierConfig(LlmProvider.GOOGLE, tier, {}).model).not.toMatch(/gemini-1\.5/);
+    }
+  });
+});
+
+describe('GoogleStrategy — qué le falta para estar lista', () => {
+  /** Un `ConfigService` de mentira: solo tiene que responder `get`. */
+  const config = (env: Record<string, string> = {}) =>
+    ({ get: (clave: string) => env[clave] }) as unknown as ConfigService;
+
+  it('con GEMINI_API_KEY queda lista: los ids ya tienen valor por defecto', () => {
+    expect(new GoogleStrategy(config({ GEMINI_API_KEY: 'clave-de-prueba' })).isReady()).toBe(true);
+  });
+
+  it('sin la credencial no está lista, y la fábrica devolverá 503', () => {
+    expect(new GoogleStrategy(config()).isReady()).toBe(false);
+  });
+
+  it('con la credencial pero un id vaciado por entorno tampoco', () => {
+    // Sin esta comprobación la llamada saldría con `model: ""` y el fallo
+    // aparecería a mitad del stream, cuando ya no se puede cambiar el código
+    // de estado.
+    const conIdVacio = new GoogleStrategy(
+      config({ GEMINI_API_KEY: 'clave-de-prueba', COPILOT_GOOGLE_MODEL_PRO: '' }),
+    );
+
+    jest.spyOn(conIdVacio, 'modelFor').mockImplementation((tier) =>
+      tier === LlmTier.PRO ? '' : 'gemini-3.5-flash-lite',
+    );
+
+    expect(conIdVacio.isReady()).toBe(false);
   });
 });
 

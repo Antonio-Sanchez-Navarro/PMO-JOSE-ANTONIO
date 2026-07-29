@@ -18,10 +18,11 @@ const MAX_OUTPUT_TOKENS = 64_000;
  * - Las instrucciones de sistema van en `config.systemInstruction`, no en un
  *   campo hermano de los mensajes.
  *
- * Sigue haciendo falta configurarlo: `GEMINI_API_KEY` y los ids de modelo
- * (`COPILOT_GOOGLE_MODEL_LIGHT` / `_PRO`). Sin ellos `isReady()` responde
- * `false` y la fábrica devuelve 503 con el motivo **antes** de que el
- * controlador escriba una cabecera.
+ * **Lo único que le falta es la credencial.** Los ids de modelo ya tienen valor
+ * por defecto (ver `model-tiers.ts`), así que en cuanto exista `GEMINI_API_KEY`
+ * en el entorno este proveedor pasa a `ready: true` y aparece en el selector.
+ * Sin ella, `isReady()` responde `false` y la fábrica devuelve 503 con el
+ * motivo **antes** de que el controlador escriba una cabecera.
  */
 @Injectable()
 export class GoogleStrategy implements LlmStrategy {

@@ -31,11 +31,19 @@ export interface TierConfig {
  *   toda la escala de `effort`; se deja sin fijar para que use su `high` de
  *   fábrica hasta que haya con qué medirlo.
  *
- * Google: los ids se leen del entorno y **no** se fijan aquí a propósito.
- * Escribir de memoria el id de un modelo que este repositorio nunca ha llamado
- * es la clase de dato que parece correcto hasta que devuelve 404 en producción;
- * los pone quien conecte la cuenta, y hasta entonces el proveedor no está listo
- * (ver `google.strategy.ts`).
+ * Google:
+ *
+ * - `light` → **Gemini 3.5 Flash Lite**, el más rápido y barato de la familia.
+ * - `pro` → **Gemini 3.6 Flash**, el estable más capaz.
+ *
+ * **Ojo con los ids de Gemini: caducan de verdad.** El encargo del 2026-07-29
+ * pedía `gemini-1.5-flash` y `gemini-1.5-pro`, y esos dos **se apagaron el
+ * 2025-09-29** —lo dicen las notas de versión de Google y la lista de modelos
+ * vigentes, consultadas ese día; el propio `@google/genai` instalado no los
+ * menciona ni una vez—. Fijarlos habría hecho que el proveedor se anunciara
+ * como listo y devolviera 404 en la primera pregunta, que es exactamente lo
+ * que `isReady()` existe para evitar. Si alguna vez hay que volver a un id
+ * concreto, se cambia aquí o se pisa por entorno; no hace falta tocar nada más.
  */
 const TIERS: Record<LlmProvider, Record<LlmTier, TierConfig>> = {
   [LlmProvider.ANTHROPIC]: {
@@ -51,11 +59,11 @@ const TIERS: Record<LlmProvider, Record<LlmTier, TierConfig>> = {
   [LlmProvider.GOOGLE]: {
     [LlmTier.LIGHT]: {
       envVar: 'COPILOT_GOOGLE_MODEL_LIGHT',
-      model: '',
+      model: 'gemini-3.5-flash-lite',
     },
     [LlmTier.PRO]: {
       envVar: 'COPILOT_GOOGLE_MODEL_PRO',
-      model: '',
+      model: 'gemini-3.6-flash',
     },
   },
 };
