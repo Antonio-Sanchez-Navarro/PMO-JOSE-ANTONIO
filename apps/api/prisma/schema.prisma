@@ -168,6 +168,18 @@ model Task {
   /// tarea queda protegida del borrado por reproceso en vez de expuesta.
   source        TaskSource   @default(MANUAL)
   aiConfidence  Float?
+  /// Por qué la prioridad es la que es, cuando la subió el sistema y no la
+  /// persona. `null` mientras nadie la haya tocado.
+  ///
+  /// Denormalizado a propósito (decisión de Doc, 2026-07-29): `adjustPriority`
+  /// **nunca baja** la prioridad, solo escala, así que el último ajuste *es* la
+  /// explicación vigente y no hay varias razones compitiendo. El tablero pide
+  /// decenas de tarjetas para pintar una frase en cada una, y una tabla aparte
+  /// costaría un join de N filas o una petición por tarjeta para un tooltip.
+  priorityReason       String?
+  priorityAdjustedAt   DateTime?
+  /// De qué prioridad venía, para poder enseñar "de MEDIUM a URGENT".
+  priorityAdjustedFrom TaskPriority?
   /// Etiquetas libres que extrae el modelo del texto del correo ("TC", "KYC").
   /// Son texto suelto a propósito: nacen de cada análisis, no tienen dueño ni
   /// color. No confundir con `labels`, que son las de la persona.

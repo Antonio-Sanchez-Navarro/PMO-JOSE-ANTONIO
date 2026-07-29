@@ -387,6 +387,48 @@ del contrato no te cuadra, pídelo antes de rodearlo.
 > síntoma engaña, porque el código fuente está bien y solo falla contra el
 > servidor (ver `AI_ROLES.md`, notas de operación).
 
+## 7. Nuevo el 2026-07-29 — la tarea ya dice por qué subió de prioridad
+
+Deuda vieja del Sprint 3, cerrada por el backend hoy con el visto bueno de Doc.
+Hasta ahora, cuando la capa determinista subía la prioridad de una tarea, el
+motivo solo salía al log del servidor: la persona veía un `URGENT` que nadie le
+había pedido y no tenía forma de saber de dónde venía. Ya viaja en la respuesta.
+
+**Tres campos, planos en el objeto `Task`** (no anidados; el porqué está más
+abajo). Ya están en `@pmo/shared`, así que te llegan tipados sin tocar nada:
+
+| Campo | Tipo | Qué trae |
+|---|---|---|
+| `priorityReason` | `string \| null` | El motivo ya redactado, listo para pintar: `"vence en 3 h (<24 h): LOW → URGENT"` |
+| `priorityAdjustedAt` | ISO 8601 `\| null` | Cuándo se ajustó |
+| `priorityAdjustedFrom` | `TaskPriority \| null` | De qué prioridad venía (`"LOW"`) |
+
+**La regla para pintar es una sola: si `priorityReason` trae texto, hubo ajuste;
+si es `null` o no viene, la prioridad es la que se pidió y no hay nada que
+explicar.** No pintes un tooltip vacío en ese caso: una etiqueta de "ajustada"
+en una tarea que nadie tocó se lee como un fallo del sistema. La mayoría de las
+tareas no lleva motivo, y eso es lo normal.
+
+Llegan en los tres sitios por los que ya lees tareas, sin diferencias entre
+ellos: `GET /tasks` (el listado del tablero), el **201** de `POST /tasks` y los
+eventos `task.created` / `task.updated` de socket. Los rellenan las tres vías
+por las que una prioridad puede subir: la creación manual con fecha apretada, la
+extracción desde correo (que es de donde nace casi todo) y el barrido nocturno
+de tareas vencidas.
+
+**Tu mitad**: pintarlo en `TaskCard`. Sugerencia, no obligación —el badge de
+prioridad con un `title={task.priorityReason}` y alguna marca visual discreta
+al lado, en la línea de lo que ya hace `AiAuditBadge` con la confianza. Si
+prefieres otra forma de enseñarlo, adelante: el dato ya está, la decisión visual
+es tuya.
+
+> **Por qué planos y no anidados en un `priorityAudit`**: Doc pidió anidarlos y
+> deliberadamente no lo hice. Prisma los devuelve planos en los tres canales de
+> arriba sin mapeo; anidarlos obligaría a mapear en cinco sitios y con que uno
+> se olvidara te llegarían dos formas distintas del mismo dato según por dónde
+> entrara la tarea. Se lo dije explícitamente; si él decide anidarlos, lo cambio
+> en los cinco y te aviso antes.
+
 ---
 
 # Sprint 5 y anteriores — referencia

@@ -151,7 +151,17 @@ describe('OverdueService — barrido y reevaluación del tablero', () => {
 
       const result = await service.sweep(NOW);
 
-      expect(writes(prisma)).toEqual({ t1: { priority: TaskPriority.URGENT } });
+      // El motivo se guarda con la tarjeta, no solo en el log: este barrido sube
+      // prioridades a una hora en la que nadie mira, y sin esto la persona se
+      // encuentra una tarea en URGENT sin saber por qué.
+      expect(writes(prisma)).toEqual({
+        t1: {
+          priority: TaskPriority.URGENT,
+          priorityReason: expect.stringContaining('LOW → URGENT'),
+          priorityAdjustedFrom: TaskPriority.LOW,
+          priorityAdjustedAt: NOW,
+        },
+      });
       expect(result).toMatchObject({ moved: 0, escalated: 1 });
     });
 
@@ -162,6 +172,9 @@ describe('OverdueService — barrido y reevaluación del tablero', () => {
 
       expect(writes(prisma).t1).toEqual({
         priority: TaskPriority.URGENT,
+        priorityReason: expect.stringContaining('LOW → URGENT'),
+        priorityAdjustedFrom: TaskPriority.LOW,
+        priorityAdjustedAt: NOW,
         status: TaskStatus.OVERDUE,
         position: 0,
       });
@@ -175,7 +188,14 @@ describe('OverdueService — barrido y reevaluación del tablero', () => {
 
       const result = await service.sweep(NOW);
 
-      expect(writes(prisma)).toEqual({ t1: { priority: TaskPriority.URGENT } });
+      expect(writes(prisma)).toEqual({
+        t1: {
+          priority: TaskPriority.URGENT,
+          priorityReason: expect.stringContaining('MEDIUM → URGENT'),
+          priorityAdjustedFrom: TaskPriority.MEDIUM,
+          priorityAdjustedAt: NOW,
+        },
+      });
       expect(result).toMatchObject({ moved: 0, escalated: 1 });
     });
 

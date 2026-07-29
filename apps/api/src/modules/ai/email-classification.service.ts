@@ -40,6 +40,17 @@ export interface TaskDraft {
   dueDate: Date | null;
   /** `EMAIL` si la extrajo el modelo; `MANUAL` si es el respaldo del asunto. */
   source: TaskSource;
+  /**
+   * Por qué la capa determinista subió la prioridad que propuso el modelo, o
+   * `null` si la dejó como venía.
+   *
+   * Viaja en el borrador —y no solo al log— porque este es el camino por el que
+   * nacen casi todas las tareas: si el motivo se quedara aquí, la tarjeta del
+   * tablero no tendría nada que enseñar.
+   */
+  priorityReason: string | null;
+  /** De qué prioridad venía. `null` si no hubo ajuste. */
+  priorityAdjustedFrom: TaskPriority | null;
 }
 
 /** Resultado del análisis sin tocar la base de datos. */
@@ -104,6 +115,16 @@ export class EmailClassificationService {
       aiConfidence,
       position: index,
       source: task.source,
+      // Solo si hubo ajuste: una tarea que nace con la prioridad que dijo el
+      // modelo no tiene nada que explicar, y un motivo vacío en la tarjeta se
+      // leería como que el sistema la tocó.
+      ...(task.priorityReason
+        ? {
+            priorityReason: task.priorityReason,
+            priorityAdjustedAt: new Date(),
+            priorityAdjustedFrom: task.priorityAdjustedFrom,
+          }
+        : {}),
     }));
 
     const tasks = await this.prisma.$transaction(async (tx) => {
@@ -182,16 +203,22 @@ export class EmailClassificationService {
     );
 
     let tasks: TaskDraft[] = isActionable
-      ? analysis.tasks.map((task, i) => ({
-          title: titulos[i],
-          description: task.description,
+      ? analysis.tasks.map((task, i) => {
           // La prioridad del modelo pasa por la capa determinista antes de
           // persistirse: la fecha puede subirla, nunca bajarla.
-          priority: this.resolvePriority(task, analysis.aiConfidence, email.id),
-          tags: task.tags,
-          dueDate: task.dueDate,
-          source: TaskSource.EMAIL,
-        }))
+          const decidida = this.resolvePriority(task, analysis.aiConfidence, email.id);
+
+          return {
+            title: titulos[i],
+            description: task.description,
+            priority: decidida.priority,
+            tags: task.tags,
+            dueDate: task.dueDate,
+            source: TaskSource.EMAIL,
+            priorityReason: decidida.reason,
+            priorityAdjustedFrom: decidida.from,
+          };
+        })
       : [];
 
     // El modelo no vio nada accionable pero una persona insiste: no la dejamos
@@ -214,6 +241,11 @@ export class EmailClassificationService {
           tags: [],
           dueDate: null,
           source: TaskSource.MANUAL,
+          // El respaldo desde el asunto nace en MEDIUM sin pasar por la capa
+          // determinista: no hay fecha que pueda escalarla, así que no hay nada
+          // que explicar.
+          priorityReason: null,
+          priorityAdjustedFrom: null,
         },
       ];
     }
@@ -239,7 +271,7 @@ export class EmailClassificationService {
     task: { title: string; priority: TaskPriority; dueDate: Date | null },
     aiConfidence: number,
     emailId: string,
-  ): TaskPriority {
+  ): { priority: TaskPriority; reason: string | null; from: TaskPriority | null } {
     const decision = adjustPriority(
       { priority: task.priority, dueDate: task.dueDate, aiConfidence },
       // `new Date()` explícito: la función es pura y el instante entra por
@@ -251,6 +283,12 @@ export class EmailClassificationService {
       this.logger.log(`Prioridad ajustada en "${task.title}" (email ${emailId}): ${decision.reason}`);
     }
 
-    return decision.priority;
+    // Devuelve el motivo además de la prioridad: antes solo salía al log, donde
+    // la interfaz no puede leerlo y donde se pierde al rotar.
+    return {
+      priority: decision.priority,
+      reason: decision.adjusted ? decision.reason : null,
+      from: decision.adjusted ? task.priority : null,
+    };
   }
 }

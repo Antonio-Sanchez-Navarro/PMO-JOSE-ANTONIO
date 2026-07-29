@@ -264,6 +264,41 @@ describe('TasksService.create', () => {
     expect(creada().priority).toBe('URGENT');
   });
 
+  describe('auditoría de prioridad', () => {
+    it('guarda el motivo con la tarea, no solo en el log', async () => {
+      await service.create(USER, { title: 'x', priority: 'LOW' as any, dueDate: inHours(3) });
+
+      // Hasta la deuda del Sprint 3, el porqué solo quedaba en el log del
+      // proceso: la interfaz no podía leerlo y se perdía al rotar.
+      expect(creada()).toMatchObject({
+        priority: 'URGENT',
+        priorityReason: expect.stringContaining('LOW → URGENT'),
+        priorityAdjustedFrom: 'LOW',
+        priorityAdjustedAt: expect.any(Date),
+      });
+    });
+
+    it('una tarea que nace con la prioridad pedida no tiene nada que explicar', async () => {
+      await service.create(USER, { title: 'x', priority: 'LOW' as any, dueDate: inHours(200) });
+
+      // Un motivo vacío en la tarjeta se leería como que el sistema la tocó.
+      expect(creada().priorityReason).toBeUndefined();
+      expect(creada().priorityAdjustedFrom).toBeUndefined();
+    });
+
+    it('lo cumplido no se audita, porque tampoco se escala', async () => {
+      await service.create(USER, {
+        title: 'x',
+        status: 'DONE' as any,
+        priority: 'LOW' as any,
+        dueDate: inHours(-5),
+      });
+
+      expect(creada()).toMatchObject({ priority: 'LOW' });
+      expect(creada().priorityReason).toBeUndefined();
+    });
+  });
+
   it('respeta la prioridad elegida si la fecha está lejos', async () => {
     await service.create(USER, { title: 'x', priority: 'LOW' as any, dueDate: inHours(200) });
 

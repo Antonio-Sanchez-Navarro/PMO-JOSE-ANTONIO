@@ -65,7 +65,9 @@ export class TasksService {
     // El escalado no se aplica a lo que ya está cumplido.
     const priority = status === TaskStatus.DONE ? (dto.priority ?? TaskPriority.MEDIUM) : decision.priority;
 
-    if (decision.adjusted && status !== TaskStatus.DONE) {
+    const ajustada = decision.adjusted && status !== TaskStatus.DONE;
+
+    if (ajustada) {
       this.logger.log(`Prioridad al crear "${dto.title}": ${decision.reason}`);
     }
 
@@ -95,6 +97,16 @@ export class TasksService {
           ...(labels.length > 0 ? { labels: { connect: labels } } : {}),
           position: last ? last.position + 1 : 0,
           source: TaskSource.MANUAL,
+          // El motivo viaja con la tarea (deuda del Sprint 3): hasta ahora el
+          // porqué solo quedaba en el log del proceso, donde la interfaz no
+          // puede leerlo y donde se pierde al rotar.
+          ...(ajustada
+            ? {
+                priorityReason: decision.reason,
+                priorityAdjustedAt: now,
+                priorityAdjustedFrom: dto.priority ?? TaskPriority.MEDIUM,
+              }
+            : {}),
         },
         include: {
           labels: true,

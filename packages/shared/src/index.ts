@@ -61,6 +61,21 @@ export interface Task {
   totalTimeSec?: number;
   activeTimeEntryId?: string | null;
   activeTimeStartedAt?: string | null;
+  /**
+   * Por qué la prioridad de esta tarea no es la que pidió quien la creó, en
+   * texto ya legible (`"vence en 3 h (<24 h): LOW → URGENT"`). `null` o ausente
+   * cuando nadie la tocó, que es el caso normal: si hay texto, hubo ajuste.
+   *
+   * Los tres campos van planos y no anidados en un objeto a propósito: Prisma
+   * los devuelve así en `GET /tasks`, en el 201 de `POST /tasks` y en los
+   * eventos `task.*` de socket sin mapeo intermedio, y anidarlos obligaría a
+   * mapear en cinco sitios con el riesgo de que alguno quede con otra forma.
+   */
+  priorityReason?: string | null;
+  /** ISO 8601 del momento del ajuste. `null` si no hubo. */
+  priorityAdjustedAt?: string | null;
+  /** De qué prioridad venía antes del ajuste. `null` si no hubo. */
+  priorityAdjustedFrom?: TaskPriority | null;
   createdAt: string;
   updatedAt: string;
 }

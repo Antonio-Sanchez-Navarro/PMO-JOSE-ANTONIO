@@ -166,6 +166,14 @@ export class OverdueService {
         );
         if (decision.adjusted) {
           data.priority = decision.priority;
+          // El motivo se guarda con la tarjeta, no solo en el log: este barrido
+          // sube prioridades solo, a una hora en la que nadie mira, y sin esto
+          // la persona se encuentra una tarea en URGENT sin saber por qué.
+          // Sobrescribe el ajuste anterior a propósito: la prioridad nunca baja,
+          // así que el último motivo es el vigente.
+          data.priorityReason = decision.reason;
+          data.priorityAdjustedAt = now;
+          data.priorityAdjustedFrom = task.priority;
           this.logger.debug(`Prioridad de "${task.title}": ${decision.reason}`);
         }
 
