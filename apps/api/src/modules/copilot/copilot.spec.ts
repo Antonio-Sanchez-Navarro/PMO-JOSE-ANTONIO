@@ -1,4 +1,7 @@
-import { ServiceUnavailableException, ValidationPipe } from '@nestjs/common';
+import { BadGatewayException, ServiceUnavailableException, ValidationPipe } from '@nestjs/common';
+import { SendEmailDto } from './dto/send-email.dto';
+import { buildRawMessage, encodeHeader } from './email/mime';
+import { MockSender } from './email/email-sender';
 import type { ConfigService } from '@nestjs/config';
 import { GoogleStrategy } from './llm/google.strategy';
 import { AnthropicStrategy } from './llm/anthropic.strategy';
@@ -117,6 +120,128 @@ describe('Mapa de niveles', () => {
     for (const tier of Object.values(LlmTier)) {
       expect(tierConfig(LlmProvider.GOOGLE, tier, {}).model).not.toMatch(/gemini-1\.5/);
     }
+  });
+});
+
+describe('El correo que sale hacia Gmail', () => {
+  const borrador = {
+    to: ['cliente@ejemplo.com'],
+    cc: [],
+    subject: 'Actualización',
+    body: 'Buenos días,\n\nLe escribo sobre el lote 36.',
+  } as never;
+
+  /** Deshace el base64url para poder mirar el mensaje como lo verá Gmail. */
+  const leer = (raw: string) => Buffer.from(raw, 'base64url').toString('utf8');
+
+  it('el asunto con acentos va codificado, no en crudo', () => {
+    // En crudo, "Actualización" llega ilegible al destinatario o lo rechaza el
+    // servidor: las cabeceras son ASCII de siete bits.
+    expect(encodeHeader('Actualización')).toBe('=?UTF-8?B?QWN0dWFsaXphY2nDs24=?=');
+  });
+
+  it('un asunto en ASCII se deja legible, sin envolver', () => {
+    // Envolverlo sería ruido ilegible en un cliente que no lo decodifique.
+    expect(encodeHeader('Weekly update')).toBe('Weekly update');
+  });
+
+  it('lleva las cabeceras mínimas y separa el cuerpo con una línea en blanco', () => {
+    const [cabeceras, cuerpo] = leer(buildRawMessage(borrador)).split('\r\n\r\n');
+
+    expect(cabeceras).toContain('To: cliente@ejemplo.com');
+    expect(cabeceras).toContain('Content-Type: text/plain; charset="UTF-8"');
+    // Sin la línea en blanco, Gmail lee el correo entero como cabeceras.
+    expect(Buffer.from(cuerpo, 'base64').toString('utf8')).toBe(
+      'Buenos días,\n\nLe escribo sobre el lote 36.',
+    );
+  });
+
+  it('omite Cc cuando no hay copias, en vez de mandarlo vacío', () => {
+    expect(leer(buildRawMessage(borrador))).not.toContain('Cc:');
+    expect(leer(buildRawMessage({ ...(borrador as object), cc: ['jefe@ejemplo.com'] } as never)))
+      .toContain('Cc: jefe@ejemplo.com');
+  });
+
+  it('sale en base64url: el base64 normal viaja mal en la petición', () => {
+    const raw = buildRawMessage({ ...(borrador as object), body: 'ñ'.repeat(200) } as never);
+
+    expect(raw).not.toMatch(/[+/=]/);
+  });
+});
+
+describe('POST /copilot/emails/send', () => {
+  const borrador = {
+    to: ['cliente@ejemplo.com'],
+    subject: 'Actualización',
+    body: 'Cuerpo',
+  } as never;
+
+  const servicio = (send: jest.Mock) => new CopilotService(new LlmFactory([]), { send } as never);
+
+  it('devuelve lo que responde el transporte', async () => {
+    const send = jest.fn().mockResolvedValue({ id: 'msg-1', threadId: 'hilo-1', transport: 'gmail' });
+
+    await expect(servicio(send).sendEmail('user-1', borrador)).resolves.toEqual({
+      id: 'msg-1',
+      threadId: 'hilo-1',
+      transport: 'gmail',
+    });
+    expect(send).toHaveBeenCalledWith('user-1', borrador);
+  });
+
+  it('un fallo de Gmail sale como 502, no como 500', async () => {
+    // El problema es del servicio de arriba —token caducado, cuota, dirección
+    // rechazada— y quien lo lea necesita saber que reintentar puede servir.
+    const send = jest.fn().mockRejectedValue(new Error('invalid_grant'));
+
+    await expect(servicio(send).sendEmail('user-1', borrador)).rejects.toThrow(BadGatewayException);
+  });
+
+  it('el mensaje crudo de Google no se filtra al cliente', async () => {
+    const send = jest.fn().mockRejectedValue(new Error('invalid_grant: token expired for xyz'));
+
+    await expect(servicio(send).sendEmail('user-1', borrador)).rejects.not.toThrow(/invalid_grant/);
+  });
+
+  it('el simulado no envía y lo dice en la respuesta', async () => {
+    // `transport` viaja para que la interfaz pueda avisar en vez de dar por
+    // enviado lo que no salió.
+    expect(await new MockSender().send('user-1', borrador)).toEqual({
+      id: null,
+      threadId: null,
+      transport: 'mock',
+    });
+  });
+});
+
+describe('SendEmailDto — el contrato del envío', () => {
+  const validarEnvio = (body: unknown) =>
+    validateSync(plainToInstance(SendEmailDto, body), { whitelist: true }).map((e) => e.property);
+
+  const valido = { to: ['cliente@ejemplo.com'], subject: 'Hola', body: 'Cuerpo' };
+
+  it('acepta el borrador mínimo', () => {
+    expect(validarEnvio(valido)).toEqual([]);
+  });
+
+  it('exige al menos un destinatario', () => {
+    expect(validarEnvio({ ...valido, to: [] })).toContain('to');
+  });
+
+  it('rechaza direcciones que no lo son', () => {
+    // El modelo redacta el borrador y puede inventarse una dirección; que la
+    // rechace el servidor evita una llamada perdida a Gmail y un error opaco.
+    expect(validarEnvio({ ...valido, to: ['sin-arroba'] })).toContain('to');
+    expect(validarEnvio({ ...valido, cc: ['tampoco vale'] })).toContain('cc');
+  });
+
+  it('cc es opcional', () => {
+    expect(validarEnvio({ ...valido, cc: undefined })).toEqual([]);
+  });
+
+  it('exige asunto y cuerpo', () => {
+    expect(validarEnvio({ ...valido, subject: '' })).toContain('subject');
+    expect(validarEnvio({ ...valido, body: '' })).toContain('body');
   });
 });
 
@@ -416,10 +541,13 @@ describe('LlmFactory — elegir proveedor', () => {
   });
 });
 
+/** Emisor de correo de mentira: estas pruebas son del chat, no del envío. */
+const SIN_CORREO = { send: jest.fn() } as never;
+
 describe('CopilotService', () => {
   it('el proveedor no configurado falla en la llamada, antes de abrir el stream', () => {
     const factory = new LlmFactory([estrategia(LlmProvider.GOOGLE, false)]);
-    const service = new CopilotService(factory);
+    const service = new CopilotService(factory, SIN_CORREO);
 
     // Si el 503 saliera dentro del generador, el controlador ya habría mandado
     // las cabeceras SSE y el cliente vería una respuesta cortada en vez de un
@@ -434,7 +562,7 @@ describe('CopilotService', () => {
       yield { type: 'text', text: 'hola' } as LlmChunk;
     })());
     const anthropic = { ...estrategia(LlmProvider.ANTHROPIC), stream };
-    const service = new CopilotService(new LlmFactory([anthropic]));
+    const service = new CopilotService(new LlmFactory([anthropic]), SIN_CORREO);
 
     const trozos: LlmChunk[] = [];
     for await (const chunk of service.chat('user-1', CUERPO_MINIMO)) {
@@ -452,6 +580,7 @@ describe('CopilotService', () => {
     const stream = jest.fn().mockReturnValue((async function* () {})());
     const service = new CopilotService(
       new LlmFactory([{ ...estrategia(LlmProvider.ANTHROPIC), stream }]),
+      SIN_CORREO,
     );
     const abort = new AbortController();
 

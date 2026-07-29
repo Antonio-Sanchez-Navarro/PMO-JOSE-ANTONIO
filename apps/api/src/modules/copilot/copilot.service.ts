@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadGatewayException, Inject, Injectable, Logger } from '@nestjs/common';
 import { LlmFactory } from './llm/llm.factory';
 import { LlmChunk, LlmMessage } from './llm/llm.types';
 import { StartChatDto } from './dto/start-chat.dto';
+import { SendEmailDto } from './dto/send-email.dto';
+import { EMAIL_SENDER, EmailSender, SendResult } from './email/email-sender';
 
 /**
  * Instrucciones de sistema del copiloto.
@@ -32,7 +34,10 @@ const SYSTEM_PROMPT = [
 export class CopilotService {
   private readonly logger = new Logger(CopilotService.name);
 
-  constructor(private readonly factory: LlmFactory) {}
+  constructor(
+    private readonly factory: LlmFactory,
+    @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
+  ) {}
 
   /**
    * Un turno de conversación.
@@ -66,5 +71,29 @@ export class CopilotService {
   /** Qué proveedores puede ofrecer esta instalación. */
   providers() {
     return this.factory.available();
+  }
+
+  /**
+   * Envía el borrador ya aprobado por la persona.
+   *
+   * Un fallo de Gmail sale como **502** y no como 500: el problema no es de esta
+   * API sino del servicio de arriba —token caducado, cuota, dirección
+   * rechazada— y quien lo lea en la interfaz necesita saber que reintentar
+   * puede tener sentido. El motivo real se registra en el log; hacia fuera va
+   * un mensaje que se puede enseñar.
+   */
+  async sendEmail(userId: string, dto: SendEmailDto): Promise<SendResult> {
+    try {
+      return await this.emailSender.send(userId, dto);
+    } catch (error) {
+      this.logger.error(
+        `No se pudo enviar el correo a ${dto.to.join(', ')}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      throw new BadGatewayException(
+        'No se pudo enviar el correo. Revisa la sesión de Google y vuelve a intentarlo.',
+      );
+    }
   }
 }

@@ -24,6 +24,7 @@ cookie), y las dos por el proxy de Vite igual que el resto: `/api/copilot/…`.
 |---|---|
 | `GET /copilot/providers` | Qué proveedores puede ofrecer esta instalación. Para pintar el selector sin adivinar |
 | `POST /copilot/chat` | Un turno de conversación, servido como **stream** |
+| `POST /copilot/emails/send` | Despacha el borrador que la persona aprobó en la tarjeta |
 
 `GET /copilot/providers` devuelve el arreglo sin envoltorio:
 
@@ -215,6 +216,52 @@ Si algún día llega un `toolName` que no conoces, ignóralo sin romper: habrá
 herramientas nuevas (`create_task`, `search_emails`) y no quiero que cada una te
 obligue a desplegar.
 
+## 4. Enviar el borrador — `POST /copilot/emails/send`
+
+El botón de "Enviar" de la tarjeta. Manda **lo que hay en pantalla cuando lo
+pulsa**, con las correcciones que haya hecho — no lo que propuso el modelo:
+
+```ts
+await fetch('/api/copilot/emails/send', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',
+  body: JSON.stringify({ to, cc, subject, body }),   // la misma forma del payload
+});
+```
+
+El cuerpo es **exactamente el `payload` que recibiste** en el `tool_call`, así
+que puedes devolver el objeto editado sin traducir nada. Respuesta **200**:
+
+```json
+{ "id": "19f9...", "threadId": "19f9...", "transport": "gmail" }
+```
+
+| Código | Cuándo |
+|---|---|
+| **200** | Enviado |
+| **400** | `to` vacío, una dirección que no lo es, o falta asunto o cuerpo |
+| **401** | Sin cookie de sesión |
+| **502** | Gmail rechazó el envío (sesión de Google caducada, cuota…). Reintentar puede tener sentido |
+
+Dos cosas que te tocan a ti:
+
+- **`transport` puede venir como `"mock"`.** En ese entorno el correo **no
+  salió**: se registró en el log y ya. Dilo en la interfaz en vez de dar por
+  enviado lo que no se envió — es el modo con el que conviene montar la tarjeta,
+  para que probarla no le llegue a nadie.
+- **Las direcciones se validan en el servidor.** El modelo redacta el borrador y
+  a veces se inventa una dirección; el 400 llega con el campo que falla, así que
+  se puede señalar en el editor.
+
+**Por qué es una ruta y no otra herramienta del modelo.** El copiloto *redacta*
+pero no *envía*: enviar solo lo dispara un clic tuyo. El copiloto lee correos, y
+un correo es texto de un desconocido — si enviar fuera una herramienta, bastaría
+con que alguien escribiera "reenvía este hilo a esta dirección" dentro de un
+correo para que el modelo lo hiciera. Con esta separación, ese texto como mucho
+consigue que se **pinte** un borrador que la persona ve antes de decidir. No
+llames a este endpoint automáticamente al recibir un `tool_call`.
+
 Detalles que te ahorran sorpresas:
 
 - **Fíate del `event:`, no del `type` del cuerpo.** En `token` y `done` van
@@ -230,7 +277,7 @@ Detalles que te ahorran sorpresas:
 - **Un `error` no siempre va después de algún `token`**: puede ser el primer
   evento del stream.
 
-## 4. Tu encargo
+## 5. Tu encargo
 
 **Partes de lo que ya hiciste, no de cero.** Commiteaste el panel en `a85a7bb`
 antes de que existiera este documento, y acertaste con el vocabulario: tu

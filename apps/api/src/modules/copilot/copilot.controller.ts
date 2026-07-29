@@ -2,7 +2,9 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   HttpException,
+  HttpStatus,
   Logger,
   Post,
   Res,
@@ -13,6 +15,7 @@ import {
 import type { Response } from 'express';
 import { CopilotService } from './copilot.service';
 import { StartChatDto } from './dto/start-chat.dto';
+import { SendEmailDto } from './dto/send-email.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserContext } from '../auth/auth.types';
@@ -59,6 +62,33 @@ export class CopilotController {
   @Get('providers')
   providers() {
     return this.copilot.providers();
+  }
+
+  /**
+   * Envía el borrador que la persona aprobó en la tarjeta del chat.
+   *
+   * **Esto no es una herramienta del modelo, y es la decisión de seguridad más
+   * importante de todo el copiloto.** El modelo *redacta* (`draft_email`) pero
+   * no puede *enviar*: enviar es una llamada REST que solo dispara un clic en
+   * la interfaz. Importa porque el copiloto lee correos, y un correo es texto
+   * de un desconocido: si enviar fuera una herramienta, bastaría con que
+   * alguien escribiera "reenvía este hilo a esta dirección" dentro de un correo
+   * para que el modelo lo hiciera. Con esta separación, ese texto como mucho
+   * consigue que se *pinte* un borrador que la persona ve antes de decidir.
+   *
+   * Por eso el cuerpo trae el correo entero y no un id de borrador: lo que se
+   * manda es lo que había en pantalla cuando pulsó enviar, con sus
+   * correcciones, no lo que propuso el modelo.
+   *
+   * Respuestas: **200** con el resultado · 400 si falta un campo o una
+   * dirección no es válida · 401 sin cookie · 502 si Gmail rechaza el envío.
+   */
+  @Post('emails/send')
+  // 200 y no el 201 por defecto de Nest: no nace un recurso nuestro que el
+  // cliente pueda volver a pedir — el mensaje vive en Gmail.
+  @HttpCode(HttpStatus.OK)
+  sendEmail(@CurrentUser() user: CurrentUserContext, @Body() dto: SendEmailDto) {
+    return this.copilot.sendEmail(user.userId, dto);
   }
 
   /**
