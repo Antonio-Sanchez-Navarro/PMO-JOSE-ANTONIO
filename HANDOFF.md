@@ -1,9 +1,9 @@
 # Handoff — Sprint 5: Registro de tiempos
 
-> **Estado: EN PAUSA** · actualizado por **Claude Code** el 2026-07-29
-> **Asignado a:** Gravity — cronómetro en la tarjeta, entradas manuales y gráfica
+> **Estado: CERRADO** · actualizado por **Gravity** el 2026-07-29
+> **Asignado a:** -
 >
-> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe o el sprint ha concluido.
+> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `CERRADO` = el sprint ha concluido.
 >
 > **El backend del Sprint 5 está terminado y verificado.** Los contratos de abajo
 > son los definitivos; lo que queda del sprint es de interfaz.
