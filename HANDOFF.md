@@ -1,15 +1,222 @@
-# Handoff — Sprint 5: Registro de tiempos
+# Handoff — Sprint 6: Copiloto de IA
 
-> **Estado: CERRADO** · actualizado por **Claude Code** el 2026-07-29
-> **Asignado a:** nadie — a la espera de la planeación del Sprint 6
+> **Estado: TRABAJAR** · actualizado por **Claude Code** el 2026-07-29
+> **Asignado a:** Gravity — el panel de chat del copiloto
 >
-> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `CERRADO` = el sprint ha concluido.
+> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe. `CERRADO` = el sprint ha concluido.
 >
-> **Sprint 5 terminado y verificado**, backend e interfaz, con la revisión manual
-> del usuario sobre la app corriendo. Los contratos de abajo son los definitivos
-> y se quedan aquí como referencia mientras se planifica el Sprint 6.
+> Doc aprobó la arquitectura del copiloto el 2026-07-29 y dio luz verde a la
+> dependencia de Gemini. **El backend del chat está en pie y verificado contra
+> la app**; lo que sigue es la interfaz.
+>
+> El Sprint 5 está cerrado; sus contratos siguen más abajo como referencia.
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
+
+---
+
+# Sprint 6 — Copiloto de IA
+
+Hay dos rutas nuevas, las dos tras el `AuthGuard` de siempre (**401** sin
+cookie), y las dos por el proxy de Vite igual que el resto: `/api/copilot/…`.
+
+| Verbo y ruta | Qué hace |
+|---|---|
+| `GET /copilot/providers` | Qué proveedores puede ofrecer esta instalación. Para pintar el selector sin adivinar |
+| `POST /copilot/chat` | Un turno de conversación, servido como **stream** |
+
+`GET /copilot/providers` devuelve el arreglo sin envoltorio:
+
+```json
+[
+  { "provider": "anthropic", "ready": true },
+  { "provider": "google", "ready": false }
+]
+```
+
+**Pinta solo los que traen `ready: true`.** Un proveedor con `ready: false` está
+declarado pero no configurado en este entorno (le falta la credencial o los ids
+de modelo); pedirlo devuelve **503** con el motivo. Hoy Gemini sale `false`:
+la dependencia ya está instalada y el código escrito, pero faltan
+`GEMINI_API_KEY` y los ids, que los pone quien conecte la cuenta.
+
+## 1. El contrato — `StartChatDto`
+
+Cuerpo de `POST /copilot/chat`:
+
+```ts
+{
+  provider: 'anthropic' | 'google';   // obligatorio
+  tier: 'light' | 'pro';              // obligatorio
+  message: string;                    // obligatorio, 1–20 000 caracteres
+  threadId?: string;                  // ver el aviso de abajo
+  context?: {                         // ids, nunca contenido
+    taskId?: string;
+    emailId?: string;
+  };
+}
+```
+
+**No mandes un id de modelo.** No hay campo para eso, y es deliberado: si el
+cuerpo aceptara `model: "claude-opus-5"` habría que desplegar el frontend cada
+vez que sale un modelo nuevo. Tú pides **capacidad** —proveedor y nivel— y el
+backend traduce a un id. Hoy, para Anthropic: `light` → Haiku 4.5 (rápido y
+barato), `pro` → Opus 5 (el capaz). Esa tabla puede cambiar sin tocarte nada.
+
+Si mandas `model` de todas formas, el campo se descarta y la petición responde
+200 con el modelo que dicta el nivel — **no** da 400. Es una rareza del
+`ValidationPipe` global, está anotada en el controlador, y lo importante se
+sostiene: el cliente no puede elegir modelo.
+
+**Los dos son obligatorios y no hay valor por defecto.** No es rigidez: un
+default escondería en qué modelo se gastó el dinero, y una respuesta del
+copiloto se lee distinto según quién la escribió. Guarda la última elección del
+usuario en el cliente si no quieres que la repita cada vez.
+
+- **`tier`**: `light` para lo interactivo y de bajo riesgo (reformular, resumir
+  un hilo); `pro` para lo que decide algo (redactar un correo que se va a
+  enviar, razonar sobre varias tareas). No es solo coste: `pro` tarda más.
+- **`context`**: manda **ids**, no texto. El backend lee la tarea o el correo de
+  la base comprobando que son del usuario. Si mandaras el contenido, cualquiera
+  podría colar en el prompt un contexto que no le pertenece.
+- **`threadId`**: está en el contrato pero **todavía no hace nada**. La
+  persistencia de hilos es la siguiente pieza del sprint; hoy cada llamada es un
+  turno suelto. Va ya declarado para que no tengas que cambiar la firma cuando
+  empiece a guardarse — mándalo si lo tienes, ignóralo si no.
+
+**Errores antes del stream** (respuestas HTTP normales, con su cuerpo JSON):
+
+| Código | Cuándo |
+|---|---|
+| **400** | `provider` o `tier` fuera del vocabulario, o `message` vacío |
+| **401** | Sin cookie de sesión |
+| **503** | El proveedor está declarado pero no configurado (hoy, `google`) |
+
+Todo esto pasa **antes** de que se escriba una sola cabecera, así que puedes
+tratarlo con el mismo manejo de errores que el resto de la API. Lo que falle una
+vez empezado el stream ya no puede cambiar el código de estado y viaja como
+evento `error` (ver abajo).
+
+## 2. Cómo se consume — `fetch` + `ReadableStream`, no `EventSource`
+
+`POST /copilot/chat` responde `200` con `Content-Type: text/event-stream` y va
+soltando la respuesta según la genera el modelo.
+
+**No uses `EventSource`.** Es la herramienta natural para SSE y aquí no sirve:
+el `EventSource` del navegador **solo hace `GET` y no manda cuerpo**, y esto
+necesita uno (el mensaje puede tener miles de caracteres y el contexto es un
+objeto). Las alternativas eran meter el prompt en la query —donde acaba en los
+logs de cualquier proxy y choca con el límite de longitud de URL— o partirlo en
+dos viajes, `POST` para crear el turno y `GET` para escucharlo, que obliga a
+guardar estado en el servidor entre los dos. Así que: `fetch` normal y lees
+`response.body`, que es un `ReadableStream`.
+
+```ts
+const res = await fetch('/api/copilot/chat', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',          // la sesión va en cookie httpOnly
+  body: JSON.stringify({ provider, tier, message }),
+  signal: abortController.signal,  // ver la nota sobre cancelar
+});
+
+if (!res.ok) {
+  // 400 / 401 / 503: cuerpo JSON normal, el stream no llegó a empezar
+  const { message } = await res.json();
+  throw new Error(message);
+}
+
+const reader = res.body!.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  buffer += decoder.decode(value, { stream: true });
+
+  // Los eventos se separan por una línea en blanco. El último trozo puede
+  // quedar a medias: se guarda en el búfer para la vuelta siguiente.
+  const bloques = buffer.split('\n\n');
+  buffer = bloques.pop() ?? '';
+
+  for (const bloque of bloques) {
+    const evento = bloque.match(/^event: (.+)$/m)?.[1];
+    const data = JSON.parse(bloque.match(/^data: (.+)$/m)?.[1] ?? '{}');
+    // …despacha según `evento` (ver la sección siguiente)
+  }
+}
+```
+
+Tres cosas que se rompen si se saltan:
+
+1. **Acumula en un búfer.** Un `read()` no devuelve un evento entero: devuelve
+   los bytes que hayan llegado. Partir por `\n\n` sin guardar el resto trocea
+   mensajes por la mitad y revienta el `JSON.parse`.
+2. **`decode(value, { stream: true })`.** Sin esa opción, un carácter multibyte
+   —una tilde, una eñe— partido entre dos lecturas se decodifica mal.
+3. **Cancela con `AbortSignal`.** Al cerrar el panel o pulsar "parar", aborta el
+   `fetch`: el backend lo detecta y **corta la generación**. Sin eso se siguen
+   gastando tokens en una respuesta que ya no lee nadie.
+
+## 3. Los eventos — `token`, `done`, `error`
+
+Cada evento son dos líneas y **una línea en blanco** que lo cierra:
+
+```
+event: token
+data: {"type":"text","text":"Según el correo de "}
+
+event: token
+data: {"type":"text","text":"Escrituración, quedan tres"}
+
+event: done
+data: {"type":"done","model":"claude-haiku-4-5-20251001","usage":{"inputTokens":412,"outputTokens":58}}
+```
+
+| Evento | `data` | Qué hacer |
+|---|---|---|
+| `token` | `{ type: 'text', text: string }` | **Concatena** `text` a lo que ya tienes. No es una frase ni una palabra: es el trozo que llegó |
+| `done` | `{ type: 'done', model: string, usage?: { inputTokens, outputTokens } }` | Fin limpio. `model` es el id **real** que respondió (con su fecha), útil para enseñar quién escribió |
+| `error` | `{ message: string }` | Algo falló ya empezada la respuesta. Enseña `message` y conserva lo que llevas pintado |
+
+Detalles que te ahorran sorpresas:
+
+- **Fíate del `event:`, no del `type` del cuerpo.** En `token` y `done` van
+  repetidos por comodidad; el `error` **no lleva `type`**.
+- **`text` puede traer saltos de línea**, pero nunca partidos: el cuerpo es JSON
+  de una sola línea, porque un salto dentro de `data:` se interpretaría como un
+  campo nuevo y rompería el evento en dos.
+- **El primer `token` puede tardar** unos segundos con `tier: 'pro'`: Opus 5
+  razona antes de escribir. Enseña un indicador desde que se manda la petición,
+  no desde el primer trozo.
+- **`done` puede no llegar** si la conexión se corta. Trata el fin del
+  `ReadableStream` como cierre igualmente.
+- **Un `error` no siempre va después de algún `token`**: puede ser el primer
+  evento del stream.
+
+## 4. Tu encargo
+
+1. **Panel lateral de chat** con el selector de proveedor y nivel, alimentado por
+   `GET /copilot/providers` (solo los `ready: true`).
+2. **Consumir el stream** como arriba, pintando los `token` según llegan.
+3. **Botón de parar** que aborte el `fetch` — es lo que corta la generación en
+   el backend.
+4. **Errores por código**: 400, 401 y 503 como respuesta normal; `event: error`
+   ya empezado el stream, sin perder lo pintado.
+
+Lo que **no** es tuyo todavía: la persistencia de hilos y el *tool use*
+(`create_task`, `search_emails`…) son las siguientes piezas del backend. Cuando
+existan, `threadId` empezará a funcionar sin cambiarte la firma.
+
+---
+
+# Sprint 5 y anteriores — referencia
+
+> Lo de aquí abajo está entregado y cerrado. Se queda porque los contratos
+> siguen vigentes y los vas a necesitar: el registro de tiempos, la máquina de
+> estados del triage y el resto de la API.
 
 ## Antes de nada: dos cosas que arreglé de lo tuyo
 
@@ -259,8 +466,11 @@ Es más rápido que deshacer un choque.
 
 ## Estado del repo
 
-- `293 pruebas en 9 suites`, todas en verde. Build de los tres paquetes, en
+- `320 pruebas en 10 suites`, todas en verde. Build de los tres paquetes, en
   verde, ya con Recharts dentro.
+- **`@google/genai` instalado** en `apps/api` (luz verde de Doc el 2026-07-29).
+  Se hoistea al `node_modules` de la raíz como el resto; si tu `npm install` no
+  lo trae, vuelve a instalar desde la raíz.
 - Migración `20260729153000_add_time_tracking` aplicada.
 - La API y Vite están levantados. Recuerda: **un solo `dev:api` a la vez**
   (ver `AI_ROLES.md`, notas de operación).

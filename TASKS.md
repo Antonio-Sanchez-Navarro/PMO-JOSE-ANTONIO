@@ -151,7 +151,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 ## Sprint 6 — Copiloto de IA (chat + redacción de correos)
 **Objetivo:** asistente embebido que actúa sobre el sistema y redacta correos.
 
-- [ ] 🔴 `CopilotModule`: chat con streaming (SSE) y persistencia de hilos
+- [ ] 🔴 `CopilotModule`: chat con streaming (SSE) y persistencia de hilos — 🚧 **el streaming está hecho; falta la persistencia de hilos** (Claude Code). `POST /copilot/chat` sirve `text/event-stream` con eventos `token`/`done`/`error`, y `GET /copilot/providers` enumera lo que puede ofrecer la instalación. El modelo se elige por **(proveedor, nivel)** y nunca por id: `provider` (`anthropic`|`google`) y `tier` (`light`|`pro`) son vocabulario cerrado que valida el enum, y la traducción a id vive en una tabla (`model-tiers.ts`) que puede cambiar sin tocar el frontend. Patrón Strategy + Factory: cada proveedor encapsula su SDK y el índice se arma al arrancar, así que añadir uno es su clase más una línea en el módulo. Gemini queda escrito y a la espera de `GEMINI_API_KEY` y sus ids. Es `POST` y no `@Sse` porque el `EventSource` del navegador solo hace `GET` y no manda cuerpo. 27 pruebas nuevas. _Verificado contra la app: 400 ante provider/tier inventados, 503 con un proveedor no configurado, y el stream real del tier ligero con sus eventos `token` y un `done` con modelo y contadores_
 - [ ] 🔴 **Tool use**: `create_task`, `search_emails`, `get_metrics`, `draft_email`
 - [ ] 🔴 `POST /copilot/draft-email` (genera borrador desde hilo/contexto)
 - [ ] 🔴 `POST /copilot/send-email` vía `gmail.send` **con confirmación humana**
