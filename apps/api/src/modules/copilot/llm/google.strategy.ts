@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI } from '@google/genai';
 import { LlmChatRequest, LlmChunk, LlmProvider, LlmStrategy, LlmTier } from './llm.types';
 import { tierConfig } from './model-tiers';
-import { DRAFT_EMAIL, DRAFT_EMAIL_DESCRIPTION, DRAFT_EMAIL_SCHEMA, parseDraftEmail } from './tools';
+import { COPILOT_TOOLS, parseToolArgs } from './tools';
 
 /** Mismo techo que en Anthropic: con streaming no hay riesgo de agotar el tiempo de HTTP. */
 const MAX_OUTPUT_TOKENS = 64_000;
@@ -16,15 +16,16 @@ const MAX_OUTPUT_TOKENS = 64_000;
  */
 const TOOLS = [
   {
-    functionDeclarations: [
-      {
-        name: DRAFT_EMAIL,
-        description: DRAFT_EMAIL_DESCRIPTION,
-        parametersJsonSchema: DRAFT_EMAIL_SCHEMA,
-      },
-    ],
+    functionDeclarations: COPILOT_TOOLS.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parametersJsonSchema: tool.schema,
+    })),
   },
 ];
+
+/** Los nombres que reconocemos, para descartar cualquier otro. */
+const NOMBRES = new Set<string>(COPILOT_TOOLS.map((t) => t.name));
 
 /**
  * El copiloto sobre Gemini.
@@ -106,10 +107,14 @@ export class GoogleStrategy implements LlmStrategy {
       // Aquí sí llegan dentro del stream, al revés que en Anthropic: `args`
       // viene ya como objeto, sin JSON parcial que reconstruir.
       for (const llamada of chunk.functionCalls ?? []) {
-        if (llamada.name !== DRAFT_EMAIL) continue;
+        if (!llamada.name || !NOMBRES.has(llamada.name)) continue;
 
         this.logger.log(`Herramienta ${llamada.name} solicitada por ${model}`);
-        yield { type: 'tool_call', toolName: llamada.name, payload: parseDraftEmail(llamada.args) };
+        yield {
+          type: 'tool_call',
+          toolName: llamada.name,
+          payload: parseToolArgs(llamada.name, llamada.args),
+        };
       }
 
       // Los contadores llegan en los trozos, no en un mensaje final como en

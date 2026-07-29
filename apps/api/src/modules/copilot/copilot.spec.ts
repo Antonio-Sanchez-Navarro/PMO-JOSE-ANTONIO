@@ -11,7 +11,15 @@ import type { ConfigService } from '@nestjs/config';
 import { GoogleStrategy } from './llm/google.strategy';
 import { AnthropicStrategy } from './llm/anthropic.strategy';
 import { COPILOT_EVENTS } from './copilot.controller';
-import { DRAFT_EMAIL, parseDraftEmail } from './llm/tools';
+import {
+  COPILOT_TOOLS,
+  CREATE_TASK,
+  DRAFT_EMAIL,
+  parseCreateTask,
+  parseDraftEmail,
+  parseToolArgs,
+} from './llm/tools';
+import { CopilotAuditService } from './audit/copilot-audit.service';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { StartChatDto } from './dto/start-chat.dto';
@@ -31,6 +39,37 @@ const CUERPO_MINIMO = {
   tier: LlmTier.PRO,
   message: 'Resume el hilo de Escrituración',
 };
+
+/** Hilos de mentira, con la forma mínima que usa el servicio. */
+const HILOS_BASE = () => ({
+  resolve: jest.fn().mockResolvedValue({ id: 'hilo-1', title: 'x' }),
+  history: jest.fn().mockResolvedValue([]),
+  saveTurn: jest.fn().mockResolvedValue(undefined),
+});
+
+/**
+ * Construye el servicio con dobles razonables y deja pisar lo que cada prueba
+ * mire. Sin esto, cada dependencia nueva obligaría a tocar todas las pruebas.
+ *
+ * La bitácora por defecto **ejecuta la acción**: es un envoltorio, no un
+ * interruptor, y una que no ejecutara convertiría en verdes pruebas que en
+ * realidad no llaman a nada.
+ */
+function copiloto(opts: Partial<Record<string, unknown>> = {}) {
+  return new CopilotService(
+    (opts.factory as LlmFactory) ?? new LlmFactory([]),
+    (opts.sender ?? { send: jest.fn() }) as never,
+    (opts.threads ?? HILOS_BASE()) as never,
+    (opts.context ?? { build: jest.fn().mockResolvedValue('') }) as never,
+    (opts.audit ?? {
+      record: (_u: string, _t: string, _a: unknown, fn: () => unknown) => fn(),
+      proposal: jest.fn(),
+      list: jest.fn(),
+    }) as never,
+    (opts.tasks ?? { create: jest.fn() }) as never,
+    (opts.prisma ?? {}) as never,
+  );
+}
 
 describe('StartChatDto — el contrato del chat', () => {
   it('acepta el cuerpo mínimo: proveedor, nivel y mensaje', () => {
@@ -181,8 +220,7 @@ describe('POST /copilot/emails/send', () => {
     body: 'Cuerpo',
   } as never;
 
-  const servicio = (send: jest.Mock) =>
-    new CopilotService(new LlmFactory([]), { send } as never, hilos(), sinContexto());
+  const servicio = (send: jest.Mock) => copiloto({ sender: { send } });
 
   it('devuelve lo que responde el transporte', async () => {
     const send = jest.fn().mockResolvedValue({ id: 'msg-1', threadId: 'hilo-1', transport: 'gmail' });
@@ -248,6 +286,101 @@ describe('SendEmailDto — el contrato del envío', () => {
   it('exige asunto y cuerpo', () => {
     expect(validarEnvio({ ...valido, subject: '' })).toContain('subject');
     expect(validarEnvio({ ...valido, body: '' })).toContain('body');
+  });
+});
+
+describe('create_task — la tarea que propone el copiloto', () => {
+  it('normaliza la propuesta a la forma que espera la tarjeta', () => {
+    expect(
+      parseCreateTask({
+        title: '  Llamar a la notaría  ',
+        priority: 'urgent',
+        dueDate: '2026-08-10T00:00:00.000Z',
+        sourceEmailId: 'cmr1',
+      }),
+    ).toEqual({
+      title: 'Llamar a la notaría',
+      description: '',
+      priority: 'URGENT',
+      dueDate: '2026-08-10T00:00:00.000Z',
+      sourceEmailId: 'cmr1',
+    });
+  });
+
+  it('una prioridad inventada cae a MEDIUM en vez de tumbar la propuesta', () => {
+    expect(parseCreateTask({ title: 'x', priority: 'MUY URGENTE' }).priority).toBe('MEDIUM');
+  });
+
+  it('una fecha que no lo es se descarta: "Invalid Date" en la tarjeta es peor', () => {
+    expect(parseCreateTask({ title: 'x', dueDate: 'mañana' }).dueDate).toBeNull();
+  });
+
+  it('sobrevive a una respuesta vacía', () => {
+    expect(parseCreateTask(undefined)).toEqual({
+      title: '',
+      description: '',
+      priority: 'MEDIUM',
+      dueDate: null,
+      sourceEmailId: null,
+    });
+  });
+
+  it('el despachador elige el parser por nombre, sin que las estrategias decidan', () => {
+    // Si cada proveedor eligiera el suyo, añadir una herramienta obligaría a
+    // tocar los dos y sería cuestión de tiempo que uno se quedara atrás.
+    expect(parseToolArgs(CREATE_TASK, { title: 'x' })).toHaveProperty('priority', 'MEDIUM');
+    expect(parseToolArgs(DRAFT_EMAIL, { to: 'a@b.mx' })).toHaveProperty('cc', []);
+  });
+
+  it('las dos herramientas viajan a los dos proveedores desde el mismo catálogo', () => {
+    expect(COPILOT_TOOLS.map((t) => t.name)).toEqual([DRAFT_EMAIL, CREATE_TASK]);
+  });
+});
+
+describe('Bitácora de auditoría', () => {
+  const prismaFalso = () => ({ copilotAuditLog: { create: jest.fn().mockResolvedValue({}) } });
+
+  it('registra la acción con su resultado cuando sale bien', async () => {
+    const prisma = prismaFalso();
+    const audit = new CopilotAuditService(prisma as never);
+
+    await audit.record('user-1', 'send_email', { to: ['a@b.mx'] }, async () => ({ id: 'msg-1' }));
+
+    expect(prisma.copilotAuditLog.create.mock.calls[0][0].data).toMatchObject({
+      userId: 'user-1',
+      toolName: 'send_email',
+      arguments: { to: ['a@b.mx'] },
+      result: { id: 'msg-1' },
+      ok: true,
+    });
+  });
+
+  it('registra también el fallo, y re-lanza el error: la bitácora observa, no decide', async () => {
+    const prisma = prismaFalso();
+    const audit = new CopilotAuditService(prisma as never);
+
+    await expect(
+      audit.record('user-1', 'send_email', {}, async () => {
+        throw new Error('invalid_grant');
+      }),
+    ).rejects.toThrow('invalid_grant');
+
+    expect(prisma.copilotAuditLog.create.mock.calls[0][0].data).toMatchObject({
+      ok: false,
+      result: { error: 'invalid_grant' },
+    });
+  });
+
+  it('si la bitácora falla, la acción sigue valiendo', async () => {
+    // El correo ya se envió: tumbar la petición por no poder anotarlo
+    // convertiría un problema de registro en uno de cara al usuario, y encima
+    // dejaría la acción hecha igualmente.
+    const prisma = { copilotAuditLog: { create: jest.fn().mockRejectedValue(new Error('db')) } };
+    const audit = new CopilotAuditService(prisma as never);
+
+    await expect(audit.record('user-1', 'send_email', {}, async () => 'enviado')).resolves.toBe(
+      'enviado',
+    );
   });
 });
 
@@ -562,7 +695,7 @@ const sinContexto = () => ({ build: jest.fn().mockResolvedValue('') }) as never;
 describe('CopilotService', () => {
   it('el proveedor no configurado falla en la llamada, antes de abrir el stream', async () => {
     const factory = new LlmFactory([estrategia(LlmProvider.GOOGLE, false)]);
-    const service = new CopilotService(factory, SIN_CORREO, hilos(), sinContexto());
+    const service = copiloto({ factory });
 
     // Si el 503 saliera dentro del generador, el controlador ya habría mandado
     // las cabeceras SSE y el cliente vería una respuesta cortada en vez de un
@@ -577,12 +710,7 @@ describe('CopilotService', () => {
       yield { type: 'text', text: 'hola' } as LlmChunk;
     })());
     const anthropic = { ...estrategia(LlmProvider.ANTHROPIC), stream };
-    const service = new CopilotService(
-      new LlmFactory([anthropic]),
-      SIN_CORREO,
-      hilos(),
-      sinContexto(),
-    );
+    const service = copiloto({ factory: new LlmFactory([anthropic]) });
 
     const trozos: LlmChunk[] = [];
     for await (const chunk of await service.chat('user-1', CUERPO_MINIMO)) {
@@ -606,12 +734,11 @@ describe('CopilotService', () => {
       for (const t of trozos) yield t;
     })());
 
-    const service = new CopilotService(
-      new LlmFactory([{ ...estrategia(LlmProvider.ANTHROPIC), stream }]),
-      SIN_CORREO,
-      threads as never,
-      context as never,
-    );
+    const service = copiloto({
+      factory: new LlmFactory([{ ...estrategia(LlmProvider.ANTHROPIC), stream }]),
+      threads,
+      context,
+    });
 
     return { service, stream };
   }
@@ -743,12 +870,9 @@ describe('CopilotService', () => {
 
   it('propaga la señal de cancelación para no seguir generando sin nadie al otro lado', async () => {
     const stream = jest.fn().mockReturnValue((async function* () {})());
-    const service = new CopilotService(
-      new LlmFactory([{ ...estrategia(LlmProvider.ANTHROPIC), stream }]),
-      SIN_CORREO,
-      hilos(),
-      sinContexto(),
-    );
+    const service = copiloto({
+      factory: new LlmFactory([{ ...estrategia(LlmProvider.ANTHROPIC), stream }]),
+    });
     const abort = new AbortController();
 
     await service.chat('user-1', CUERPO_MINIMO, abort.signal);

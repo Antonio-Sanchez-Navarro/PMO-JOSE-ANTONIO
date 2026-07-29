@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpException,
   HttpStatus,
@@ -18,7 +19,9 @@ import type { Response } from 'express';
 import { CopilotService } from './copilot.service';
 import { StartChatDto } from './dto/start-chat.dto';
 import { SendEmailDto } from './dto/send-email.dto';
+import { CreateTaskFromCopilotDto } from './dto/create-task-from-copilot.dto';
 import { ChatThreadsService } from './threads/chat-threads.service';
+import { SOCKET_ID_HEADER } from '../tasks/tasks.gateway';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserContext } from '../auth/auth.types';
@@ -87,6 +90,32 @@ export class CopilotController {
   @HttpCode(HttpStatus.NO_CONTENT)
   removeThread(@CurrentUser() user: CurrentUserContext, @Param('id') id: string) {
     return this.threadsService.remove(user.userId, id);
+  }
+
+  /**
+   * Crea la tarea que la persona confirmó en la tarjeta del chat.
+   *
+   * Mismo patrón que el correo y por el mismo motivo: el copiloto **propone**
+   * (evento `tool_call`) y crear solo lo dispara un clic. Un correo entrante
+   * podría pedirle al modelo que llene el tablero de tareas; así, como mucho
+   * consigue que se pinte una tarjeta que la persona ve antes de aceptar.
+   *
+   * Respuestas: **201** con la tarea creada, tal como la devuelve `POST /tasks`
+   * · 400 si falta el título · 404 si el `sourceEmailId` no es suyo.
+   */
+  @Post('tasks/create')
+  createTask(
+    @CurrentUser() user: CurrentUserContext,
+    @Body() dto: CreateTaskFromCopilotDto,
+    @Headers(SOCKET_ID_HEADER) socketId?: string,
+  ) {
+    return this.copilot.createTask(user.userId, dto, socketId);
+  }
+
+  /** La bitácora del copiloto: qué hizo, con qué argumentos y cómo acabó. */
+  @Get('audit')
+  audit(@CurrentUser() user: CurrentUserContext) {
+    return this.copilot.auditLog(user.userId);
   }
 
   /**

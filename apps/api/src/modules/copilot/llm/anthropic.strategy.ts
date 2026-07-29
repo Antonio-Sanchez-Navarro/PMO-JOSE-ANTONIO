@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { LlmChatRequest, LlmChunk, LlmProvider, LlmStrategy, LlmTier } from './llm.types';
 import { tierConfig } from './model-tiers';
-import { DRAFT_EMAIL, DRAFT_EMAIL_DESCRIPTION, DRAFT_EMAIL_SCHEMA, parseDraftEmail } from './tools';
+import { COPILOT_TOOLS, parseToolArgs } from './tools';
 
 /**
  * Tope de salida por respuesta.
@@ -15,14 +15,15 @@ import { DRAFT_EMAIL, DRAFT_EMAIL_DESCRIPTION, DRAFT_EMAIL_SCHEMA, parseDraftEma
  */
 const MAX_TOKENS = 64_000;
 
-/** Las herramientas del copiloto en el vocabulario de Anthropic. */
-const TOOLS: Anthropic.Tool[] = [
-  {
-    name: DRAFT_EMAIL,
-    description: DRAFT_EMAIL_DESCRIPTION,
-    input_schema: DRAFT_EMAIL_SCHEMA as unknown as Anthropic.Tool.InputSchema,
-  },
-];
+/** El catálogo compartido, traducido al vocabulario de Anthropic. */
+const TOOLS: Anthropic.Tool[] = COPILOT_TOOLS.map((tool) => ({
+  name: tool.name,
+  description: tool.description,
+  input_schema: tool.schema as unknown as Anthropic.Tool.InputSchema,
+}));
+
+/** Los nombres que reconocemos, para descartar cualquier otro. */
+const NOMBRES = new Set<string>(COPILOT_TOOLS.map((t) => t.name));
 
 /**
  * El copiloto sobre Claude.
@@ -98,10 +99,14 @@ export class AnthropicStrategy implements LlmStrategy {
     // escapado. Como una llamada a herramienta cierra el turno, el orden que ve
     // el cliente es el mismo: primero el texto, luego el `tool_call`.
     for (const bloque of final.content) {
-      if (bloque.type !== 'tool_use' || bloque.name !== DRAFT_EMAIL) continue;
+      if (bloque.type !== 'tool_use' || !NOMBRES.has(bloque.name)) continue;
 
       this.logger.log(`Herramienta ${bloque.name} solicitada por ${final.model}`);
-      yield { type: 'tool_call', toolName: bloque.name, payload: parseDraftEmail(bloque.input) };
+      yield {
+        type: 'tool_call',
+        toolName: bloque.name,
+        payload: parseToolArgs(bloque.name, bloque.input),
+      };
     }
 
     this.logger.log(

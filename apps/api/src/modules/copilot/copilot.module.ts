@@ -9,7 +9,9 @@ import { GoogleStrategy } from './llm/google.strategy';
 import { EMAIL_SENDER, GmailSender, MockSender } from './email/email-sender';
 import { ChatThreadsService } from './threads/chat-threads.service';
 import { CopilotContextService } from './context/copilot-context.service';
+import { CopilotAuditService } from './audit/copilot-audit.service';
 import { AuthModule } from '../auth/auth.module';
+import { TasksModule } from '../tasks/tasks.module';
 
 /**
  * Copiloto de IA (Sprint 6).
@@ -22,12 +24,16 @@ import { AuthModule } from '../auth/auth.module';
 @Module({
   // `AuthModule` porque el controlador va tras el `AuthGuard`; `ConfigModule`
   // porque cada estrategia lee su credencial y sus ids de modelo.
-  imports: [AuthModule, ConfigModule],
+  // `TasksModule` porque crear una tarea desde el copiloto reutiliza
+  // `TasksService`: ahí viven el escalado de prioridad, el nacer en `OVERDUE` y
+  // el aviso por socket al tablero. Duplicarlo aquí divergiría.
+  imports: [AuthModule, ConfigModule, TasksModule],
   controllers: [CopilotController],
   providers: [
     CopilotService,
     ChatThreadsService,
     CopilotContextService,
+    CopilotAuditService,
     LlmFactory,
     AnthropicStrategy,
     GoogleStrategy,

@@ -45,6 +45,99 @@ export const DRAFT_EMAIL_DESCRIPTION =
   'se le enseña en un editor, no se envía solo. No escribas el correo como texto ' +
   'de la respuesta — para eso está esta herramienta.';
 
+/** El nombre viaja tal cual en el evento SSE, igual que `draft_email`. */
+export const CREATE_TASK = 'create_task';
+
+/**
+ * Esquema de `create_task`.
+ *
+ * `sourceEmailId` es la razón por la que Doc pidió el contexto **antes** que
+ * las herramientas: si la persona tiene un correo abierto, la tarea que salga
+ * de él debe quedar enlazada. El modelo lo copia del bloque de contexto que ya
+ * recibe en el prompt.
+ *
+ * No hay `assigneeId`: hoy las tareas son de su dueño y no existe asignación a
+ * terceros en el esquema. Añadir el campo ahora sería un hueco que el modelo
+ * rellenaría con ids inventados.
+ */
+export const CREATE_TASK_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string', description: 'Qué hay que hacer, en una línea.' },
+    description: { type: 'string', description: 'Detalle o contexto de la tarea.' },
+    priority: {
+      type: 'string',
+      enum: ['LOW', 'MEDIUM', 'HIGH', 'URGENT'],
+      description: 'Prioridad. Si no está claro, MEDIUM.',
+    },
+    dueDate: {
+      type: 'string',
+      description: 'Fecha límite en ISO 8601, solo si el texto la menciona.',
+    },
+    sourceEmailId: {
+      type: 'string',
+      description:
+        'Id del correo del que sale la tarea. Cópialo del contexto si hay un correo abierto.',
+    },
+  },
+  required: ['title'],
+  additionalProperties: false,
+} as const;
+
+export const CREATE_TASK_DESCRIPTION =
+  'Propone una tarea para el tablero. Úsala cuando de la conversación o del correo salga ' +
+  'algo que haya que hacer. La tarea no se crea sola: se le enseña a la persona para que ' +
+  'la confirme, así que propón en vez de preguntar si quiere que la crees.';
+
+/**
+ * El catálogo completo, en un solo sitio.
+ *
+ * Cada estrategia lo traduce a su vocabulario (`input_schema` en Anthropic,
+ * `parametersJsonSchema` en Google) recorriendo esta lista, así que añadir una
+ * herramienta es una entrada aquí y nada más.
+ */
+export const COPILOT_TOOLS = [
+  { name: DRAFT_EMAIL, description: DRAFT_EMAIL_DESCRIPTION, schema: DRAFT_EMAIL_SCHEMA },
+  { name: CREATE_TASK, description: CREATE_TASK_DESCRIPTION, schema: CREATE_TASK_SCHEMA },
+] as const;
+
+/** Lo que viaja en `payload` del evento `tool_call`. */
+export interface CreateTaskPayload {
+  title: string;
+  description: string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  dueDate: string | null;
+  sourceEmailId: string | null;
+}
+
+const PRIORIDADES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
+
+/**
+ * Normaliza la propuesta de tarea a la forma exacta que espera el frontend.
+ *
+ * Misma razón que en el correo: los SDK entregan los argumentos sin tipar y la
+ * tarjeta no debería defenderse de un `priority` inventado o una fecha que no
+ * lo es. Una prioridad fuera del vocabulario cae a `MEDIUM` en vez de tumbar la
+ * propuesta entera — es lo que hace también la capa de prioridad del Sprint 3.
+ */
+export function parseCreateTask(args: unknown): CreateTaskPayload {
+  const entrada = (args ?? {}) as Record<string, unknown>;
+  const priority = typeof entrada.priority === 'string' ? entrada.priority.toUpperCase() : '';
+  const dueDate = typeof entrada.dueDate === 'string' ? entrada.dueDate : '';
+
+  return {
+    title: typeof entrada.title === 'string' ? entrada.title.trim() : '',
+    description: typeof entrada.description === 'string' ? entrada.description : '',
+    priority: (PRIORIDADES as readonly string[]).includes(priority)
+      ? (priority as CreateTaskPayload['priority'])
+      : 'MEDIUM',
+    // Una fecha que no se puede parsear se descarta: pintar "Invalid Date" en
+    // la tarjeta es peor que no enseñar fecha.
+    dueDate: dueDate && !Number.isNaN(Date.parse(dueDate)) ? new Date(dueDate).toISOString() : null,
+    sourceEmailId: typeof entrada.sourceEmailId === 'string' ? entrada.sourceEmailId : null,
+  };
+}
+
 /** Lo que viaja en `payload` del evento `tool_call`. */
 export interface DraftEmailPayload {
   to: string[];
@@ -76,6 +169,23 @@ function direcciones(valor: unknown): string[] {
  * La forma de salida es fija: los cuatro campos siempre, `to` y `cc` siempre
  * arreglos.
  */
+/**
+ * Normaliza los argumentos de la herramienta que sea.
+ *
+ * Un solo sitio donde se decide qué parser aplica: si cada estrategia eligiera
+ * el suyo, añadir una herramienta obligaría a tocar los dos proveedores y sería
+ * cuestión de tiempo que uno se quedara atrás.
+ */
+export function parseToolArgs(toolName: string, args: unknown): unknown {
+  if (toolName === DRAFT_EMAIL) return parseDraftEmail(args);
+  if (toolName === CREATE_TASK) return parseCreateTask(args);
+
+  // Una herramienta que no conocemos no debería llegar aquí —el catálogo lo
+  // fijamos nosotros— pero devolver lo que vino es mejor que reventar el
+  // stream a medias.
+  return args;
+}
+
 export function parseDraftEmail(args: unknown): DraftEmailPayload {
   const entrada = (args ?? {}) as Record<string, unknown>;
 

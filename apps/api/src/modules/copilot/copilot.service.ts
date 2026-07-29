@@ -1,4 +1,8 @@
-import { BadGatewayException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadGatewayException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../common/prisma/prisma.service';
+import { TasksService } from '../tasks/tasks.service';
+import { CopilotAuditService } from './audit/copilot-audit.service';
+import { CreateTaskFromCopilotDto } from './dto/create-task-from-copilot.dto';
 import { LlmFactory } from './llm/llm.factory';
 import { LlmChunk, LlmMessage } from './llm/llm.types';
 import { StartChatDto } from './dto/start-chat.dto';
@@ -41,6 +45,9 @@ export class CopilotService {
     @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
     private readonly threads: ChatThreadsService,
     private readonly context: CopilotContextService,
+    private readonly audit: CopilotAuditService,
+    private readonly tasks: TasksService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -141,6 +148,62 @@ export class CopilotService {
   }
 
   /**
+   * Crea la tarea que la persona confirmó en la tarjeta.
+   *
+   * Reutiliza `TasksService.create`, que es donde viven las reglas del tablero
+   * —el escalado de prioridad por fecha, nacer en `OVERDUE` si ya venció, la
+   * posición al final de la columna—. Una creación paralela aquí acabaría
+   * divergiendo de lo que hace el tablero, y la tarea del copiloto se
+   * comportaría distinto que las demás.
+   *
+   * El `sourceEmailId` se comprueba antes de enlazarlo: el id lo copia el
+   * modelo del bloque de contexto y uno ajeno colgaría la tarea del correo de
+   * otra persona.
+   */
+  async createTask(userId: string, dto: CreateTaskFromCopilotDto, socketId?: string) {
+    return this.audit.record(userId, 'create_task', dto, async () => {
+      const sourceEmailId = dto.sourceEmailId
+        ? (
+            await this.prisma.email.findFirst({
+              where: { id: dto.sourceEmailId, userId },
+              select: { id: true },
+            })
+          )?.id
+        : undefined;
+
+      if (dto.sourceEmailId && !sourceEmailId) {
+        throw new NotFoundException(`No existe el correo ${dto.sourceEmailId}`);
+      }
+
+      const task = await this.tasks.create(
+        userId,
+        {
+          title: dto.title,
+          description: dto.description,
+          priority: dto.priority,
+          dueDate: dto.dueDate ?? undefined,
+        } as never,
+        socketId,
+      );
+
+      // El enlace se pone después porque `TasksService.create` no lo acepta:
+      // su DTO es el del tablero, donde una tarea a mano no viene de un correo.
+      return sourceEmailId
+        ? this.prisma.task.update({
+            where: { id: task.id },
+            data: { sourceEmailId },
+            include: { labels: true },
+          })
+        : task;
+    });
+  }
+
+  /** La bitácora del copiloto, para el panel de auditoría. */
+  auditLog(userId: string) {
+    return this.audit.list(userId);
+  }
+
+  /**
    * Envía el borrador ya aprobado por la persona.
    *
    * Un fallo de Gmail sale como **502** y no como 500: el problema no es de esta
@@ -151,7 +214,12 @@ export class CopilotService {
    */
   async sendEmail(userId: string, dto: SendEmailDto): Promise<SendResult> {
     try {
-      return await this.emailSender.send(userId, dto);
+      // Envuelto en la bitácora: enviar un correo sale hacia afuera y es
+      // irreversible, así que es exactamente lo que hay que poder auditar tres
+      // meses después.
+      return await this.audit.record(userId, 'send_email', dto, () =>
+        this.emailSender.send(userId, dto),
+      );
     } catch (error) {
       this.logger.error(
         `No se pudo enviar el correo a ${dto.to.join(', ')}`,
