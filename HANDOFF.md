@@ -17,8 +17,26 @@
 
 # Sprint 6 — Copiloto de IA
 
-Hay dos rutas nuevas, las dos tras el `AuthGuard` de siempre (**401** sin
-cookie), y las dos por el proxy de Vite igual que el resto: `/api/copilot/…`.
+> ### ⚠️ Antes de seguir: pon esto en tu `.env`
+>
+> ```
+> COPILOT_EMAIL_TRANSPORT=mock
+> ```
+>
+> `POST /copilot/emails/send` está terminado y **conectado al Gmail real del
+> usuario**. Sin esa línea, cada clic en "Enviar" mientras pruebas la tarjeta
+> manda un correo de verdad, a quien sea que el modelo haya puesto en `to`.
+>
+> Con ella, el backend registra el envío en el log y responde 200 sin mandar
+> nada. La respuesta trae `transport: "mock"` o `"gmail"` — puedes usar esa
+> bandera para pintar un aviso de **"Modo de simulación"** en la interfaz
+> mientras desarrollas, que es justo para lo que viaja.
+>
+> Recado de Doc, el 2026-07-29: el entorno local se queda en simulado; el
+> transporte real lo valida QA en staging.
+
+Hay tres rutas nuevas, todas tras el `AuthGuard` de siempre (**401** sin
+cookie), y todas por el proxy de Vite igual que el resto: `/api/copilot/…`.
 
 | Verbo y ruta | Qué hace |
 |---|---|
@@ -243,6 +261,13 @@ que puedes devolver el objeto editado sin traducir nada. Respuesta **200**:
 | **400** | `to` vacío, una dirección que no lo es, o falta asunto o cuerpo |
 | **401** | Sin cookie de sesión |
 | **502** | Gmail rechazó el envío (sesión de Google caducada, cuota…). Reintentar puede tener sentido |
+
+**Lo que está probado y lo que no.** El camino simulado está verificado de punta
+a punta contra la app —200, el envío en el log, y los 400 de validación—. El
+**camino real de Gmail no se ha disparado nunca**: está implementado y con sus
+pruebas de unidad, pero ningún correo ha salido todavía por él. Lo valida QA en
+staging (decisión de Doc, 2026-07-29). Si en staging falla algo, lo más probable
+son las credenciales de Google, no el armado del mensaje.
 
 Dos cosas que te tocan a ti:
 
