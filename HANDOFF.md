@@ -198,12 +198,23 @@ Detalles que te ahorran sorpresas:
 
 ## 4. Tu encargo
 
-1. **Panel lateral de chat** con el selector de proveedor y nivel, alimentado por
-   `GET /copilot/providers` (solo los `ready: true`).
-2. **Consumir el stream** como arriba, pintando los `token` según llegan.
-3. **Botón de parar** que aborte el `fetch` — es lo que corta la generación en
+**Partes de lo que ya hiciste, no de cero.** Commiteaste el panel en `a85a7bb`
+antes de que existiera este documento, y acertaste con el vocabulario: tu
+`CopilotHeader` ya maneja `provider` (`anthropic` | `google`) y `tier`
+(`light` | `pro`), que son exactamente los del contrato. Sobre eso:
+
+1. **Cablear el envío.** Hoy `features/copilot/` es maqueta: no llama a la API
+   —comprobado, no hay un solo `fetch` en la carpeta—. Eso es bueno: llegas al
+   cableado con el contrato delante en vez de haberlo adivinado.
+2. **Consumir el stream** como en la sección 2, pintando los `token` según
+   llegan. Es aquí donde se pierde una tarde si se usa `EventSource`.
+3. **El selector tiene que preguntar.** `CopilotHeader` pinta los dos
+   proveedores fijos en el JSX; hoy elegir Google da **503**, porque le faltan
+   la credencial y los ids. Sácalos de `GET /copilot/providers` y pinta solo los
+   `ready: true` (o enséñalos deshabilitados, pero no como si funcionaran).
+4. **Botón de parar** que aborte el `fetch` — es lo que corta la generación en
    el backend.
-4. **Errores por código**: 400, 401 y 503 como respuesta normal; `event: error`
+5. **Errores por código**: 400, 401 y 503 como respuesta normal; `event: error`
    ya empezado el stream, sin perder lo pintado.
 
 Lo que **no** es tuyo todavía: la persistencia de hilos y el *tool use*
