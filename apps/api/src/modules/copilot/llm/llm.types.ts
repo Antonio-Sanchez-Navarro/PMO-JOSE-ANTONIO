@@ -53,6 +53,15 @@ export interface LlmChatRequest {
  */
 export type LlmChunk =
   | { type: 'text'; text: string }
+  /**
+   * El modelo pidió una herramienta. Sale como evento `tool_call` y **no** como
+   * texto: el frontend lo pinta como un componente —el editor de borrador—, no
+   * como una línea más de la conversación.
+   *
+   * `payload` viaja ya normalizado (ver `tools.ts`), así que el cliente puede
+   * confiar en su forma sin defenderse de lo que devolvió el modelo.
+   */
+  | { type: 'tool_call'; toolName: string; payload: unknown }
   /** Cierre limpio: el modelo terminó y estos son los contadores de la llamada. */
   | { type: 'done'; model: string; usage?: { inputTokens: number; outputTokens: number } };
 

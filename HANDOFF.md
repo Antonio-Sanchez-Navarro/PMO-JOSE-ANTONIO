@@ -182,8 +182,38 @@ data: {"type":"done","model":"claude-haiku-4-5-20251001","usage":{"inputTokens":
 | Evento | `data` | Qué hacer |
 |---|---|---|
 | `token` | `{ type: 'text', text: string }` | **Concatena** `text` a lo que ya tienes. No es una frase ni una palabra: es el trozo que llegó |
+| `tool_call` | `{ type: 'tool_call', toolName: string, payload: {...} }` | El modelo pidió una herramienta. Píntalo como componente, no como texto |
 | `done` | `{ type: 'done', model: string, usage?: { inputTokens, outputTokens } }` | Fin limpio. `model` es el id **real** que respondió (con su fecha), útil para enseñar quién escribió |
 | `error` | `{ message: string }` | Algo falló ya empezada la respuesta. Enseña `message` y conserva lo que llevas pintado |
+
+### `tool_call` — el borrador de correo
+
+Implementado el 2026-07-29 con el contrato que fijaste, y sale **idéntico en los
+dos proveedores**: el frontend no debería notar quién respondió.
+
+```
+event: tool_call
+data: {"type":"tool_call","toolName":"draft_email","payload":{"to":["cliente@ejemplo.com"],"cc":[],"subject":"Actualización","body":"Cuerpo del correo..."}}
+```
+
+El `payload` de `draft_email` llega **normalizado**, así que puedes pintarlo sin
+defenderte de lo que devolvió el modelo:
+
+| Campo | Garantía |
+|---|---|
+| `to` | Siempre arreglo de cadenas, sin huecos ni repetidos. Si el modelo manda una dirección suelta, llega como arreglo de uno |
+| `cc` | **Siempre presente**, vacío si no hay copias. No tienes que distinguir "sin copia" de "campo ausente" |
+| `subject` | Siempre cadena (vacía en el peor caso, nunca `undefined`) |
+| `body` | Siempre cadena. **Puede traer saltos de línea**, escapados dentro del JSON — el `data:` sigue siendo una sola línea |
+
+**Un turno con borrador puede no traer ni un `token`.** Comprobado con los dos
+proveedores: al pedir un correo, el modelo va directo a la herramienta y el
+stream es `tool_call → done`, sin texto. No esperes texto antes del componente
+ni dejes el indicador de escritura colgado esperándolo.
+
+Si algún día llega un `toolName` que no conoces, ignóralo sin romper: habrá
+herramientas nuevas (`create_task`, `search_emails`) y no quiero que cada una te
+obligue a desplegar.
 
 Detalles que te ahorran sorpresas:
 
@@ -222,9 +252,14 @@ antes de que existiera este documento, y acertaste con el vocabulario: tu
 5. **Errores por código**: 400, 401 y 503 como respuesta normal; `event: error`
    ya empezado el stream, sin perder lo pintado.
 
-Lo que **no** es tuyo todavía: la persistencia de hilos y el *tool use*
-(`create_task`, `search_emails`…) son las siguientes piezas del backend. Cuando
-existan, `threadId` empezará a funcionar sin cambiarte la firma.
+6. **El editor de borrador** sobre el evento `tool_call`, que ya sale de los dos
+   proveedores con el contrato que fijaste.
+
+Lo que **no** es tuyo todavía: la persistencia de hilos y las herramientas que
+faltan (`create_task`, `search_emails`, `get_metrics`) son las siguientes piezas
+del backend. Cuando existan, `threadId` empezará a funcionar sin cambiarte la
+firma, y las herramientas nuevas llegarán por el mismo evento `tool_call` con
+otro `toolName`.
 
 ---
 

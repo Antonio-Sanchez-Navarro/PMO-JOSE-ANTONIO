@@ -3,9 +3,28 @@ import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI } from '@google/genai';
 import { LlmChatRequest, LlmChunk, LlmProvider, LlmStrategy, LlmTier } from './llm.types';
 import { tierConfig } from './model-tiers';
+import { DRAFT_EMAIL, DRAFT_EMAIL_DESCRIPTION, DRAFT_EMAIL_SCHEMA, parseDraftEmail } from './tools';
 
 /** Mismo techo que en Anthropic: con streaming no hay riesgo de agotar el tiempo de HTTP. */
 const MAX_OUTPUT_TOKENS = 64_000;
+
+/**
+ * Las mismas herramientas en el vocabulario de Google: van dentro de
+ * `functionDeclarations`, y el esquema entra por `parametersJsonSchema` — que
+ * acepta JSON Schema tal cual, así que es literalmente el mismo objeto que
+ * recibe Anthropic y no una traducción que pueda divergir.
+ */
+const TOOLS = [
+  {
+    functionDeclarations: [
+      {
+        name: DRAFT_EMAIL,
+        description: DRAFT_EMAIL_DESCRIPTION,
+        parametersJsonSchema: DRAFT_EMAIL_SCHEMA,
+      },
+    ],
+  },
+];
 
 /**
  * El copiloto sobre Gemini.
@@ -68,6 +87,7 @@ export class GoogleStrategy implements LlmStrategy {
       config: {
         ...(request.system ? { systemInstruction: request.system } : {}),
         maxOutputTokens: MAX_OUTPUT_TOKENS,
+        tools: TOOLS,
         // Corta la generación cuando el cliente cierra la conexión SSE.
         ...(request.signal ? { abortSignal: request.signal } : {}),
       },
@@ -81,6 +101,15 @@ export class GoogleStrategy implements LlmStrategy {
       // texto pintaría cadenas vacías en la interfaz.
       if (chunk.text) {
         yield { type: 'text', text: chunk.text };
+      }
+
+      // Aquí sí llegan dentro del stream, al revés que en Anthropic: `args`
+      // viene ya como objeto, sin JSON parcial que reconstruir.
+      for (const llamada of chunk.functionCalls ?? []) {
+        if (llamada.name !== DRAFT_EMAIL) continue;
+
+        this.logger.log(`Herramienta ${llamada.name} solicitada por ${model}`);
+        yield { type: 'tool_call', toolName: llamada.name, payload: parseDraftEmail(llamada.args) };
       }
 
       // Los contadores llegan en los trozos, no en un mensaje final como en

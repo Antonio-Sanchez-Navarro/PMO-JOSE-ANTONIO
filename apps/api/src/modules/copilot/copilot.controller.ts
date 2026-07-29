@@ -24,11 +24,29 @@ import type { CurrentUserContext } from '../auth/auth.types';
 export const COPILOT_EVENTS = {
   /** Un trozo de texto según lo genera el modelo. */
   token: 'token',
+  /**
+   * El modelo pidió una herramienta (hoy solo `draft_email`). Va por su propio
+   * evento y **no** como texto: el frontend lo pinta como un componente —el
+   * editor de borrador— en vez de como una línea más de la conversación.
+   */
+  tool_call: 'tool_call',
   /** Fin limpio, con el modelo que respondió y los contadores de la llamada. */
   done: 'done',
   /** Algo falló **después** de empezar a emitir; ver la nota sobre el 200. */
   error: 'error',
 } as const;
+
+/**
+ * De qué tipo de trozo sale cada evento.
+ *
+ * Se resuelve con una tabla y no con un `if` encadenado para que añadir un
+ * evento sea una línea aquí: el `token` es el caso por defecto, así que un tipo
+ * nuevo sin entrada se pintaría como texto sin avisar.
+ */
+const EVENTO_POR_TIPO: Record<string, string> = {
+  tool_call: COPILOT_EVENTS.tool_call,
+  done: COPILOT_EVENTS.done,
+};
 
 @Controller('copilot')
 @UseGuards(AuthGuard)
@@ -119,7 +137,7 @@ export class CopilotController {
       for await (const chunk of stream as AsyncIterable<Record<string, unknown>>) {
         if (abort.signal.aborted) break;
 
-        const evento = chunk.type === 'done' ? COPILOT_EVENTS.done : COPILOT_EVENTS.token;
+        const evento = EVENTO_POR_TIPO[chunk.type as string] ?? COPILOT_EVENTS.token;
         this.write(res, evento, chunk);
       }
     } catch (error) {

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { LlmChatRequest, LlmChunk, LlmProvider, LlmStrategy, LlmTier } from './llm.types';
 import { tierConfig } from './model-tiers';
+import { DRAFT_EMAIL, DRAFT_EMAIL_DESCRIPTION, DRAFT_EMAIL_SCHEMA, parseDraftEmail } from './tools';
 
 /**
  * Tope de salida por respuesta.
@@ -13,6 +14,15 @@ import { tierConfig } from './model-tiers';
  * genera.
  */
 const MAX_TOKENS = 64_000;
+
+/** Las herramientas del copiloto en el vocabulario de Anthropic. */
+const TOOLS: Anthropic.Tool[] = [
+  {
+    name: DRAFT_EMAIL,
+    description: DRAFT_EMAIL_DESCRIPTION,
+    input_schema: DRAFT_EMAIL_SCHEMA as unknown as Anthropic.Tool.InputSchema,
+  },
+];
 
 /**
  * El copiloto sobre Claude.
@@ -61,6 +71,7 @@ export class AnthropicStrategy implements LlmStrategy {
         max_tokens: MAX_TOKENS,
         ...(request.system ? { system: request.system } : {}),
         messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
+        tools: TOOLS,
         // Solo si el nivel lo declara: los modelos que no admiten `effort`
         // responden 400 al recibirlo (ver `model-tiers.ts`).
         ...(effort ? { output_config: { effort } } : {}),
@@ -79,6 +90,19 @@ export class AnthropicStrategy implements LlmStrategy {
     // Después del bucle: el mensaje ya está completo y trae los contadores
     // reales de la llamada, que es lo que interesa registrar.
     const final = await stream.finalMessage();
+
+    // Las llamadas a herramienta salen de aquí y no de los eventos del stream a
+    // propósito. El SDK entrega `input` **ya parseado**; reconstruirlo a mano
+    // desde los `input_json_delta` obligaría a concatenar JSON parcial y a
+    // parsearlo por nuestra cuenta, que es justo donde aparecen los fallos de
+    // escapado. Como una llamada a herramienta cierra el turno, el orden que ve
+    // el cliente es el mismo: primero el texto, luego el `tool_call`.
+    for (const bloque of final.content) {
+      if (bloque.type !== 'tool_use' || bloque.name !== DRAFT_EMAIL) continue;
+
+      this.logger.log(`Herramienta ${bloque.name} solicitada por ${final.model}`);
+      yield { type: 'tool_call', toolName: bloque.name, payload: parseDraftEmail(bloque.input) };
+    }
 
     this.logger.log(
       `Copiloto (${model}): ${final.usage.input_tokens} entrada / ${final.usage.output_tokens} salida`,

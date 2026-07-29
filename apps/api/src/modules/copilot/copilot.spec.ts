@@ -1,6 +1,9 @@
 import { ServiceUnavailableException, ValidationPipe } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { GoogleStrategy } from './llm/google.strategy';
+import { AnthropicStrategy } from './llm/anthropic.strategy';
+import { COPILOT_EVENTS } from './copilot.controller';
+import { DRAFT_EMAIL, parseDraftEmail } from './llm/tools';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { StartChatDto } from './dto/start-chat.dto';
@@ -114,6 +117,215 @@ describe('Mapa de niveles', () => {
     for (const tier of Object.values(LlmTier)) {
       expect(tierConfig(LlmProvider.GOOGLE, tier, {}).model).not.toMatch(/gemini-1\.5/);
     }
+  });
+});
+
+describe('draft_email — el payload que recibe el frontend', () => {
+  const completo = {
+    to: ['cliente@ejemplo.com'],
+    cc: ['copia@ejemplo.com'],
+    subject: 'Actualización',
+    body: 'Cuerpo del correo...',
+  };
+
+  it('deja intacto lo que ya viene bien', () => {
+    expect(parseDraftEmail(completo)).toEqual(completo);
+  });
+
+  it('siempre devuelve los cuatro campos, con cc vacío si no hay', () => {
+    // El frontend no debería tener que distinguir "sin copia" de "campo
+    // ausente" para pintar el editor.
+    expect(parseDraftEmail({ to: ['a@b.mx'], subject: 'x', body: 'y' })).toEqual({
+      to: ['a@b.mx'],
+      cc: [],
+      subject: 'x',
+      body: 'y',
+    });
+  });
+
+  it('acepta una dirección suelta como un destinatario', () => {
+    // Error frecuente del modelo; descartarlo perdería el borrador entero.
+    expect(parseDraftEmail({ ...completo, to: 'cliente@ejemplo.com' }).to).toEqual([
+      'cliente@ejemplo.com',
+    ]);
+  });
+
+  it('limpia huecos, espacios y repetidos de las listas', () => {
+    expect(parseDraftEmail({ ...completo, to: ['  a@b.mx ', '', 'a@b.mx', null] }).to).toEqual([
+      'a@b.mx',
+    ]);
+  });
+
+  it('sobrevive a una respuesta vacía o absurda sin reventar', () => {
+    // Pintar `undefined.length` en el editor sería peor que un borrador vacío.
+    for (const basura of [undefined, null, {}, { to: 42, subject: [], body: null }]) {
+      expect(parseDraftEmail(basura)).toEqual({ to: [], cc: [], subject: '', body: '' });
+    }
+  });
+});
+
+describe('El evento que sale por el cable', () => {
+  it('un tool_call se pinta con el JSON exacto que espera Gravity', () => {
+    // Este es el contrato literal acordado. Si alguien renombra un campo del
+    // trozo, esta prueba lo caza antes que el frontend.
+    const chunk: LlmChunk = {
+      type: 'tool_call',
+      toolName: DRAFT_EMAIL,
+      payload: parseDraftEmail({
+        to: ['cliente@ejemplo.com'],
+        cc: [],
+        subject: 'Actualización',
+        body: 'Cuerpo del correo...',
+      }),
+    };
+
+    expect(`event: ${COPILOT_EVENTS.tool_call}\ndata: ${JSON.stringify(chunk)}\n\n`).toBe(
+      'event: tool_call\n' +
+        'data: {"type":"tool_call","toolName":"draft_email","payload":' +
+        '{"to":["cliente@ejemplo.com"],"cc":[],"subject":"Actualización","body":"Cuerpo del correo..."}}\n\n',
+    );
+  });
+});
+
+describe('AnthropicStrategy — herramientas', () => {
+  /** Un stream de mentira con la forma que devuelve el SDK. */
+  function conRespuesta(content: unknown[]) {
+    const strategy = new AnthropicStrategy({ get: () => 'clave' } as unknown as ConfigService);
+    const final = {
+      model: 'claude-opus-5',
+      content,
+      usage: { input_tokens: 10, output_tokens: 5 },
+    };
+
+    (strategy as unknown as { client: unknown }).client = {
+      messages: {
+        stream: () =>
+          Object.assign(
+            (async function* () {
+              yield {
+                type: 'content_block_delta',
+                delta: { type: 'text_delta', text: 'Va el borrador' },
+              };
+            })(),
+            { finalMessage: async () => final },
+          ),
+      },
+    };
+
+    return strategy;
+  }
+
+  const recoger = async (strategy: AnthropicStrategy) => {
+    const trozos: LlmChunk[] = [];
+    for await (const chunk of strategy.stream({ messages: [], tier: LlmTier.PRO })) {
+      trozos.push(chunk);
+    }
+    return trozos;
+  };
+
+  it('convierte un bloque tool_use en un tool_call normalizado', async () => {
+    const trozos = await recoger(
+      conRespuesta([
+        { type: 'text', text: 'Va el borrador' },
+        {
+          type: 'tool_use',
+          name: DRAFT_EMAIL,
+          input: { to: 'cliente@ejemplo.com', subject: 'Actualización', body: 'Cuerpo' },
+        },
+      ]),
+    );
+
+    expect(trozos).toEqual([
+      { type: 'text', text: 'Va el borrador' },
+      {
+        type: 'tool_call',
+        toolName: DRAFT_EMAIL,
+        payload: { to: ['cliente@ejemplo.com'], cc: [], subject: 'Actualización', body: 'Cuerpo' },
+      },
+      expect.objectContaining({ type: 'done', model: 'claude-opus-5' }),
+    ]);
+  });
+
+  it('el tool_call va antes del done, nunca después', async () => {
+    const trozos = await recoger(
+      conRespuesta([{ type: 'tool_use', name: DRAFT_EMAIL, input: { to: ['a@b.mx'] } }]),
+    );
+    const tipos = trozos.map((t) => t.type);
+
+    expect(tipos.indexOf('tool_call')).toBeLessThan(tipos.indexOf('done'));
+  });
+
+  it('ignora una herramienta que no es la nuestra', async () => {
+    const trozos = await recoger(
+      conRespuesta([{ type: 'tool_use', name: 'otra_herramienta', input: {} }]),
+    );
+
+    expect(trozos.some((t) => t.type === 'tool_call')).toBe(false);
+    expect(trozos.at(-1)?.type).toBe('done');
+  });
+
+  it('sin herramienta, el stream se comporta como siempre', async () => {
+    const trozos = await recoger(conRespuesta([{ type: 'text', text: 'Va el borrador' }]));
+
+    expect(trozos.map((t) => t.type)).toEqual(['text', 'done']);
+  });
+});
+
+describe('GoogleStrategy — herramientas', () => {
+  function conTrozos(trozosSdk: unknown[]) {
+    const strategy = new GoogleStrategy({ get: () => 'clave' } as unknown as ConfigService);
+
+    (strategy as unknown as { client: unknown }).client = {
+      models: {
+        generateContentStream: async () =>
+          (async function* () {
+            for (const t of trozosSdk) yield t;
+          })(),
+      },
+    };
+
+    return strategy;
+  }
+
+  it('convierte un functionCall en el mismo tool_call que Anthropic', async () => {
+    const strategy = conTrozos([
+      { text: 'Va el borrador', functionCalls: undefined },
+      {
+        text: undefined,
+        functionCalls: [
+          { name: DRAFT_EMAIL, args: { to: ['cliente@ejemplo.com'], subject: 'A', body: 'B' } },
+        ],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+      },
+    ]);
+
+    const trozos: LlmChunk[] = [];
+    for await (const chunk of strategy.stream({ messages: [], tier: LlmTier.PRO })) {
+      trozos.push(chunk);
+    }
+
+    // Misma forma exacta que produce el otro proveedor: el frontend no debería
+    // notar quién respondió.
+    expect(trozos).toEqual([
+      { type: 'text', text: 'Va el borrador' },
+      {
+        type: 'tool_call',
+        toolName: DRAFT_EMAIL,
+        payload: { to: ['cliente@ejemplo.com'], cc: [], subject: 'A', body: 'B' },
+      },
+      expect.objectContaining({ type: 'done', model: 'gemini-3.6-flash' }),
+    ]);
+  });
+
+  it('ignora una herramienta que no es la nuestra', async () => {
+    const strategy = conTrozos([{ functionCalls: [{ name: 'otra', args: {} }] }]);
+
+    const trozos: LlmChunk[] = [];
+    for await (const chunk of strategy.stream({ messages: [], tier: LlmTier.LIGHT })) {
+      trozos.push(chunk);
+    }
+
+    expect(trozos.map((t) => t.type)).toEqual(['done']);
   });
 });
 
