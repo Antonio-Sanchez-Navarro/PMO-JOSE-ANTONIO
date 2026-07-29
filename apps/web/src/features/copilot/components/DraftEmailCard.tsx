@@ -16,6 +16,7 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
   const [emailData, setEmailData] = useState(draft);
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'discarded'>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [transportType, setTransportType] = useState<'gmail' | 'mock' | null>(null);
 
   const handleSend = async () => {
     setStatus('sending');
@@ -35,6 +36,13 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({ message: `Error HTTP ${res.status}` }));
         throw new Error(errorData.message || 'Error al enviar el correo');
+      }
+      
+      const resData = await res.json().catch(() => ({}));
+      if (resData.transport === 'mock') {
+        setTransportType('mock');
+      } else if (resData.transport === 'gmail') {
+        setTransportType('gmail');
       }
 
       setStatus('sent');
@@ -59,8 +67,15 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
 
   if (status === 'sent') {
     return (
-      <div className="bg-green-50 text-green-700 text-xs px-3 py-2 rounded-md border border-green-100 flex items-center gap-2">
-        <span>✅</span> Correo enviado con éxito
+      <div className="bg-green-50 text-green-700 text-xs px-3 py-2 rounded-md border border-green-100 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span>✅</span> Correo enviado con éxito
+        </div>
+        {transportType === 'mock' && (
+          <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-[10px] font-bold uppercase" title="El correo no se envió realmente">
+            Simulación
+          </span>
+        )}
       </div>
     );
   }
