@@ -426,8 +426,77 @@ es tuya.
 > deliberadamente no lo hice. Prisma los devuelve planos en los tres canales de
 > arriba sin mapeo; anidarlos obligaría a mapear en cinco sitios y con que uno
 > se olvidara te llegarían dos formas distintas del mismo dato según por dónde
-> entrara la tarea. Se lo dije explícitamente; si él decide anidarlos, lo cambio
-> en los cinco y te aviso antes.
+> entrara la tarea. Lo aprobó sin reservas el 2026-07-29: se quedan planos.
+
+## 8. Encargo nuevo — `GET /dashboard/metrics` (vista de métricas)
+
+**Estado: listo y verificado contra la aplicación levantada. Es tu turno.**
+Es lo último rojo del Sprint 8 por el lado del backend. Contrato acordado con
+Doc el 2026-07-29; el tipo `DashboardMetrics` ya está en `@pmo/shared`, así que
+no tienes que escribirlo.
+
+```
+GET /dashboard/metrics            → 200
+GET /dashboard/metrics?from=&to=&tz=
+```
+
+Los tres parámetros son opcionales. Por defecto: **los últimos siete días**,
+cortados en `America/Mexico_City`. `from` es inclusivo, `to` exclusivo, los dos
+en ISO. `tz` es una zona IANA; una inventada da **400** con el motivo, y `from`
+posterior a `to` también.
+
+```json
+{
+  "generatedAt": "2026-07-29T23:01:00.000Z",
+  "window": { "from": "2026-07-23T06:00:00.000Z", "to": "2026-07-29T23:01:00.000Z", "days": 7, "tz": "America/Mexico_City" },
+  "tasks": { "byStatus": { "TODO": 3, "IN_PROGRESS": 0, "POSTPONED": 0, "DONE": 12, "OVERDUE": 1 }, "total": 16 },
+  "wip": 0,
+  "overdue": { "count": 1, "byPriority": { "LOW": 0, "MEDIUM": 0, "HIGH": 0, "URGENT": 1 } },
+  "throughput": { "completedInWindow": 4, "avgPerDay": 0.6, "perDay": [{ "date": "2026-07-23", "count": 0 }] },
+  "time": { "totalSecInWindow": 2246, "perDay": [{ "date": "2026-07-23", "seconds": 0 }] },
+  "inbox": { "pending": 21, "byStatus": { "PENDING": 21, "IN_PROGRESS": 3, "COMPLETED": 0, "DISMISSED": 2 } }
+}
+```
+
+**Cuatro cosas del contrato que te ahorran trabajo, y una que te lo puede dar:**
+
+1. **Las series ya vienen completas y ordenadas.** `throughput.perDay` y
+   `time.perDay` traen **un punto por cada día de la ventana**, incluidos los de
+   cero, en orden. Se las puedes pasar a Recharts tal cual: no hace falta
+   rellenar huecos ni ordenar por fecha. `perDay.length === window.days`, siempre.
+2. **`byStatus` y `byPriority` traen siempre todas las claves**, con cero donde
+   no hay nada. La leyenda de la gráfica no cambia de tamaño entre recargas.
+3. **`wip` es solo `IN_PROGRESS`.** Las atrasadas **no** están sumadas ahí: van
+   aparte en `overdue.count`, con su desglose por prioridad. Si las quieres
+   juntas en una tarjeta, súmalas tú y ponle otro nombre; WIP responde "en qué
+   estoy trabajando", no "cuánto debo".
+4. **Los días se cortan en `window.tz`**, no en UTC. Cerrar una tarea a las
+   19:00 en México cuenta para ese día. Pinta las etiquetas del eje con
+   `point.date` tal cual (`YYYY-MM-DD`): ya está en hora local, así que **no lo
+   pases por `new Date(...)` para reformatearlo** — eso lo interpretaría como
+   medianoche UTC y te correría la etiqueta un día en tu zona.
+
+Y la que te puede dar trabajo, dicho antes de que lo descubras pintando:
+
+> **El throughput arranca en cero y se llena desde hoy.** La columna
+> `completedAt` existía desde el Sprint 1 y **nadie la escribía**: era una
+> columna muerta. Se enciende ahora (al pasar a `DONE` se sella, al reabrir se
+> limpia), pero **las tareas cerradas antes del 2026-07-29 no tienen fecha**, así
+> que cuentan en `tasks.byStatus.DONE` y no en el throughput. Decisión de Doc:
+> preferimos una gráfica que empieza vacía y es verdad a una rellenada con
+> `updatedAt`, que se mueve con cualquier edición y fecharía hoy un cierre de
+> hace tres semanas. Con lo cual: **no te asustes si `completedInWindow` es 0 la
+> primera vez que lo abras** — no está roto. Cierra una tarea arrastrándola y
+> verás subir el número. Si la vista queda muy sosa con la serie a cero, dilo y
+> vemos cómo enseñarlo (un texto de "empezamos a medir el 29 de julio" en el
+> pie de la gráfica es honesto y evita la pregunta).
+
+**Un detalle si pintas las dos gráficas de tiempo juntas**: `GET /time/report`
+—el que ya consumes en `TimeReportModal`— agrupa los días en **UTC**, y esta
+ruta los agrupa en hora local. Con datos de última hora de la tarde las dos
+pueden repartir los minutos en días distintos. No lo he cambiado porque tocaría
+un endpoint que ya usas; está avisado a Doc. Si te estorba, pídelo y le añado el
+mismo parámetro `tz`.
 
 ---
 

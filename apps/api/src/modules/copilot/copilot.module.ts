@@ -13,6 +13,7 @@ import { CopilotAuditService } from './audit/copilot-audit.service';
 import { ToolRunnerService } from './tools/tool-runner.service';
 import { AuthModule } from '../auth/auth.module';
 import { TasksModule } from '../tasks/tasks.module';
+import { MetricsModule } from '../metrics/metrics.module';
 
 /**
  * Copiloto de IA (Sprint 6).
@@ -28,7 +29,9 @@ import { TasksModule } from '../tasks/tasks.module';
   // `TasksModule` porque crear una tarea desde el copiloto reutiliza
   // `TasksService`: ahí viven el escalado de prioridad, el nacer en `OVERDUE` y
   // el aviso por socket al tablero. Duplicarlo aquí divergiría.
-  imports: [AuthModule, ConfigModule, TasksModule],
+  // `MetricsModule` por lo mismo con `get_metrics`: los números del panel se
+  // cuentan en un solo sitio y aquí solo se pide la proyección compacta.
+  imports: [AuthModule, ConfigModule, TasksModule, MetricsModule],
   controllers: [CopilotController],
   providers: [
     CopilotService,

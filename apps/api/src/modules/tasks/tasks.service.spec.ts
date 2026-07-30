@@ -201,6 +201,62 @@ describe('TasksService.move', () => {
     // El desempate por createdAt mantiene p antes que q.
     expect(column('TODO')).toEqual(['r@0', 'p@1', 'q@2']);
   });
+
+  /**
+   * `completedAt` era una columna muerta: existía desde el Sprint 1 y nadie la
+   * escribía. Sin ella no hay throughput, así que se sella aquí, que es donde
+   * de verdad se cierran las tareas: arrastrando la tarjeta.
+   */
+  describe('fecha de cierre', () => {
+    const conCierre = () => [
+      { id: 'a', status: 'TODO', position: 0 },
+      { id: 'z', status: 'DONE', position: 0 },
+    ];
+
+    it('sella la fecha al arrastrar a Cumplidas', async () => {
+      const { prisma, table } = makePrisma(conCierre());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
+
+      await service.move(USER, 'a', { status: 'DONE' as any, position: 0 });
+
+      expect((table.find((t) => t.id === 'a') as any).completedAt).toBeInstanceOf(Date);
+    });
+
+    it('la limpia al sacarla de Cumplidas', async () => {
+      const { prisma, table } = makePrisma(conCierre());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
+      (table.find((t) => t.id === 'z') as any).completedAt = new Date('2026-07-20T10:00:00Z');
+
+      await service.move(USER, 'z', { status: 'TODO' as any, position: 0 });
+
+      // Si se quedara puesta, el throughput del 20 contaría para siempre un
+      // cierre que se deshizo.
+      expect((table.find((t) => t.id === 'z') as any).completedAt).toBeNull();
+    });
+
+    it('no la vuelve a sellar al reordenar dentro de Cumplidas', async () => {
+      const original = new Date('2026-07-20T10:00:00Z');
+      const { prisma, table } = makePrisma([
+        { id: 'z', status: 'DONE', position: 0 },
+        { id: 'w', status: 'DONE', position: 1 },
+      ]);
+      const service = new TasksService(prisma, gateway(), tagsVacio());
+      (table.find((t) => t.id === 'z') as any).completedAt = original;
+
+      await service.move(USER, 'z', { status: 'DONE' as any, position: 1 });
+
+      expect((table.find((t) => t.id === 'z') as any).completedAt).toEqual(original);
+    });
+
+    it('no le pone fecha de cierre a una tarea que no pasa por Cumplidas', async () => {
+      const { prisma, table } = makePrisma(conCierre());
+      const service = new TasksService(prisma, gateway(), tagsVacio());
+
+      await service.move(USER, 'a', { status: 'IN_PROGRESS' as any, position: 0 });
+
+      expect((table.find((t) => t.id === 'a') as any).completedAt).toBeUndefined();
+    });
+  });
 });
 
 describe('TasksService.create', () => {
@@ -631,6 +687,48 @@ describe('TasksService — task.updated', () => {
       expect.objectContaining({ status: 'DONE' }),
       undefined,
     );
+  });
+
+  /**
+   * El arrastre no es la única forma de cerrar una tarea: el modal de edición
+   * también cambia el estado. Si el sellado viviera solo en `move`, cerrar desde
+   * el modal no contaría para el throughput.
+   */
+  describe('fecha de cierre desde el modal', () => {
+    const prismaCon = (statusActual: string) => ({
+      task: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'tarea-1', userId: USER, status: statusActual }),
+        update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'tarea-1', ...data })),
+      },
+    });
+
+    it('sella la fecha si el PATCH cierra la tarea', async () => {
+      const prisma: any = prismaCon('IN_PROGRESS');
+      const service = new TasksService(prisma as unknown as PrismaService, gateway(), tagsVacio());
+
+      await service.update(USER, 'tarea-1', { status: 'DONE' as any });
+
+      expect(prisma.task.update.mock.calls[0][0].data.completedAt).toBeInstanceOf(Date);
+    });
+
+    it('la limpia si el PATCH reabre la tarea', async () => {
+      const prisma: any = prismaCon('DONE');
+      const service = new TasksService(prisma as unknown as PrismaService, gateway(), tagsVacio());
+
+      await service.update(USER, 'tarea-1', { status: 'TODO' as any });
+
+      expect(prisma.task.update.mock.calls[0][0].data.completedAt).toBeNull();
+    });
+
+    it('no la toca en un PATCH que no cambia el estado', async () => {
+      const prisma: any = prismaCon('DONE');
+      const service = new TasksService(prisma as unknown as PrismaService, gateway(), tagsVacio());
+
+      // Cambiar el título de una tarea cerrada no la descierra.
+      await service.update(USER, 'tarea-1', { title: 'Otro título' } as any);
+
+      expect(prisma.task.update.mock.calls[0][0].data).not.toHaveProperty('completedAt');
+    });
   });
 
   it('el payload del PATCH lleva userId, que es el filtro de seguridad del cliente', async () => {

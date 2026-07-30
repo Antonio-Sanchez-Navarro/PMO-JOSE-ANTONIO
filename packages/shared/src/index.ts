@@ -42,6 +42,24 @@ export enum EmailCategory {
   OTHER = "OTHER",
 }
 
+/**
+ * Estado de triage de un correo en la bandeja (Sprint 4.5).
+ *
+ * Son los cuatro valores del enum del esquema. Se declaran aquí porque el
+ * frontend los venía escribiendo como texto suelto (`'PENDING'`), y una errata
+ * en una cadena no la ve nadie hasta que el endpoint devuelve un 400.
+ *
+ * Recordatorio del contrato: la bandeja **avanza pero no retrocede sola**.
+ * Volver a `PENDING` desde cualquiera de los otros tres es una anulación
+ * explícita y pide `force: true`, o el endpoint responde 409.
+ */
+export enum EmailStatus {
+  PENDING = "PENDING",
+  IN_PROGRESS = "IN_PROGRESS",
+  COMPLETED = "COMPLETED",
+  DISMISSED = "DISMISSED",
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -120,6 +138,73 @@ export interface EmailClassification {
   /** Confianza del análisis completo, entre 0 y 1. */
   aiConfidence: number;
   tasks: ProposedTask[];
+}
+
+/** Un punto de una serie por día de `GET /dashboard/metrics`. */
+export interface MetricsDayPoint {
+  /** `YYYY-MM-DD` en la zona horaria de la ventana. */
+  date: string;
+}
+
+export interface ThroughputPoint extends MetricsDayPoint {
+  count: number;
+}
+
+export interface TimeSeriesPoint extends MetricsDayPoint {
+  seconds: number;
+}
+
+/**
+ * Lo que devuelve `GET /dashboard/metrics` (Sprint 8).
+ *
+ * Cuatro cosas que conviene saber antes de pintarlo, porque no se deducen de la
+ * forma:
+ *
+ * 1. `wip` es **solo** `IN_PROGRESS`. Las atrasadas no suman; están aparte en
+ *    `overdue`.
+ * 2. Las series traen **todos** los días de la ventana, también los de cero, y
+ *    ya vienen ordenadas: se le pueden pasar a Recharts tal cual, sin rellenar
+ *    huecos ni ordenar claves.
+ * 3. `byStatus` y `byPriority` traen **siempre** todas las claves del enum, con
+ *    cero donde no hay nada, para que la leyenda no cambie de tamaño.
+ * 4. Los días se cortan en `window.tz` (por defecto `America/Mexico_City`), no
+ *    en UTC: cerrar algo a las 19:00 cuenta para ese día.
+ */
+export interface DashboardMetrics {
+  generatedAt: string;
+  window: {
+    /** Inclusivo. */
+    from: string;
+    /** Exclusivo. */
+    to: string;
+    /** Días que cubre; es también el largo de las series. */
+    days: number;
+    tz: string;
+  };
+  tasks: {
+    byStatus: Record<TaskStatus, number>;
+    total: number;
+  };
+  /** Trabajo en curso: tareas en `IN_PROGRESS`. */
+  wip: number;
+  overdue: {
+    count: number;
+    byPriority: Record<TaskPriority, number>;
+  };
+  throughput: {
+    completedInWindow: number;
+    /** Media por día de la ventana, con un decimal. */
+    avgPerDay: number;
+    perDay: ThroughputPoint[];
+  };
+  time: {
+    totalSecInWindow: number;
+    perDay: TimeSeriesPoint[];
+  };
+  inbox: {
+    pending: number;
+    byStatus: Record<EmailStatus, number>;
+  };
 }
 
 export const KANBAN_COLUMNS: { status: TaskStatus; label: string }[] = [

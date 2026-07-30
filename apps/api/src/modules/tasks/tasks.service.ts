@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { adjustPriority } from '../ai/priority.rules';
+import { completionStamp } from './completion';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -97,6 +98,9 @@ export class TasksService {
           ...(labels.length > 0 ? { labels: { connect: labels } } : {}),
           position: last ? last.position + 1 : 0,
           source: TaskSource.MANUAL,
+          // Una tarea puede nacer ya cumplida (apuntar algo que se hizo antes
+          // de tener el tablero abierto), y entonces cuenta como cierre de hoy.
+          ...completionStamp(null, status, now),
           // El motivo viaja con la tarea (deuda del Sprint 3): hasta ahora el
           // porqué solo quedaba en el log del proceso, donde la interfaz no
           // puede leerlo y donde se pierde al rotar.
@@ -299,11 +303,16 @@ export class TasksService {
       const index = Math.min(dto.position, target.length);
       target.splice(index, 0, { id, position: task.position });
 
+      // Arrastrar una tarjeta a "Cumplidas" es la forma normal de cerrar algo,
+      // así que es aquí donde se sella la fecha de cierre —y donde se limpia si
+      // la tarjeta sale de esa columna.
+      const cierre = completionStamp(from, to, new Date());
+
       const renumber = async (column: { id: string; position: number }[], status: TaskStatus) => {
         for (const [i, item] of column.entries()) {
           if (item.id === id) {
             // La tarjeta movida necesita escritura sí o sí: puede cambiar de columna.
-            await tx.task.update({ where: { id }, data: { status, position: i } });
+            await tx.task.update({ where: { id }, data: { status, position: i, ...cierre } });
           } else if (item.position !== i) {
             await tx.task.update({ where: { id: item.id }, data: { position: i } });
           }
@@ -346,7 +355,13 @@ export class TasksService {
 
     const updated = await this.prisma.task.update({
       where: { id },
-      data: updateTaskDto,
+      data: {
+        ...updateTaskDto,
+        // El modal de edición también puede cambiar el estado, no solo el
+        // arrastre. `updateTaskDto.status` puede venir sin definir: entonces la
+        // tarea se queda donde está y no hay cierre que sellar ni que limpiar.
+        ...(updateTaskDto.status ? completionStamp(task.status, updateTaskDto.status, new Date()) : {}),
+      },
     });
 
     this.gateway.emitTaskUpdated(updated, socketId);

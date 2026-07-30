@@ -16,6 +16,7 @@ import { DeadLetterModule } from "./common/bullmq/dead-letter.module";
 import { TagsModule } from './modules/tags/tags.module';
 import { TimeModule } from './modules/time/time.module';
 import { CopilotModule } from './modules/copilot/copilot.module';
+import { MetricsModule } from './modules/metrics/metrics.module';
 
 // Módulos de dominio (se implementan por sprint — ver TASKS.md):
 import { TasksModule } from "./modules/tasks/tasks.module";
@@ -48,6 +49,7 @@ import { TasksModule } from "./modules/tasks/tasks.module";
     TagsModule,
     TimeModule,
     CopilotModule,
+    MetricsModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

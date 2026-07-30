@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { EmailStatus, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { CopilotAuditService } from '../audit/copilot-audit.service';
+import { MetricsService } from '../../metrics/metrics.service';
 import { GET_METRICS, SEARCH_EMAILS } from '../llm/tools';
 
 /** Tope de correos que devuelve una búsqueda. */
@@ -31,6 +31,7 @@ export class ToolRunnerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: CopilotAuditService,
+    private readonly metrics: MetricsService,
   ) {}
 
   /**
@@ -120,33 +121,19 @@ export class ToolRunnerService {
     };
   }
 
-  /** El estado del tablero y de la bandeja, en una sola consulta por bloque. */
-  private async getMetrics(userId: string) {
-    const inicioSemana = new Date();
-    inicioSemana.setDate(inicioSemana.getDate() - 7);
-
-    const [porEstado, correosPendientes, tiempo] = await Promise.all([
-      this.prisma.task.groupBy({ by: ['status'], where: { userId }, _count: true }),
-      this.prisma.email.count({ where: { userId, status: EmailStatus.PENDING } }),
-      this.prisma.timeEntry.aggregate({
-        where: { userId, startedAt: { gte: inicioSemana }, durationSec: { not: null } },
-        _sum: { durationSec: true },
-      }),
-    ]);
-
-    const tareas = Object.fromEntries(
-      Object.values(TaskStatus).map((estado) => [
-        estado,
-        porEstado.find((g) => g.status === estado)?._count ?? 0,
-      ]),
-    );
-
-    return {
-      tareas,
-      tareasTotales: Object.values(tareas).reduce((a, b) => a + b, 0),
-      correosPendientes,
-      // En horas y no en segundos: el modelo va a escribir esto en una frase.
-      horasRegistradasUltimos7Dias: Math.round(((tiempo._sum.durationSec ?? 0) / 3600) * 10) / 10,
-    };
+  /**
+   * El estado del tablero, la bandeja y el reloj.
+   *
+   * Los números **no se cuentan aquí**: los pide a `MetricsService`, que es el
+   * mismo motor que alimenta `GET /dashboard/metrics` (arquitectura acordada con
+   * Doc el 2026-07-29). Antes esta función tenía su propia cuenta, y dos sitios
+   * contando lo mismo acaban dando dos respuestas a la misma pregunta: el
+   * copiloto diría una cifra y la gráfica de al lado, otra.
+   *
+   * Lo que llega es la proyección compacta —en español y sin las series por
+   * día— porque el modelo escribe una frase con esto, no dibuja una gráfica.
+   */
+  private getMetrics(userId: string) {
+    return this.metrics.summary(userId);
   }
 }
