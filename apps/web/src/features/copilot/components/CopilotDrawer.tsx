@@ -35,7 +35,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
       try {
         const data = await fetchThreads();
         setThreads(data);
-      } catch (err) {
+      } catch {
         toast.error('Error al cargar historial');
       }
     }
@@ -246,7 +246,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
                       })));
                       setCurrentThreadId(t.id);
                       setShowHistory(false);
-                    } catch (err) {
+                    } catch {
                       toast.error('Error al cargar la conversación');
                     }
                   }}>
@@ -269,7 +269,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
                               status: 'complete'
                             }]);
                           }
-                        } catch (err) {
+                        } catch {
                           toast.error('Error al eliminar');
                         }
                       }
