@@ -839,10 +839,15 @@ Es más rápido que deshacer un choque.
 - **`@google/genai` instalado** en `apps/api` (luz verde de Doc el 2026-07-29).
   Se hoistea al `node_modules` de la raíz como el resto; si tu `npm install` no
   lo trae, vuelve a instalar desde la raíz.
-- Migraciones aplicadas: `20260729153000_add_time_tracking` (registro de
-  tiempos) y `20260729140000_add_copilot_threads` (hilos del copiloto y su
-  bitácora). Si tu base es anterior, `npx prisma migrate deploy` desde
-  `apps/api`.
+- Migraciones aplicadas: `20260729140000_add_copilot_threads` (hilos del
+  copiloto y su bitácora), `20260729153000_add_time_tracking` (registro de
+  tiempos) y `20260729160000_add_priority_audit` (los tres campos de la
+  sección 7: `priorityReason`, `priorityAdjustedAt` y `priorityAdjustedFrom`).
+  Si tu base es anterior, `npx prisma migrate deploy` desde `apps/api`.
+- **El CI ya se dispara.** Escuchaba `main` y la rama de trabajo es `master`,
+  así que no había corrido nunca — es lo que dejó pasar el linter roto.
+  Corregido el 2026-07-30: ahora `push` y `pull_request` sobre `master` pasan
+  por lint, build y las 423 pruebas.
 - **La API va con Helmet y con límite de peticiones desde el 2026-07-29**: 240
   por minuto en general y **20 por minuto en todo `/copilot`**, porque cada
   turno cuesta tokens. Un `429` en el panel de chat no es un fallo del backend:

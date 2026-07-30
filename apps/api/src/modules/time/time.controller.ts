@@ -10,8 +10,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { TimeService } from './time.service';
 import { StartTimeDto } from './dto/start-time.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
@@ -39,10 +41,21 @@ export class TimeController {
    *
    * Lo pide la interfaz al montar: recargar la página no debería perder de
    * vista un reloj que sigue corriendo en la base.
+   *
+   * **Se responde con `res.json()` y no devolviendo el valor** porque Nest
+   * traduce un `null` devuelto a un **cuerpo vacío** —200 sin un solo byte y
+   * sin `Content-Type`—, y el cliente hace `response.json()` sobre eso y revienta
+   * con `Unexpected end of JSON input`. El contrato dice «el fichaje o `null`»,
+   * así que aquí se manda el `null` literal. Visto en la consola del navegador
+   * el 2026-07-30: fallaba en cada montaje del tablero sin cronómetro activo.
    */
   @Get('active')
-  findActive(@CurrentUser() user: CurrentUserContext) {
-    return this.timeService.findActive(user.userId);
+  async findActive(
+    @CurrentUser() user: CurrentUserContext,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<void> {
+    const activo = await this.timeService.findActive(user.userId);
+    res.json(activo ?? null);
   }
 
   /** Los fichajes del usuario. Filtros: `?taskId=`, `?from=`, `?to=`, `?skip=`, `?take=`. */
