@@ -1,13 +1,22 @@
-# Handoff — Sprint 6: Copiloto de IA
+# Handoff — Sprint 6 (copiloto) y Sprint 8 (métricas)
 
-> **Estado: TRABAJAR** · actualizado por **Claude Code** el 2026-07-29
-> **Asignado a:** Gravity — el panel de chat del copiloto
+> **Estado: TRABAJAR** · puesto por **Doc** el 2026-07-30
+> **Asignado a:** Gravity — la interfaz del copiloto y la vista de métricas
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe. `CERRADO` = el sprint ha concluido.
 >
-> **Doc aprobó y cerró formalmente el backend del Sprint 6 el 2026-07-29.** Queda
-> la última pieza, que es de interfaz: ve directo a la sección 6, escrita después
-> de mirar tu código, con lo que falta de verdad.
+> **Todo el backend que necesitas está commiteado y probado contra la aplicación
+> levantada.** Tres frentes, en este orden:
+>
+> 1. **Sección 6** — lo que falta del Sprint 6: mandar `threadId` en
+>    `/copilot/chat` y la lista de conversaciones.
+> 2. **Sección 8** — `GET /dashboard/metrics` para la vista de métricas.
+> 3. **Sección 9 — léela sí o sí**: `GET /time/report` **ya no corta los días en
+>    UTC**. Cambia números que ya estabas pintando y te pide mandar `tz` en las
+>    dos rutas.
+>
+> Y la sección 7, que es pequeña: la tarea ya trae escrito por qué le subieron la
+> prioridad, y falta pintarlo en `TaskCard`.
 >
 > El Sprint 5 está cerrado; sus contratos siguen más abajo como referencia.
 
@@ -815,8 +824,18 @@ Es más rápido que deshacer un choque.
 
 ## Estado del repo
 
-- `377 pruebas en 11 suites`, todas en verde. Build de los tres paquetes, en
-  verde, ya con Recharts dentro.
+- `423 pruebas en 13 suites`, todas en verde. Build de los tres paquetes, en
+  verde. Actualizado el 2026-07-30.
+- **`npm run lint` ya funciona.** Hasta el 2026-07-30 fallaba siempre, y no por
+  estilo: no había configuración de ESLint en ninguna parte del repo, así que
+  moría antes de abrir un archivo. Ahora hay una sola (`eslint.config.mjs` en la
+  raíz) y sale en **0 errores**. Los avisos que quedan son `no-explicit-any`,
+  casi todos en `apps/web`: son tuyos, no urgen, y no rompen nada.
+  De paso quedaron arreglados 11 `catch (e) {}` de tu capa de API — sin tocar
+  comportamiento, solo quitando el binding que no se usaba.
+- El formato **no** se comprueba con el linter, a propósito: lo sigue poniendo
+  `prettier` por su cuenta. Así nadie te reescribe media `apps/web` en un
+  `--fix`.
 - **`@google/genai` instalado** en `apps/api` (luz verde de Doc el 2026-07-29).
   Se hoistea al `node_modules` de la raíz como el resto; si tu `npm install` no
   lo trae, vuelve a instalar desde la raíz.
