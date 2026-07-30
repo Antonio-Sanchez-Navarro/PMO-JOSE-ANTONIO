@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { QueueEventsListener, QueueEventsHost, InjectQueue, OnQueueEvent } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 

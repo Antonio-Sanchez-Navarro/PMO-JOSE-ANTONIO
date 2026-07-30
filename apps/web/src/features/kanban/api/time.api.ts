@@ -43,7 +43,9 @@ export const createTimeEntry = async (data: { taskId: string, startedAt: string,
     try {
       const errorBody = await response.json();
       if (errorBody.message) errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-    } catch (e) {}
+    } catch {
+      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
+    }
     throw new Error(errorMsg);
   }
   
@@ -64,7 +66,9 @@ export const updateTimeEntry = async (id: string, data: { startedAt?: string, en
     try {
       const errorBody = await response.json();
       if (errorBody.message) errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-    } catch (e) {}
+    } catch {
+      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
+    }
     throw new Error(errorMsg);
   }
 
@@ -94,6 +98,9 @@ export const getTimeReport = async (params: { groupBy: 'task' | 'day' | 'week', 
   query.append('groupBy', params.groupBy);
   if (params.from) query.append('from', params.from);
   if (params.to) query.append('to', params.to);
+  
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  query.append('tz', tz);
 
   const response = await fetch(`${API_BASE}/report?${query.toString()}`, {
     method: 'GET',
@@ -123,7 +130,9 @@ export const startTimer = async (taskId: string): Promise<TimeEntry> => {
       if (errorBody.message) {
         errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
       }
-    } catch (e) {}
+    } catch {
+      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
+    }
     throw new Error(errorMsg);
   }
 
@@ -148,7 +157,9 @@ export const stopTimer = async (taskId: string): Promise<TimeEntry> => {
       if (errorBody.message) {
         errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
       }
-    } catch (e) {}
+    } catch {
+      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
+    }
     throw new Error(errorMsg);
   }
 

@@ -33,7 +33,7 @@ export const TimeEntriesModal: React.FC<TimeEntriesModalProps> = ({ isOpen, onCl
     try {
       const data = await getTimeEntries(taskId);
       setEntries(data);
-    } catch (error) {
+    } catch {
       toast.error('Error al cargar historial de tiempos');
     } finally {
       setIsLoading(false);

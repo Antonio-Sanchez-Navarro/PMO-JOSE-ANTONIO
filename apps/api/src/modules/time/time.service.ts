@@ -116,7 +116,9 @@ export class TimeService {
     const ahora = new Date();
 
     let creado: TimeEntryWithTask;
-    let detenido: TimeEntryWithTask | null = null;
+    // Sin valor inicial a propósito: las dos ramas del `catch` lanzan, así que
+    // aquí abajo solo se llega con la transacción cumplida y las dos asignadas.
+    let detenido: TimeEntryWithTask | null;
 
     try {
       const resultado = await this.prisma.$transaction(async (tx) => {

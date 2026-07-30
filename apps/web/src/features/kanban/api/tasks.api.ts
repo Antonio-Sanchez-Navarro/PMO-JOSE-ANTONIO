@@ -125,7 +125,9 @@ export const classifyEmail = async (emailId: string): Promise<EmailClassificatio
       if (errorBody.message) {
         errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
       }
-    } catch (e) {}
+    } catch {
+      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
+    }
     throw new Error(errorMsg);
   }
 
@@ -158,7 +160,7 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
       } else if (errorBody.message) {
         errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
       }
-    } catch (parseError) {
+    } catch {
       // Ignoramos el error si no hay body JSON válido
     }
     throw new Error(errorMsg);
@@ -188,7 +190,9 @@ export const updateEmailStatus = async (emailId: string, status: string, force?:
       if (errorBody.message) {
         errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
       }
-    } catch (parseError) {}
+    } catch {
+      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
+    }
     throw new Error(errorMsg);
   }
 

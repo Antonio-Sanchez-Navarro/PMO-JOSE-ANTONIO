@@ -17,7 +17,8 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "dev": "tsc -p tsconfig.esm.json --watch"
+    "dev": "tsc -p tsconfig.esm.json --watch",
+    "lint": "eslint \"src/**/*.ts\""
   },
   "devDependencies": {
     "typescript": "^5.4.5"

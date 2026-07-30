@@ -24,7 +24,7 @@ export const TimeReportModal: React.FC<TimeReportModalProps> = ({ isOpen, onClos
     try {
       const data = await getTimeReport({ groupBy });
       setReportData(data);
-    } catch (error: any) {
+    } catch {
       toast.error('Error al cargar el reporte');
     } finally {
       setIsLoading(false);

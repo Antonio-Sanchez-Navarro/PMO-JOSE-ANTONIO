@@ -816,17 +816,10 @@ describe('LlmFactory — elegir proveedor', () => {
   });
 });
 
-/** Emisor de correo de mentira: estas pruebas son del chat, no del envío. */
-const SIN_CORREO = { send: jest.fn() } as never;
-
-/** Hilos y contexto de mentira. Cada prueba que los mire se los redefine. */
-const hilos = () =>
-  ({
-    resolve: jest.fn().mockResolvedValue({ id: 'hilo-1', title: 'x' }),
-    history: jest.fn().mockResolvedValue([]),
-    saveTurn: jest.fn().mockResolvedValue(undefined),
-  }) as never;
-const sinContexto = () => ({ build: jest.fn().mockResolvedValue('') }) as never;
+// Los dobles de correo, hilos y contexto que había aquí sueltos se quedaron sin
+// uso cuando `copiloto()` pasó a construirlos por su cuenta: cada prueba que
+// necesita mirarlos se los redefine. Borrados el 2026-07-30 al encender el
+// linter, que fue quien los encontró.
 
 describe('CopilotService', () => {
   it('el proveedor no configurado falla en la llamada, antes de abrir el stream', async () => {

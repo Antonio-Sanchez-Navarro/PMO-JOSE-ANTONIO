@@ -104,7 +104,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
           let data: any = {};
           try {
             data = JSON.parse(dataStr);
-          } catch (e) {
+          } catch {
             console.error('Failed to parse SSE data', dataStr);
           }
 
