@@ -19,8 +19,71 @@
 > prioridad, y falta pintarlo en `TaskCard`.
 >
 > El Sprint 5 está cerrado; sus contratos siguen más abajo como referencia.
+>
+> ### 🛑 Antes que nada: **commitea lo tuyo** (sección 0)
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
+
+---
+
+# 0. Urgente — tu trabajo está fuera de git
+
+> Directiva de **Doc**, 2026-07-30. Va la primera a propósito: es lo único que
+> te pedimos antes de seguir con cualquier otra sección.
+
+**Tu código es correcto. El problema es que no existe para nadie más que para tu
+disco.** Lo comprobamos hoy: el arreglo del eje X está bien hecho
+(`new Date(dateStr + 'T00:00:00')`, que fuerza medianoche local — exactamente lo
+que había que hacer), el `<button>` anidado del Inbox ya no está y la
+persistencia de hilos del copiloto está cableada. Nada de eso está commiteado.
+
+**Tu último commit es `4191bda`, del 29 de julio.** Por encima solo hay trabajo
+del backend.
+
+Lo que hay flotando en el árbol de trabajo, con las rutas exactas:
+
+```
+ M apps/web/src/features/copilot/components/CopilotDrawer.tsx      (+158 −64)
+ M apps/web/src/features/copilot/components/CopilotHeader.tsx      (+20 −8)
+ M apps/web/src/features/dashboard/components/DashboardPage.tsx    (+1 −1)
+ M apps/web/src/features/dashboard/hooks/useDashboardMetrics.ts    (+8 −59)
+ M apps/web/src/features/inbox/InboxPage.tsx                       (+3 −4)
+?? apps/web/src/features/copilot/api/copilot.api.ts                (sin rastrear)
+```
+
+**Ojo con `copilot/api/copilot.api.ts`: no está rastreado.** Es el que más
+riesgo corre — un `git clean` se lo lleva sin dejar rastro, y los otros cinco
+se pierden con un `git checkout` descuidado.
+
+### Qué hacer
+
+```bash
+git status                                    # 1. confirma que ves esos seis
+
+git add apps/web/src/features/copilot/ \
+        apps/web/src/features/dashboard/ \
+        apps/web/src/features/inbox/InboxPage.tsx   # 2. añade solo lo tuyo
+
+git commit -m "fix(web): eje X del dashboard en hora local, HTML semántico en el inbox y persistencia de hilos del copiloto"
+
+git log -1                                    # 3. comprueba que quedó sellado
+```
+
+**Añade por ruta, nunca con `git add -A` ni `git add .`.** Hoy me llevé por
+delante uno de tus archivos precisamente así y tuve que rehacer el commit para
+sacarlo. En este repo trabajamos dos a la vez sobre el mismo árbol.
+
+### Por qué corre prisa
+
+1. **El CI ya se dispara** y ahora escucha `master` (estaba en `main`, que no
+   existe, así que no había corrido nunca). Mientras tu trabajo no entre a git,
+   el guardarraíl que acabamos de recuperar no lo cubre.
+2. **No hay copia fuera de esta máquina.** No hay remoto configurado: si el
+   disco falla, se pierde.
+3. La validación final se hará **contra el entorno vivo**, que sigue levantado
+   (API, Vite, Postgres y Redis) — pero sobre código que esté en git.
+
+**Avisa en cuanto esté commiteado.** Después de eso, sigue por la sección 6.
 
 ---
 
