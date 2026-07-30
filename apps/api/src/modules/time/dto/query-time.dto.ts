@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsDateString, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { EsZonaHorariaValida } from '../../../common/time-zone';
 
 /** Query de `GET /time/entries`. Todos los filtros son opcionales. */
 export class QueryTimeDto {
@@ -54,4 +55,17 @@ export class QueryReportDto {
   @IsOptional()
   @IsIn(REPORT_GROUPS)
   groupBy?: ReportGroup;
+
+  /**
+   * En qué zona se corta un "día" (o una semana). La misma por defecto que
+   * `GET /dashboard/metrics`, para que las dos gráficas del tablero repartan
+   * los minutos en los mismos días.
+   *
+   * Con `groupBy=task` no cambia nada: ahí no se corta por fechas, solo se
+   * filtra por el rango, y un filtro es el mismo instante mires desde donde lo
+   * mires.
+   */
+  @IsOptional()
+  @EsZonaHorariaValida()
+  tz?: string;
 }

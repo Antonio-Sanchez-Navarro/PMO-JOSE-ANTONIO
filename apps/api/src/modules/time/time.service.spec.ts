@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Prisma } from '@prisma/client';
 import { TimeService } from './time.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ZONA_POR_DEFECTO } from '../../common/time-zone';
 import { TasksGateway } from '../tasks/tasks.gateway';
 
 const USER_ID = 'user-1';
@@ -345,8 +346,8 @@ describe('TimeService', () => {
 
     it('por día agrupa en SQL y devuelve la fecha en YYYY-MM-DD', async () => {
       prisma.$queryRaw.mockResolvedValue([
-        { bucket: new Date('2026-07-28T00:00:00.000Z'), seconds: 1800 },
-        { bucket: new Date('2026-07-29T00:00:00.000Z'), seconds: 900 },
+        { bucket: '2026-07-28', seconds: 1800 },
+        { bucket: '2026-07-29', seconds: 900 },
       ]);
 
       const informe = await service.report(USER_ID, { groupBy: 'day' });
@@ -365,6 +366,99 @@ describe('TimeService', () => {
       expect(informe.rows).toEqual([]);
       expect(informe.totalSec).toBe(0);
       expect(prisma.task.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * El huso del informe (2026-07-30).
+   *
+   * Hasta este cambio los días se cortaban en UTC mientras
+   * `GET /dashboard/metrics` los cortaba en hora local, así que las dos gráficas
+   * del tablero repartían los mismos minutos en días distintos. Estas pruebas
+   * fijan que el corte es local y que el resto del contrato no se movió.
+   */
+  describe('el huso del informe', () => {
+    /** La consulta cruda que lanzó el informe, ya desarmada. */
+    const consulta = () => {
+      const argumento = prisma.$queryRaw.mock.calls[0][0];
+      return {
+        sql: argumento.sql ?? argumento.strings?.join('') ?? '',
+        valores: argumento.values ?? [],
+      };
+    };
+
+    it('corta los días en la zona por defecto y no en UTC', async () => {
+      const informe = await service.report(USER_ID, { groupBy: 'day' });
+
+      expect(informe.tz).toBe(ZONA_POR_DEFECTO);
+      expect(consulta().valores).toContain(ZONA_POR_DEFECTO);
+    });
+
+    it('respeta la zona que le pidan', async () => {
+      const informe = await service.report(USER_ID, { groupBy: 'day', tz: 'Asia/Tokyo' });
+
+      expect(informe.tz).toBe('Asia/Tokyo');
+      expect(consulta().valores).toContain('Asia/Tokyo');
+      expect(consulta().valores).not.toContain(ZONA_POR_DEFECTO);
+    });
+
+    /**
+     * La regresión que costó encontrar en métricas y que se repetiría aquí.
+     *
+     * Prisma declara los `DateTime` como `timestamp WITHOUT time zone` con el
+     * instante en UTC dentro. Un solo `AT TIME ZONE` **interpreta** la columna
+     * en esa zona en vez de convertirla, y las cuentas siguen saliendo: solo
+     * caen en el día equivocado. Por eso la prueba mira la forma del SQL.
+     */
+    it('convierte la columna en vez de reinterpretarla: doble AT TIME ZONE', async () => {
+      await service.report(USER_ID, { groupBy: 'day', tz: 'Asia/Tokyo' });
+
+      expect(consulta().sql).toContain(`AT TIME ZONE 'UTC' AT TIME ZONE`);
+    });
+
+    it('agrupa la semana en la misma zona', async () => {
+      await service.report(USER_ID, { groupBy: 'week', tz: 'Asia/Tokyo' });
+
+      expect(consulta().valores).toContain('week');
+      expect(consulta().valores).toContain('Asia/Tokyo');
+    });
+
+    /**
+     * `from` y `to` son instantes ISO y un instante no cambia según desde qué
+     * huso se mire: la zona decide en qué cubo cae cada tramo, no cuáles entran.
+     * Reinterpretarlos movería la frontera del rango y haría que dos rangos
+     * consecutivos se solaparan.
+     */
+    it('no reinterpreta el rango: el filtro sigue siendo el instante que pidieron', async () => {
+      await service.report(USER_ID, {
+        groupBy: 'day',
+        tz: 'Asia/Tokyo',
+        from: '2026-07-01T00:00:00.000Z',
+        to: '2026-08-01T00:00:00.000Z',
+      });
+
+      expect(consulta().valores).toContainEqual(new Date('2026-07-01T00:00:00.000Z'));
+      expect(consulta().valores).toContainEqual(new Date('2026-08-01T00:00:00.000Z'));
+    });
+
+    it('con groupBy=task la zona no se usa, pero viaja en la respuesta', async () => {
+      const informe = await service.report(USER_ID, { tz: 'Asia/Tokyo' });
+
+      expect(informe.tz).toBe('Asia/Tokyo');
+      // Por tarea no hay corte por fechas: no se lanza ninguna consulta cruda.
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('cambia el reparto entre días, no el total', async () => {
+      prisma.$queryRaw.mockResolvedValue([
+        { bucket: '2026-07-28', seconds: 1800 },
+        { bucket: '2026-07-29', seconds: 900 },
+      ]);
+
+      const enMexico = await service.report(USER_ID, { groupBy: 'day' });
+      const enTokio = await service.report(USER_ID, { groupBy: 'day', tz: 'Asia/Tokyo' });
+
+      expect(enTokio.totalSec).toBe(enMexico.totalSec);
     });
   });
 });

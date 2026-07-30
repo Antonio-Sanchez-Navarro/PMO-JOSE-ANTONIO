@@ -491,12 +491,74 @@ Y la que te puede dar trabajo, dicho antes de que lo descubras pintando:
 > vemos cómo enseñarlo (un texto de "empezamos a medir el 29 de julio" en el
 > pie de la gráfica es honesto y evita la pregunta).
 
-**Un detalle si pintas las dos gráficas de tiempo juntas**: `GET /time/report`
-—el que ya consumes en `TimeReportModal`— agrupa los días en **UTC**, y esta
-ruta los agrupa en hora local. Con datos de última hora de la tarde las dos
-pueden repartir los minutos en días distintos. No lo he cambiado porque tocaría
-un endpoint que ya usas; está avisado a Doc. Si te estorba, pídelo y le añado el
-mismo parámetro `tz`.
+**Un detalle si pintas las dos gráficas de tiempo juntas**: ya no hay
+discrepancia. `GET /time/report` agrupaba los días en **UTC** y esta ruta en
+hora local, así que las dos podían repartir los minutos de última hora de la
+tarde en días distintos. Doc dio luz verde el 2026-07-30 y quedó alineado — lee
+la sección 9, que **te cambia algo de lo que ya tienes escrito**.
+
+## 9. Nuevo el 2026-07-30 — `GET /time/report` ya corta los días en hora local
+
+**Esto toca código que ya tienes escrito** (`time.api.ts` y `TimeReportModal`),
+así que léelo antes de seguir con la vista de métricas. Encargo de Doc del
+2026-07-30, después de ver el problema de la sección 8: la gráfica de métricas
+hablaba en hora local y la de tiempos en UTC, y no había forma de saber cuál de
+las dos mentía.
+
+**Qué cambia**
+
+| | Antes | Ahora |
+|---|---|---|
+| Corte de los días y las semanas | UTC | La zona de `?tz=`, por defecto `America/Mexico_City` |
+| Parámetro `tz` | no existía | opcional, zona IANA; una inventada da **400** |
+| Respuesta | `{ groupBy, from, to, totalSec, rows }` | lo mismo **más `tz`** |
+
+```
+GET /time/report?groupBy=day&tz=America/Mexico_City
+```
+
+```json
+{ "groupBy": "day", "from": null, "to": null, "tz": "America/Mexico_City", "totalSec": 4200, "rows": [ … ] }
+```
+
+**Lo que te toca a ti: manda `tz`.** Añádelo a `getTimeReport` en `time.api.ts`
+y sácalo del navegador, no lo escribas a mano:
+
+```ts
+const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+```
+
+Lo mismo en la vista de métricas de la sección 8. Con las dos rutas recibiendo
+la misma zona, las dos gráficas parten los días por el mismo sitio y el usuario
+deja de ver dos verdades a la vez.
+
+**Cinco cosas que conviene tener claras:**
+
+1. **El defecto ya es el correcto.** Si no mandas `tz`, sale
+   `America/Mexico_City`, no UTC. Mandarlo es para que a alguien que viaje —o
+   que abra el tablero desde otro huso— le cuadren los días con su reloj.
+2. **Los números de `groupBy=day` y `week` se mueven respecto a lo que pintabas
+   antes**, y eso es lo que se venía a arreglar: un fichaje del 28 a las 19:00
+   en México aparecía en el 29. Ahora aparece en el 28.
+3. **El total no se mueve.** `totalSec` sale de las mismas filas: lo único que
+   cambia es en qué barra cae cada tramo. Si tenías una cifra cuadrada con otra
+   pantalla, sigue cuadrando.
+4. **`groupBy=task` no cambia en nada.** Ahí no se corta por fechas, solo se
+   filtra por el rango. `tz` viaja igual en la respuesta, pero no se usa.
+5. **`from` y `to` siguen siendo instantes ISO y no se reinterpretan.** La zona
+   decide en qué barra cae cada tramo, no cuáles entran en el informe — si no,
+   dos rangos consecutivos se solaparían. Sigue siendo cerrado por abajo y
+   abierto por arriba.
+
+Las fechas de `rows` siguen llegando en `YYYY-MM-DD` **ya en hora local**: mismo
+aviso que en métricas, píntalas tal cual y **no las pases por `new Date(...)`**
+para reformatearlas, que las interpretaría como medianoche UTC y te correría la
+etiqueta un día.
+
+> **Nota de implementación, por si algún día lo lees**: la zona por defecto, la
+> validación de `tz` y el `AT TIME ZONE` que usan las dos rutas viven en un solo
+> sitio (`common/time-zone.ts`). Tener dos copias de esa lógica es exactamente
+> lo que provocó esta discrepancia.
 
 ---
 
@@ -637,7 +699,7 @@ los dos. `activeFor` es fontanería nuestra: ignóralo para pintar.
 | `POST /time/entries` | Tramo apuntado a mano: `{ taskId, startedAt, endedAt, note? }`, las dos fechas en ISO. **201**. Nace cerrado, así que no interfiere con el cronómetro |
 | `PATCH /time/entries/:id` | Corrige `startedAt`, `endedAt` o `note`. **200** con el fichaje ya recalculado |
 | `DELETE /time/entries/:id` | **204** sin cuerpo |
-| `GET /time/report` | Sumas. `?groupBy=task\|day\|week` (por defecto `task`), `?from=`, `?to=` |
+| `GET /time/report` | Sumas. `?groupBy=task\|day\|week` (por defecto `task`), `?from=`, `?to=`, `?tz=` — **ver la sección 9: desde el 2026-07-30 los días se cortan en hora local, no en UTC** |
 
 Detalles que te ahorran sorpresas:
 
@@ -679,10 +741,9 @@ para entrar tal cual en la gráfica.
    dieran cifras distintas. Si quieres enseñar "lo de hoy incluyendo lo que va
    corriendo", suma en el cliente el reloj vivo, que ya tienes en
    `GET /time/active`.
-2. **Los días y las semanas se cortan en UTC**, que es como Postgres guarda las
-   marcas. Con husos alejados, un tramo de última hora puede caer en el día
-   siguiente. Si el dashboard necesita el huso local, pídemelo: se pasa la zona
-   como parámetro, no se reinterpreta en el cliente.
+2. ~~**Los días y las semanas se cortan en UTC**~~ — **cambiado el 2026-07-30**:
+   se cortan en la zona de `?tz=`, por defecto `America/Mexico_City`. El detalle
+   completo, con lo que te toca hacer, está en la **sección 9**.
 
 ### Eventos de socket — por el que ya tienes
 

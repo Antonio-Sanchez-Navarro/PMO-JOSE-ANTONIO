@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, TimeEntry } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ZONA_POR_DEFECTO, enHoraLocal } from '../../common/time-zone';
 import { TasksGateway } from '../tasks/tasks.gateway';
 import { StartTimeDto } from './dto/start-time.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
@@ -34,6 +35,13 @@ export interface TimeReport {
   groupBy: ReportGroup;
   from: string | null;
   to: string | null;
+  /**
+   * En qué zona se cortaron los días. Viaja siempre —también con
+   * `groupBy=task`, donde no se usa— para que el cliente pueda decir de qué
+   * huso son las fechas que está pintando sin tener que acordarse de lo que
+   * pidió.
+   */
+  tz: string;
   /** Suma de todo lo agrupado, para no obligar al cliente a recorrer las filas. */
   totalSec: number;
   rows: ReportRow[];
@@ -330,25 +338,33 @@ export class TimeService {
    * duración, y estimarla haría que dos lecturas seguidas del mismo informe
    * dieran números distintos.
    *
-   * Los días y las semanas se cortan en **UTC**, que es como Postgres guarda
-   * las marcas de tiempo. Con husos alejados, un tramo de última hora puede
-   * caer en el día siguiente; cuando el dashboard necesite husos locales, lo
-   * suyo es pasar la zona como parámetro y no reinterpretarlo aquí.
+   * Los días y las semanas se cortan en **hora local** (`?tz=`, por defecto
+   * `America/Mexico_City`), no en UTC. Hasta el 2026-07-30 se cortaban en UTC y
+   * `GET /dashboard/metrics` ya lo hacía en local: las dos gráficas del tablero
+   * repartían los minutos de última hora de la tarde en días distintos y no
+   * había forma de saber cuál de las dos mentía. Encargo de Doc: que las dos
+   * cuenten igual.
+   *
+   * Cambia el reparto entre días, **no el total**: `totalSec` sale de las
+   * mismas filas y no se mueve. Con `groupBy=task` no cambia absolutamente
+   * nada.
    */
   async report(userId: string, query: QueryReportDto): Promise<TimeReport> {
     const groupBy: ReportGroup = query.groupBy ?? 'task';
+    const tz = query.tz ?? ZONA_POR_DEFECTO;
     const from = query.from ? new Date(query.from) : null;
     const to = query.to ? new Date(query.to) : null;
 
     const rows =
       groupBy === 'task'
         ? await this.reportPorTarea(userId, from, to)
-        : await this.reportPorFecha(userId, from, to, groupBy);
+        : await this.reportPorFecha(userId, from, to, groupBy, tz);
 
     return {
       groupBy,
       from: from ? from.toISOString() : null,
       to: to ? to.toISOString() : null,
+      tz,
       totalSec: rows.reduce((suma, fila) => suma + fila.seconds, 0),
       rows,
     };
@@ -396,6 +412,7 @@ export class TimeService {
     from: Date | null,
     to: Date | null,
     groupBy: 'day' | 'week',
+    tz: string,
   ): Promise<ReportRow[]> {
     // El `groupBy` de Prisma no sabe truncar fechas, así que el agrupamiento
     // por día o semana va en SQL: hacerlo en memoria obligaría a traerse todos
@@ -404,11 +421,18 @@ export class TimeService {
       Prisma.sql`"userId" = ${userId}`,
       Prisma.sql`"durationSec" IS NOT NULL`,
     ];
+    // El filtro del rango se queda en UTC a propósito: `from` y `to` llegan como
+    // instantes ISO y un instante no depende del huso desde el que se mire. La
+    // zona solo decide en qué cubo cae cada tramo, no cuáles entran.
     if (from) condiciones.push(Prisma.sql`"startedAt" >= ${from}`);
     if (to) condiciones.push(Prisma.sql`"startedAt" < ${to}`);
 
-    const filas = await this.prisma.$queryRaw<{ bucket: Date; seconds: number }[]>(Prisma.sql`
-      SELECT date_trunc(${groupBy}, "startedAt") AS bucket,
+    // La fecha se formatea en SQL y vuelve como texto ya cortado en `tz`. Antes
+    // volvía un `Date` que se pasaba por `toISOString()`, lo cual solo funciona
+    // mientras el cubo esté en UTC: en cuanto se corta en local, ese viaje de
+    // ida y vuelta corre la etiqueta un día.
+    const filas = await this.prisma.$queryRaw<{ bucket: string; seconds: number }[]>(Prisma.sql`
+      SELECT to_char(date_trunc(${groupBy}, ${enHoraLocal('startedAt', tz)}), 'YYYY-MM-DD') AS bucket,
              SUM("durationSec")::int AS seconds
       FROM "TimeEntry"
       WHERE ${Prisma.join(condiciones, ' AND ')}
@@ -418,7 +442,7 @@ export class TimeService {
 
     return filas.map((fila) => {
       // `YYYY-MM-DD`; en semanas es el lunes, que es donde corta `date_trunc`.
-      const fecha = new Date(fila.bucket).toISOString().slice(0, 10);
+      const fecha = String(fila.bucket);
       return { key: fecha, label: fecha, seconds: Number(fila.seconds) };
     });
   }

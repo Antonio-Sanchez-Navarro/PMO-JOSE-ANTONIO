@@ -1,32 +1,5 @@
-import { IsDateString, IsOptional, Validate, ValidatorConstraint } from 'class-validator';
-import type { ValidatorConstraintInterface } from 'class-validator';
-
-/**
- * Que la zona horaria exista de verdad.
- *
- * Sin esto, un `?tz=Marte/Olympus` llegaría a Postgres y saldría un 500 con un
- * error de base de datos en la respuesta. Con esto es un 400 que dice qué está
- * mal. La lista la pone el propio motor de `Intl`, así que no hay que
- * mantenerla a mano.
- */
-@ValidatorConstraint({ name: 'esZonaHoraria', async: false })
-export class EsZonaHoraria implements ValidatorConstraintInterface {
-  validate(value: unknown): boolean {
-    if (typeof value !== 'string') return false;
-
-    try {
-      // Lanza `RangeError` si la zona no la conoce el sistema.
-      new Intl.DateTimeFormat('en-US', { timeZone: value });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  defaultMessage(): string {
-    return 'tz debe ser una zona horaria IANA válida, por ejemplo America/Mexico_City';
-  }
-}
+import { IsDateString, IsOptional } from 'class-validator';
+import { EsZonaHorariaValida } from '../../../common/time-zone';
 
 /** Query de `GET /dashboard/metrics`. Los tres parámetros son opcionales. */
 export class QueryMetricsDto {
@@ -50,6 +23,6 @@ export class QueryMetricsDto {
    * caería en la gráfica del día siguiente.
    */
   @IsOptional()
-  @Validate(EsZonaHoraria)
+  @EsZonaHorariaValida()
   tz?: string;
 }

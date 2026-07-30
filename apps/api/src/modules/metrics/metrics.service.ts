@@ -1,39 +1,17 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { EmailStatus, Prisma, TaskPriority, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ZONA_POR_DEFECTO, enHoraLocal } from '../../common/time-zone';
 import { QueryMetricsDto } from './dto/query-metrics.dto';
 import { DashboardMetrics, MetricsSummary, ThroughputPoint, TimePoint } from './metrics.types';
 
 /** Cuántos días cubre la ventana cuando nadie pide otra cosa. */
 export const VENTANA_DIAS = 7;
 
-/**
- * Cómo se pasa una columna de fecha de Prisma a la hora local de una zona.
- *
- * El doble `AT TIME ZONE` no es redundante y quitar el primero rompe los días de
- * forma silenciosa. Prisma declara los `DateTime` como `timestamp WITHOUT time
- * zone` y guarda dentro el instante en UTC. Un solo `AT TIME ZONE 'America/...'`
- * sobre esa columna hace lo **contrario** de lo que parece: no la convierte a
- * hora de México, la *interpreta* como si ya lo estuviera y devuelve un
- * `timestamptz`. Con la sesión en UTC, un cierre de las 22:58 acababa contado en
- * el día siguiente.
- *
- * Así que primero se dice de qué zona viene (`'UTC'`, que la convierte en
- * `timestamptz`) y después a cuál va. Encontrado probando contra la aplicación:
- * las pruebas con Prisma simulado no lo habrían visto nunca.
- */
-const enHoraLocal = (columna: string, tz: string): Prisma.Sql =>
-  Prisma.sql`${Prisma.raw(`"${columna}"`)} AT TIME ZONE 'UTC' AT TIME ZONE ${tz}`;
-
-/**
- * Donde trabaja quien usa esto. Es el corte por defecto de los días.
- *
- * Sale de aquí y no de `process.env` a propósito: es una decisión de producto
- * ("el día acaba a medianoche en México"), no de despliegue, y esconderla en
- * una variable de entorno haría que dos entornos dieran gráficas distintas con
- * los mismos datos.
- */
-export const ZONA_POR_DEFECTO = 'America/Mexico_City';
+// La zona por defecto y el `AT TIME ZONE` doble viven en `common/time-zone`:
+// `GET /time/report` corta los días con las mismas piezas, y dos copias de esta
+// lógica volverían a repartir los mismos minutos en días distintos.
+export { ZONA_POR_DEFECTO };
 
 /**
  * Los números del tablero, la bandeja y el reloj (Sprint 8).
