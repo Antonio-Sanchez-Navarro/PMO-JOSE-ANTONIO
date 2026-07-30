@@ -413,14 +413,13 @@ function EmailRow({
   if (!interactive) return content;
 
   return (
-    <button
-      type="button"
+    <div
       onClick={onToggle}
       aria-expanded={expanded}
-      className="block w-full text-left transition hover:bg-slate-50"
+      className="block w-full text-left transition hover:bg-slate-50 cursor-pointer"
     >
       {content}
-    </button>
+    </div>
   );
 }
 

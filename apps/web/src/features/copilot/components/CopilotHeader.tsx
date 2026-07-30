@@ -13,8 +13,8 @@ interface CopilotHeaderProps {
   tier: AiTier;
   availableProviders: ProviderStatus[];
   onProviderChange: (provider: AiProvider) => void;
-
   onTierChange: (tier: AiTier) => void;
+  onToggleHistory?: () => void;
   onClose: () => void;
 }
 
@@ -24,6 +24,7 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
   availableProviders,
   onProviderChange,
   onTierChange,
+  onToggleHistory,
   onClose,
 }) => {
   const isGoogleReady = availableProviders.find(p => p.provider === 'google')?.ready ?? false;
@@ -35,13 +36,24 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
         <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
           <span>✨</span> Copiloto IA
         </h2>
-        <button
-          onClick={onClose}
-          className="text-gray-500 hover:text-gray-700 p-1 rounded-md hover:bg-gray-100 transition-colors"
-          title="Cerrar Copiloto"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1">
+          {onToggleHistory && (
+            <button
+              onClick={onToggleHistory}
+              className="text-gray-500 hover:text-gray-700 p-1 rounded-md hover:bg-gray-100 transition-colors"
+              title="Historial de conversaciones"
+            >
+              🕒
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 p-1 rounded-md hover:bg-gray-100 transition-colors"
+            title="Cerrar Copiloto"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center justify-between">
