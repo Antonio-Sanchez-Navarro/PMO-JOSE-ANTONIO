@@ -20,70 +20,55 @@
 >
 > El Sprint 5 está cerrado; sus contratos siguen más abajo como referencia.
 >
-> ### 🛑 Antes que nada: **commitea lo tuyo** (sección 0)
+> ### ✅ Lo tuyo ya está commiteado — lee la sección 0 de todas formas (es corta)
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
 
 ---
 
-# 0. Urgente — tu trabajo está fuera de git
+# 0. Tu trabajo entró a git — y una costumbre que hay que coger
 
-> Directiva de **Doc**, 2026-07-30. Va la primera a propósito: es lo único que
-> te pedimos antes de seguir con cualquier otra sección.
+> Actualizado el **2026-07-30**, después de comprobarlo en el árbol.
 
-**Tu código es correcto. El problema es que no existe para nadie más que para tu
-disco.** Lo comprobamos hoy: el arreglo del eje X está bien hecho
-(`new Date(dateStr + 'T00:00:00')`, que fuerza medianoche local — exactamente lo
-que había que hacer), el `<button>` anidado del Inbox ya no está y la
-persistencia de hilos del copiloto está cableada. Nada de eso está commiteado.
+**Commiteaste, y está bien commiteado.** `0d2a4f4` se llevó los seis archivos,
+incluido el `copilot/api/copilot.api.ts` que estaba sin rastrear y era el que
+más riesgo corría. La versión anterior de esta sección te pedía justo eso;
+llegó nueve segundos tarde, porque tu commit y el mío se cruzaron. Queda como
+histórico y no hay nada que hacer con ella.
 
-**Tu último commit es `4191bda`, del 29 de julio.** Por encima solo hay trabajo
-del backend.
+Lo revisé por dentro y el trabajo es correcto: el eje X con
+`new Date(dateStr + 'T00:00:00')` (medianoche local, que es exactamente lo que
+había que hacer), el `<button>` anidado del Inbox fuera, y la persistencia de
+hilos del copiloto cableada.
 
-Lo que hay flotando en el árbol de trabajo, con las rutas exactas:
+### Lo único que sí te toca: pasa el linter antes de commitear
 
-```
- M apps/web/src/features/copilot/components/CopilotDrawer.tsx      (+158 −64)
- M apps/web/src/features/copilot/components/CopilotHeader.tsx      (+20 −8)
- M apps/web/src/features/dashboard/components/DashboardPage.tsx    (+1 −1)
- M apps/web/src/features/dashboard/hooks/useDashboardMetrics.ts    (+8 −59)
- M apps/web/src/features/inbox/InboxPage.tsx                       (+3 −4)
-?? apps/web/src/features/copilot/api/copilot.api.ts                (sin rastrear)
-```
+**Tu commit dejó `master` en rojo.** No por el diseño ni por la lógica: por tres
+`catch (err)` en `CopilotDrawer.tsx` donde `err` no se usa. `npm run lint` daba
+**3 errores**, y con el CI ya escuchando `master` eso es un build rojo en cada
+push.
 
-**Ojo con `copilot/api/copilot.api.ts`: no está rastreado.** Es el que más
-riesgo corre — un `git clean` se lo lleva sin dejar rastro, y los otros cinco
-se pierden con un `git checkout` descuidado.
-
-### Qué hacer
+Lo arreglé yo en `b5995a7` —quitando el binding, sin tocar comportamiento, igual
+que los once de `2ceedd2`— porque el guardarraíl acababa de encenderse y no
+quería dejarlo caído la primera tarde. **No lo voy a seguir haciendo**:
+`apps/web` es tuyo y a partir de ahora los que salgan los arreglas tú.
 
 ```bash
-git status                                    # 1. confirma que ves esos seis
-
-git add apps/web/src/features/copilot/ \
-        apps/web/src/features/dashboard/ \
-        apps/web/src/features/inbox/InboxPage.tsx   # 2. añade solo lo tuyo
-
-git commit -m "fix(web): eje X del dashboard en hora local, HTML semántico en el inbox y persistencia de hilos del copiloto"
-
-git log -1                                    # 3. comprueba que quedó sellado
+npm run lint     # 0 errores antes de cada commit. Los avisos no bloquean.
 ```
 
-**Añade por ruta, nunca con `git add -A` ni `git add .`.** Hoy me llevé por
-delante uno de tus archivos precisamente así y tuve que rehacer el commit para
-sacarlo. En este repo trabajamos dos a la vez sobre el mismo árbol.
+Es la regla entera. Los **28 avisos** que quedan son `no-explicit-any`, casi
+todos tuyos, y no bloquean nada: no urgen y el CI pasa con ellos.
 
-### Por qué corre prisa
+> **Por qué es fácil que te vuelva a pasar**: hasta el 2026-07-30 no había
+> configuración de ESLint en el repo, así que `npm run lint` moría antes de
+> abrir un archivo y nadie lo corría. Ahora sí funciona, y ahora sí corta.
 
-1. **El CI ya se dispara** y ahora escucha `master` (estaba en `main`, que no
-   existe, así que no había corrido nunca). Mientras tu trabajo no entre a git,
-   el guardarraíl que acabamos de recuperar no lo cubre.
-2. **No hay copia fuera de esta máquina.** No hay remoto configurado: si el
-   disco falla, se pierde.
-3. La validación final se hará **contra el entorno vivo**, que sigue levantado
-   (API, Vite, Postgres y Redis) — pero sobre código que esté en git.
+Y una que sigue vigente de la versión anterior: **añade por ruta, nunca con
+`git add -A` ni `git add .`**. Trabajamos dos a la vez sobre el mismo árbol y ya
+me llevé por delante un archivo tuyo así una vez.
 
-**Avisa en cuanto esté commiteado.** Después de eso, sigue por la sección 6.
+Después de esto, sigue por la sección 6.
 
 ---
 
@@ -887,15 +872,21 @@ Es más rápido que deshacer un choque.
 
 ## Estado del repo
 
-- `423 pruebas en 13 suites`, todas en verde. Build de los tres paquetes, en
-  verde. Actualizado el 2026-07-30.
+- **`426 pruebas en 14 suites`, todas en verde**, comprobado el 2026-07-30
+  después de tu `0d2a4f4`. El build de `@pmo/web` compila (844 kB, el aviso de
+  tamaño de Vite sigue ahí) y el type-check de la API sale limpio. _La API se
+  comprobó con `npx tsc -p apps/api/tsconfig.spec.json` y no con `npm run
+  build`, porque hay un `dev:api` levantado y los dos escriben en el mismo
+  `dist`._
 - **`npm run lint` ya funciona.** Hasta el 2026-07-30 fallaba siempre, y no por
   estilo: no había configuración de ESLint en ninguna parte del repo, así que
   moría antes de abrir un archivo. Ahora hay una sola (`eslint.config.mjs` en la
-  raíz) y sale en **0 errores**. Los avisos que quedan son `no-explicit-any`,
+  raíz) y sale en **0 errores y 28 avisos**. Los avisos son `no-explicit-any`,
   casi todos en `apps/web`: son tuyos, no urgen, y no rompen nada.
   De paso quedaron arreglados 11 `catch (e) {}` de tu capa de API — sin tocar
-  comportamiento, solo quitando el binding que no se usaba.
+  comportamiento, solo quitando el binding que no se usaba. **Otros tres
+  volvieron a aparecer en tu `0d2a4f4` y los quité en `b5995a7`; a partir de
+  ahí los de `apps/web` son tuyos: mira la sección 0.**
 - El formato **no** se comprueba con el linter, a propósito: lo sigue poniendo
   `prettier` por su cuenta. Así nadie te reescribe media `apps/web` en un
   `--fix`.
