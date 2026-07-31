@@ -1,47 +1,81 @@
 # Handoff — Sprint 6 (copiloto) y Sprint 8 (métricas)
 
-> **Estado: TRABAJAR** · puesto por **Doc** el 2026-07-30
-> **Asignado a:** Gravity — la interfaz del copiloto y la vista de métricas
+> **Estado: CERRADO** · cerrado el **2026-07-31** por instrucción del usuario
+> **Asignado a:** nadie. No hay encargo abierto.
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe. `CERRADO` = el sprint ha concluido.
 >
-> **Todo el backend que necesitas está commiteado y probado contra la aplicación
-> levantada.** Tres frentes, en este orden:
+> **Los cuatro frentes del ciclo están entregados y verificados en el código el
+> 2026-07-31:**
 >
-> 1. **Sección 6** — lo que falta del Sprint 6: mandar `threadId` en
->    `/copilot/chat` y la lista de conversaciones.
-> 2. **Sección 8** — `GET /dashboard/metrics` para la vista de métricas.
-> 3. **Sección 9 — léela sí o sí**: `GET /time/report` **ya no corta los días en
->    UTC**. Cambia números que ya estabas pintando y te pide mandar `tz` en las
->    dos rutas.
+> | Sección | Encargo | Dónde quedó |
+> |---|---|---|
+> | 6 | `threadId` en `/copilot/chat` y lista de conversaciones | `0d2a4f4` |
+> | 7 | El motivo de la prioridad, pintado en la tarjeta | `4191bda` — `TaskCard.tsx:187` |
+> | 8 | Vista de métricas contra `GET /dashboard/metrics` | `4191bda` + `0d2a4f4` — sin `MOCK_METRICS` |
+> | 9 | Mandar `tz` en las dos rutas | `useDashboardMetrics.ts:14` y `time.api.ts:101` |
 >
-> Y la sección 7, que es pequeña: la tarea ya trae escrito por qué le subieron la
-> prioridad, y falta pintarlo en `TaskCard`.
+> Con esto **el Sprint 6 queda cerrado entero** —backend el 29, interfaz el 30— y
+> del Sprint 8 solo sigue abierto lo que no es de Gravity (observabilidad,
+> CI/CD, runbook, backups).
+>
+> **Lo siguiente para ti está escrito en la sección 0**: la fila del Inbox se
+> quedó sin teclado. Es lo único pendiente de tu lado, y **no arranques hasta que
+> Doc ponga este campo en `TRABAJAR`** — la regla de que el estado lo pone Doc
+> sigue en pie, y este cierre no la sustituye.
 >
 > El Sprint 5 está cerrado; sus contratos siguen más abajo como referencia.
->
-> ### ✅ Lo tuyo ya está commiteado — lee la sección 0 de todas formas (es corta)
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
 
 ---
 
-# 0. Tu trabajo entró a git — y una costumbre que hay que coger
+# 0. Lo que queda de tu lado: la fila del Inbox perdió el teclado
 
-> Actualizado el **2026-07-30**, después de comprobarlo en el árbol.
+> Escrito el **2026-07-31**. **A la espera de que Doc lo active** (ver el Estado
+> arriba). Pequeño, acotado, un solo archivo.
 
-**Commiteaste, y está bien commiteado.** `0d2a4f4` se llevó los seis archivos,
-incluido el `copilot/api/copilot.api.ts` que estaba sin rastrear y era el que
-más riesgo corría. La versión anterior de esta sección te pedía justo eso;
-llegó nueve segundos tarde, porque tu commit y el mío se cruzaron. Queda como
-histórico y no hay nada que hacer con ella.
+Al arreglar el HTML inválido del Inbox en `0d2a4f4` —el `<button>` anidado
+dentro de otro `<button>`, que estaba bien quitado— la fila pasó a ser un
+`<div onClick>`. El HTML ya es válido, pero **un `div` con `onClick` no existe
+para el teclado**: no recibe foco con Tab, no responde a Enter ni a Espacio, y
+un lector de pantalla no lo anuncia como algo que se pueda pulsar. La bandeja
+es la pantalla por la que se entra a todo lo demás, así que quien navegue sin
+ratón se queda fuera del flujo entero.
 
-Lo revisé por dentro y el trabajo es correcto: el eje X con
-`new Date(dateStr + 'T00:00:00')` (medianoche local, que es exactamente lo que
-había que hacer), el `<button>` anidado del Inbox fuera, y la persistencia de
-hilos del copiloto cableada.
+Las tres piezas, en `apps/web/src/features/inbox/InboxPage.tsx`:
 
-### Lo único que sí te toca: pasa el linter antes de commitear
+```tsx
+<div
+  role="button"
+  tabIndex={0}
+  onClick={abrirHilo}
+  onKeyDown={(e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();   // si no, Espacio hace scroll de la página
+      abrirHilo();
+    }
+  }}
+>
+```
+
+`preventDefault` solo en el caso de la tecla: es lo que evita que Espacio
+desplace la página bajo la fila que acabas de abrir.
+
+**Ojo con el botón ✨ Copiloto que vive dentro de la fila**: ahora que la fila
+entera es pulsable, su `onClick` necesita `e.stopPropagation()` o pedir el
+copiloto abrirá también el hilo. Si ya lo tiene, déjalo como está.
+
+Alternativa igual de válida si te resulta más limpia: devolver la fila a
+`<button>` y bajar el botón del copiloto a hermano en vez de hijo. Tú eliges;
+lo que no puede quedarse es un `div` pulsable sin teclado.
+
+### Y la costumbre que hay que coger: pasa el linter antes de commitear
+
+**Tu commit `0d2a4f4` dejó `master` en rojo.** No por el diseño ni por la
+lógica: por tres `catch (err)` en `CopilotDrawer.tsx` donde `err` no se usa.
+`npm run lint` daba **3 errores**, y con el CI ya escuchando `master` eso es un
+build rojo en cada push.
 
 **Tu commit dejó `master` en rojo.** No por el diseño ni por la lógica: por tres
 `catch (err)` en `CopilotDrawer.tsx` donde `err` no se usa. `npm run lint` daba
@@ -68,7 +102,21 @@ Y una que sigue vigente de la versión anterior: **añade por ruta, nunca con
 `git add -A` ni `git add .`**. Trabajamos dos a la vez sobre el mismo árbol y ya
 me llevé por delante un archivo tuyo así una vez.
 
-Después de esto, sigue por la sección 6.
+Y no lo veas en el CI todavía: **no hay remoto configurado** (`git remote -v`
+está vacío), así que el workflow no puede ejecutarse en ninguna parte aunque ya
+escuche `master`. Corre `npm run lint` en local; por ahora es el único
+guardarraíl que existe de verdad.
+
+---
+
+# De la 6 a la 9 — entregadas, se quedan como referencia
+
+**Las cuatro secciones que siguen ya no son encargos.** Se cumplieron entre el
+29 y el 30 (ver la tabla del Estado, arriba) y se quedan escritas porque son el
+contrato vigente de esas rutas: cuando dudes de qué manda o qué devuelve
+`/copilot/chat`, `/dashboard/metrics` o `/time/report`, se mira aquí. Lo que
+está redactado en imperativo —"manda esto", "pinta aquello"— hay que leerlo en
+pasado.
 
 ---
 
@@ -898,10 +946,13 @@ Es más rápido que deshacer un choque.
   tiempos) y `20260729160000_add_priority_audit` (los tres campos de la
   sección 7: `priorityReason`, `priorityAdjustedAt` y `priorityAdjustedFrom`).
   Si tu base es anterior, `npx prisma migrate deploy` desde `apps/api`.
-- **El CI ya se dispara.** Escuchaba `main` y la rama de trabajo es `master`,
-  así que no había corrido nunca — es lo que dejó pasar el linter roto.
-  Corregido el 2026-07-30: ahora `push` y `pull_request` sobre `master` pasan
-  por lint, build y las 423 pruebas.
+- **El CI ya apunta a la rama correcta, pero todavía no puede correr.** Escuchaba
+  `main` y la rama de trabajo es `master`, así que no se había disparado nunca —
+  es lo que dejó pasar el linter roto. Corregido el 2026-07-30 (`eb4449d`):
+  `push` y `pull_request` sobre `master` pasan por lint, build y las 426
+  pruebas. **Falta la otra mitad: `git remote -v` está vacío**, y sin remoto no
+  hay dónde ejecutar el workflow. Hasta que eso se resuelva, el único
+  guardarraíl real es `npm run lint` en tu máquina.
 - **La API va con Helmet y con límite de peticiones desde el 2026-07-29**: 240
   por minuto en general y **20 por minuto en todo `/copilot`**, porque cada
   turno cuesta tokens. Un `429` en el panel de chat no es un fallo del backend:
