@@ -277,12 +277,22 @@ function EmailRow({
 
   const content = (
     <div 
+      role="button"
+      tabIndex={0}
       className={`flex items-start gap-4 px-6 py-4 cursor-pointer hover:bg-slate-50 transition ${nested ? "pl-16" : ""}`}
       onClick={(e) => {
         // Evitar que el clic en botones propague el evento al div padre
         const target = e.target as HTMLElement;
         if (target.closest('button')) return;
         onRead?.();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          const target = e.target as HTMLElement;
+          if (target.closest('button')) return;
+          onRead?.();
+        }
       }}
     >
       {!nested && (
@@ -383,6 +393,7 @@ function EmailRow({
                 e.stopPropagation();
                 openCopilotWithContext({ emailId: email.id });
               }}
+              onKeyDown={(e) => e.stopPropagation()}
               className="px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50 flex items-center gap-1"
               title="Preguntar al copiloto"
             >
@@ -414,7 +425,15 @@ function EmailRow({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle?.();
+        }
+      }}
       aria-expanded={expanded}
       className="block w-full text-left transition hover:bg-slate-50 cursor-pointer"
     >
