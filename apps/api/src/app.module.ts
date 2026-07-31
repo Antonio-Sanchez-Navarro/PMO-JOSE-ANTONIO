@@ -1,9 +1,12 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
-import { APP_GUARD } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { BullModule } from '@nestjs/bullmq';
+import { LoggerModule } from 'nestjs-pino';
 import { THROTTLE_OPTIONS } from "./common/security/throttle.config";
+import { buildLoggerParams } from "./common/observability/logger.config";
+import { AllExceptionsFilter } from "./common/observability/all-exceptions.filter";
 import { PrismaModule } from "./common/prisma/prisma.module";
 import { CryptoModule } from "./common/crypto/crypto.module";
 import { HealthModule } from "./modules/health/health.module";
@@ -35,6 +38,24 @@ import { TasksModule } from "./modules/tasks/tasks.module";
       isGlobal: true,
       // Lee el .env de la raíz del monorepo (y un .env local si existiera).
       envFilePath: ["../../.env", ".env"],
+    }),
+    /**
+     * Logs estructurados (Sprint 8).
+     *
+     * Va **después** de `ConfigModule` porque necesita leer `LOG_FORMAT`,
+     * `LOG_LEVEL` y `GOOGLE_CLOUD_PROJECT` del `.env` ya cargado. El formato y
+     * el porqué de cada campo están en `common/observability/logger.config.ts`.
+     */
+    LoggerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) =>
+        buildLoggerParams({
+          NODE_ENV: config.get<string>('NODE_ENV'),
+          LOG_LEVEL: config.get<string>('LOG_LEVEL'),
+          LOG_FORMAT: config.get<string>('LOG_FORMAT'),
+          GOOGLE_CLOUD_PROJECT: config.get<string>('GOOGLE_CLOUD_PROJECT'),
+        }),
     }),
     PrismaModule,
     CryptoModule,
@@ -68,6 +89,12 @@ import { TasksModule } from "./modules/tasks/tasks.module";
      * que se lee y se revisa; un olvido, no.
      */
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    /**
+     * Filtro global de excepciones. Registra cada fallo en el formato que Error
+     * Reporting recoge de Cloud Logging y **delega la respuesta en el filtro de
+     * Nest**, para no cambiar lo que la API devuelve hoy.
+     */
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })
 export class AppModule {}
