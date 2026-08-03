@@ -1,0 +1,162 @@
+name: Deploy API to Cloud Run
+
+# **Se dispara cuando el CI termina, no cuando llega el push.**
+#
+# `workflow_run` es la única forma de encadenar dos workflows en GitHub
+# Actions: espera a que el llamado "CI" concluya y entonces arranca. La
+# alternativa —volver a poner `on: push` y repetir aquí lint, build y pruebas—
+# duplicaría el pipeline y, lo que es peor, dejaría abierta la puerta a
+# desplegar mientras el CI todavía está en rojo, que es exactamente lo que este
+# encadenado viene a impedir.
+#
+# El nombre tiene que coincidir **literalmente** con el `name:` de `ci.yml`. Si
+# alguien lo renombra allí y no aquí, este workflow deja de dispararse **sin dar
+# ningún error**: no hay nada que avise de que se está esperando a un workflow
+# que ya no existe con ese nombre.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+# Cancela un despliegue en curso si entra otro: si dos commits se pisan, lo que
+# tiene que quedar arriba es el último, no el que acabe de tardar más.
+concurrency:
+  group: deploy-cloud-run
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # **Las tres condiciones son necesarias y ninguna sobra:**
+    #
+    # - `conclusion == 'success'` — `workflow_run` se dispara también cuando el
+    #   CI **falla**; sin esto se desplegaría precisamente el commit roto.
+    # - `head_branch == 'master'` — el CI corre también en pull request, y una
+    #   rama de trabajo que pase el CI no es motivo para tocar producción.
+    # - `event == 'push'` — un CI lanzado por un PR puede traer `head_branch`
+    #   apuntando a master en algunos flujos de fork; exigir que el origen sea
+    #   un push cierra ese hueco.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'master' &&
+      github.event.workflow_run.event == 'push'
+
+    permissions:
+      # Federación de identidades: el runner pide un token de OIDC a GitHub y
+      # Google lo cambia por credenciales. Sin esta línea el token no se emite y
+      # el paso de autenticación falla con un mensaje que no explica por qué.
+      id-token: write
+      contents: read
+
+    env:
+      SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      REGION: ${{ vars.GCP_REGION }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REPOSITORY: ${{ vars.GAR_REPOSITORY }}
+
+    steps:
+      # `workflow_run` **no** trae consigo el código del commit que disparó el
+      # CI: sin `ref`, `checkout` traería la punta de la rama por defecto, que
+      # puede haber avanzado. Se despliega el commit exacto que se puso verde,
+      # no "lo último que haya".
+      - name: Traer el commit que aprobó el CI
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Autenticarse en Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          # Federación de identidades en vez de una clave de cuenta de servicio
+          # en un secreto: una clave JSON no caduca, no se puede acotar a un
+          # repositorio y se queda en el historial de quien la haya copiado.
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Preparar gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Dar acceso a Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      # La imagen se etiqueta con el SHA del commit y **no solo con `latest`**:
+      # con `latest` no hay forma de saber qué código está sirviendo una
+      # revisión, ni de volver a la anterior sin reconstruirla. `latest` se
+      # mantiene además, por comodidad al depurar.
+      - name: Construir la imagen
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}"
+          SHA="${{ github.event.workflow_run.head_sha }}"
+
+          # El contexto es la RAÍZ del monorepo: el `package-lock.json` que
+          # `npm ci` necesita vive ahí, no en `apps/api`.
+          docker build \
+            -f apps/api/Dockerfile \
+            -t "${IMAGE}:${SHA}" \
+            -t "${IMAGE}:latest" \
+            .
+
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "SHA=${SHA}" >> "$GITHUB_ENV"
+
+      - name: Publicar la imagen
+        run: |
+          docker push "${IMAGE}:${SHA}"
+          docker push "${IMAGE}:latest"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # GOOGLE_CLOUD_PROJECT — leer esto antes de tocar la lista de variables
+      #
+      # **Cloud Run NO la inyecta.** Inyecta `K_SERVICE` y `K_REVISION`, que la
+      # API ya aprovecha para identificar servicio y versión, pero el id del
+      # proyecto no lo pone nadie.
+      #
+      # Sin ella, `traceFieldsFrom` devuelve `{}` —decisión deliberada: el
+      # enlace de rastro tiene que llevar la forma `projects/<id>/traces/<hex>`
+      # y a medias no correlaciona nada—, así que **los logs salen, se leen
+      # bien y parecen correctos, pero las líneas de una misma petición dejan
+      # de agruparse en la consola**. Es un fallo silencioso: no hay error, no
+      # hay aviso en Cloud Logging, y se descubre el día que hace falta seguir
+      # una petición y no se puede.
+      #
+      # La API lo avisa al arrancar (`avisoDeConfiguracion`), así que si algún
+      # día falta, el aviso está en la primera línea de log de la revisión.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Desplegar en Cloud Run
+        run: |
+          gcloud run deploy "${SERVICE}" \
+            --image "${IMAGE}:${SHA}" \
+            --region "${REGION}" \
+            --platform managed \
+            --port 8080 \
+            --set-env-vars "NODE_ENV=production,LOG_FORMAT=gcp,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},WEB_URL=${{ vars.WEB_URL }},SERVICE_VERSION=${SHA}" \
+            --set-secrets "DATABASE_URL=pmo-database-url:latest,REDIS_URL=pmo-redis-url:latest,JWT_SECRET=pmo-jwt-secret:latest,TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest,GOOGLE_CLIENT_ID=pmo-google-client-id:latest,GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest,ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest,GEMINI_API_KEY=pmo-gemini-api-key:latest" \
+            --quiet
+
+      # Comprobación de verdad: que la revisión conteste, no que el comando de
+      # despliegue haya salido con 0. `/health/ready` mira Postgres y Redis, así
+      # que un 200 aquí dice que la revisión **puede atender**, que es lo que se
+      # quería saber. `/health/live` diría que sí con la base caída.
+      - name: Comprobar que la revisión atiende
+        run: |
+          URL=$(gcloud run services describe "${SERVICE}" \
+                  --region "${REGION}" --format 'value(status.url)')
+
+          echo "Revisión desplegada en ${URL}"
+
+          for intento in 1 2 3 4 5; do
+            CODIGO=$(curl -s -o /tmp/ready.json -w '%{http_code}' "${URL}/health/ready" || true)
+            echo "intento ${intento}: ${CODIGO}"
+
+            if [ "${CODIGO}" = "200" ]; then
+              cat /tmp/ready.json
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "La revisión no llegó a responder 200 en /health/ready:"
+          cat /tmp/ready.json || true
+          exit 1

@@ -75,8 +75,23 @@ async function bootstrap() {
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
-  const port = config.get<number>("API_PORT") ?? 3000;
-  await app.listen(port);
-  NestLogger.log(`PMO API escuchando en http://localhost:${port}`, "Bootstrap");
+  /**
+   * `PORT` delante de `API_PORT`, y no es un capricho de orden.
+   *
+   * Cloud Run **inyecta `PORT`** y espera que el contenedor escuche justo ahí:
+   * si el proceso abre otro puerto, la revisión no pasa la sonda de arranque y
+   * el despliegue se revierte con un error que habla de contenedor que no
+   * arranca, no de puerto equivocado. `API_PORT` se queda para el desarrollo
+   * local, donde es el nombre que usan `.env` y la documentación.
+   */
+  const port = config.get<number>("PORT") ?? config.get<number>("API_PORT") ?? 3000;
+
+  /**
+   * Y la interfaz explícita: dentro de un contenedor, escuchar solo en el bucle
+   * local deja el puerto abierto para el propio proceso y cerrado para todo lo
+   * demás, que es la otra mitad del mismo fallo.
+   */
+  await app.listen(port, "0.0.0.0");
+  NestLogger.log(`PMO API escuchando en el puerto ${port}`, "Bootstrap");
 }
 bootstrap();

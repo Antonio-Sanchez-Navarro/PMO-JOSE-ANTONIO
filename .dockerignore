@@ -1,0 +1,52 @@
+# Lo que NO viaja al contexto de construcción.
+#
+# No es solo tamaño: `node_modules` copiado desde Windows traería binarios
+# compilados para esta máquina —los motores de Prisma, entre otros— que en la
+# imagen de Linux no sirven, y encima taparían los que instala el propio build.
+node_modules
+**/node_modules
+
+# Artefactos de compilación: la imagen los genera dentro, y copiarlos desde
+# fuera es la forma habitual de desplegar una versión que nadie compiló.
+dist
+**/dist
+apps/web/dist
+packages/shared/dist
+
+# Secretos. `.env.example` sí entra: es la plantilla y no lleva valores.
+.env
+.env.*
+!.env.example
+
+# Historia y herramientas que no aportan nada dentro del contenedor
+.git
+.github
+.vscode
+.idea
+
+# Documentación y notas de trabajo
+*.md
+docs
+
+# Pruebas y configuración de desarrollo
+**/*.spec.ts
+**/*.test.ts
+coverage
+.eslintcache
+eslint.config.mjs
+
+# El frontend no entra en la imagen de la API. Se construye aparte y se sirve
+# como estático; meterlo aquí solo engorda la imagen del backend.
+#
+# **Su `package.json` sí entra, y es obligatorio**: `npm ci` valida el
+# `package-lock.json` contra todos los workspaces declarados en la raíz, y si le
+# falta uno se planta con "npm ci can only install packages when your
+# package.json and package-lock.json are in sync". Es el manifiesto lo que
+# necesita, no el código.
+apps/web
+!apps/web/package.json
+
+# Ruido del sistema
+Thumbs.db
+.DS_Store
+*.log
