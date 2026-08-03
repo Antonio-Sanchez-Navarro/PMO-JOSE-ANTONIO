@@ -26,6 +26,37 @@ import {
  */
 const SIN_LOG_AUTOMATICO = [/^\/health(\/|$)/, /^\/copilot\/chat(\?|$)/];
 
+/** ¿La petición viene de una sonda de salud? La usa también el filtro global. */
+export const esSondaDeSalud = (url: string): boolean => /^\/health(\/|$|\?)/.test(url);
+
+/**
+ * Qué se guarda de la petición, y **por qué tan poco**.
+ *
+ * El serializador por defecto de `pino-http` escribe `url`, `query`, `params`,
+ * `headers`, `remoteAddress` y `remotePort`, y lo hace como *binding del logger
+ * hijo*: no aparece solo en la línea de "petición completada", sino en **todas
+ * las líneas que escriba cualquier código durante esa petición**.
+ *
+ * Comprobado contra la aplicación el 2026-08-03: con el serializador de fábrica,
+ * `GET /auth/google/callback?code=…&state=…` dejaba el código de autorización de
+ * Google **cuatro veces** en el log —en `url` y en `query`, y repetido en un
+ * aviso que escribe `AuthService`—, aunque el texto del mensaje sí saliera
+ * tapado. Tapar solo el mensaje daba una falsa sensación de seguridad.
+ *
+ * Por eso aquí no se filtra: se elige. `id`, `method` y la URL saneada. El
+ * agente, la IP y el estado ya viajan en `httpRequest`, que es donde Cloud
+ * Logging los sabe leer, y las cabeceras no hacen falta para diagnosticar nada
+ * que no se vea en esos campos.
+ */
+const serializarPeticion = (req: IncomingMessage & { id?: unknown }) => ({
+  id: req.id,
+  method: req.method,
+  url: sanitizeUrl(req.url ?? ''),
+});
+
+/** Del lado de la respuesta basta el estado: las cabeceras traen `set-cookie`. */
+const serializarRespuesta = (res: ServerResponse) => ({ statusCode: res.statusCode });
+
 /**
  * Campos que se tapan **en cualquier log**, venga de donde venga.
  *
@@ -124,7 +155,14 @@ export function buildLoggerParams(env: {
     pinoHttp: {
       level: env.LOG_LEVEL ?? (enProduccion ? 'info' : 'debug'),
 
+      /**
+       * Los serializadores ya dejan fuera las cabeceras, así que estas rutas
+       * son cinturón sobre tirantes: cubren el caso de que alguien registre a
+       * mano un `{ req }` o un `{ headers }` sin pasar por aquí.
+       */
       redact: { paths: CAMPOS_TAPADOS, censor: REDACTED },
+
+      serializers: { req: serializarPeticion, res: serializarRespuesta },
 
       ...(paraGoogle
         ? {

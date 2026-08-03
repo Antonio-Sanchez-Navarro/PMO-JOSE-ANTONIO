@@ -3,6 +3,7 @@ import { BaseExceptionFilter } from '@nestjs/core';
 import { PinoLogger, InjectPinoLogger } from 'nestjs-pino';
 import type { Request, Response } from 'express';
 import { REPORTED_ERROR_EVENT_TYPE, sanitizeUrl } from './gcp-logging';
+import { esSondaDeSalud } from './logger.config';
 import { SERVICE_CONTEXT } from './service-context';
 
 /**
@@ -54,7 +55,23 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
       remoteIp: request.ip,
     };
 
-    if (status >= 500) {
+    /**
+     * **El 503 de una sonda de readiness no es una incidencia del servicio.**
+     *
+     * Comprobado contra la aplicación el 2026-08-03: con Redis parado,
+     * `GET /health/ready` devuelve 503 —que es su trabajo— y este filtro lo
+     * marcaba como `ReportedErrorEvent`. La sonda se dispara cada pocos
+     * segundos, así que un minuto de Redis caído abría decenas de incidencias
+     * en Error Reporting diciendo lo que el cuerpo del 503 ya decía, y lo que
+     * de verdad hay que mirar quedaba enterrado debajo. Es el mismo ruido que
+     * se apagó en Terminus con `logger: false`, colado por otra puerta.
+     *
+     * Se registra igual, como aviso: queda la traza de que la dependencia se
+     * cayó, sin abrir una incidencia por cada latido.
+     */
+    const esFalloDeSonda = status >= 500 && esSondaDeSalud(httpRequest.requestUrl);
+
+    if (status >= 500 && !esFalloDeSonda) {
       const error =
         exception instanceof Error ? exception : new Error(String(exception));
 
@@ -70,19 +87,23 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
           serviceContext: SERVICE_CONTEXT,
           context: { httpRequest },
           stack_trace: error.stack,
-          err: { type: error.name, message: error.message },
+          // La clave se llama `error` y no `err` a propósito: `err` la reclama
+          // el serializador de pino, que esperaba un `Error` de verdad y
+          // escribía un `{type:"Object", stack:""}` sin nada dentro.
+          error: { type: error.name, message: error.message },
         },
         error.stack ?? error.message,
       );
     } else {
       /**
-       * Un 4xx se registra como aviso y **sin** la marca de Error Reporting: no
-       * es una incidencia del servicio, es un cliente pidiendo algo que no
-       * puede. Marcarlos abriría una incidencia por cada 401 de una cookie
-       * caducada, que pasa varias veces al día por diseño.
+       * Aquí caen dos cosas, y las dos por el mismo motivo: **no son fallos del
+       * servicio**. Un 4xx es un cliente pidiendo algo que no puede —marcarlos
+       * abriría una incidencia por cada 401 de cookie caducada, que pasa varias
+       * veces al día por diseño— y un 503 de sonda es la dependencia caída, que
+       * ya se ve en el cuerpo de la respuesta y en el orquestador.
        */
       this.logger.warn(
-        { httpRequest, err: { message: describe(exception) } },
+        { httpRequest, error: { message: describe(exception) } },
         `${request.method} ${httpRequest.requestUrl} ${status}`,
       );
     }
