@@ -1,12 +1,12 @@
 # Handoff — Gravity
 
-> **Estado: CERRADO** · repasado a fondo el **2026-08-03**
-> **Asignado a:** nadie. **No hay ningún encargo abierto para ti.**
+> **Estado: TRABAJAR** · puesto el **2026-08-03**
+> **Asignado a:** Gravity — **los 28 `any` de `apps/web`**. Está en la sección 0.
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe. `CERRADO` = el sprint ha concluido.
 >
-> **Todo lo que este archivo te pidió alguna vez está entregado**, comprobado en
-> el código el 2026-08-03 y no en el documento:
+> El ciclo anterior quedó entregado entero, comprobado en el código el
+> 2026-08-03 y no en el documento:
 >
 > | Lo que se pidió | Dónde quedó |
 > |---|---|
@@ -19,22 +19,133 @@
 > Con esto **el Sprint 6 está cerrado entero** —backend el 29, interfaz el 30— y
 > del Sprint 8 ya no queda nada de tu lado.
 >
-> **Lo siguiente del proyecto es CI/CD y despliegue en Cloud Run**, que es
-> backend e infraestructura. Lo abre Doc cuando toque; lo que ya está preparado
-> para ello está anotado al final, en «Terreno preparado para el despliegue».
-> **No arranques nada de aquí hasta que Doc ponga este campo en `TRABAJAR`.**
+> **El otro frente del proyecto es CI/CD y despliegue en Cloud Run**, que es
+> backend e infraestructura y **no es tuyo**. Lo que ya está preparado para él
+> está anotado al final, en «Terreno preparado para el despliegue».
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
 
-> **Cómo leer el resto.** De aquí abajo **ya no hay encargos, solo contratos**:
-> qué manda y qué devuelve cada ruta que consumes. Se conserva porque lo vas a
-> necesitar, no porque quede algo por hacer. Donde algo esté escrito en
-> imperativo —«manda esto», «pinta aquello»—, **léelo en pasado**: se refiere a
-> trabajo que ya hiciste.
+> **Cómo leer el resto.** De la sección 1 en adelante **ya no hay encargos, solo
+> contratos**: qué manda y qué devuelve cada ruta que consumes. Se conserva
+> porque lo vas a necesitar, no porque quede algo por hacer. Donde algo esté
+> escrito en imperativo —«manda esto», «pinta aquello»—, **léelo en pasado**: se
+> refiere a trabajo que ya hiciste.
 
 ---
 
-# 0. Convenciones vigentes
+# 0. Encargo abierto — los 28 `any` de `apps/web`
+
+> Puesto el **2026-08-03**. Todo el encargo vive en `apps/web`, que es tuyo
+> entero. **No toques `apps/api`**: sus tres `any` ya están arreglados
+> (`a3c887a`) y esa parte queda en cero.
+
+## Empecemos por lo que **no** es
+
+**Esto no está rompiendo el CI, y conviene que lo sepas antes de empezar** para
+que no vayas con prisa ni te tiente el atajo:
+
+- `@typescript-eslint/no-explicit-any` está declarado **`'warn'`** en
+  `eslint.config.mjs`.
+- **No hay `--max-warnings` en ninguna parte** — ni en los tres scripts de lint,
+  ni en el workflow.
+- ESLint sale con **código 0** cuando solo hay avisos.
+
+Se pidió esto a raíz de un fallo del CI atribuido a «avisos tratados como
+errores fatales». Esa explicación no se sostiene contra la configuración del
+repo; la causa que sí encaja era la versión de Node —ESLint 10 exige
+`^20.19.0 || ^22.13.0 || >=24` y el workflow pedía `20.x`, que podía resolverse
+a una anterior—, y ya está corregida.
+
+**Lo que sí justifica el encargo** es que cada uno de estos `any` es un agujero
+real, y que con `apps/web` en cero se puede encender `--max-warnings 0` y que no
+vuelvan a entrar. Hoy no se puede encender: cortaría en el primer push.
+
+## La lista completa — 28 avisos en 11 archivos
+
+Ojo, porque la lista que circuló tenía **7 de estos**. Estos son todos, sacados
+de `npm --workspace @pmo/web run lint` el 2026-08-03:
+
+| Archivo (desde `apps/web/src/`) | Líneas |
+|---|---|
+| `features/kanban/hooks/useSocket.ts` | 49, 50, 51, 111, 113, 115 |
+| `features/kanban/components/KanbanBoard.tsx` | 282, 317, 326, 335 |
+| `features/inbox/InboxPage.tsx` | 56, 98, 149, 187 |
+| `features/copilot/components/CopilotDrawer.tsx` | 122, 183, 241 |
+| `features/dashboard/components/DashboardPage.tsx` | 103, 133, 134 |
+| `features/kanban/api/tasks.api.ts` | 79, 173 |
+| `features/kanban/components/TimeEntriesModal.tsx` | 85, 98 |
+| `features/copilot/api/copilot.api.ts` | 15 |
+| `features/copilot/components/CreateTaskCard.tsx` | 48 |
+| `features/copilot/components/DraftEmailCard.tsx` | 49 |
+| `features/kanban/components/AiValidationModal.tsx` | 80 |
+
+## Qué tipo va en cada familia
+
+No son 28 problemas distintos: son cuatro, repetidos.
+
+**1. Manejadores de socket** (`useSocket.ts`, las seis). Hoy:
+
+```ts
+onEmailUpdated?: (email: any) => void;
+onTimeStarted?: (timeEntry: any) => void;
+```
+
+`TimeEntry` **ya está en `@pmo/shared`** y lo importas igual que `Task`. Para el
+correo no hay interfaz compartida —solo los enums `EmailStatus` y
+`EmailCategory`—, así que o declaras la forma que consumes en `apps/web`, o
+**me pides un `Email` en `@pmo/shared` y lo añado**: `packages/shared` es zona
+compartida y se acuerda antes de tocarla.
+
+**2. El parseo del stream del copiloto** (`CopilotDrawer.tsx:122`,
+`let data: any = {}`). Este es el que más rinde: los eventos SSE son un conjunto
+cerrado y están documentados en la **sección 3** de este archivo. Una unión
+discriminada por `type` —`token`, `tool_call`, `done`, `error`— hace que el
+compilador te avise si el backend añade un evento y tú no lo tratas, que es
+exactamente el fallo que hoy pasaría en silencio.
+
+**3. `catch (err: any)`** (`CopilotDrawer.tsx:183` y compañía). Quítale el tipo y
+déjalo en `catch (err)`: TypeScript ya lo da como `unknown`. Para distinguir la
+cancelación, comprueba antes de usarlo:
+
+```ts
+if (err instanceof DOMException && err.name === 'AbortError') { … }
+```
+
+Es el mismo patrón de los `catch` que se limpiaron en `b5995a7`.
+
+**4. Respuestas de la API sin tipar** (`copilot.api.ts:15` con `Promise<any[]>`,
+`tasks.api.ts`, y los `any` de las tarjetas). Declara la forma que consumes.
+Para los hilos del copiloto no hay tipo compartido todavía; sirve uno local en
+`copilot.api.ts`, que es donde se lee.
+
+Los de `DashboardPage.tsx` (103, 133, 134) son formateadores de Recharts: con
+`(label: string | number)` se van, sin inventar nada.
+
+## Dos cosas que no valen
+
+- **Nada de `// eslint-disable-next-line`** ni de `as any`. Silencian el aviso y
+  dejan el agujero: el objetivo es poder encender `--max-warnings 0`, y un
+  archivo lleno de excepciones lo hace inútil.
+- **No cambies la severidad de la regla** en `eslint.config.mjs`. Es zona
+  compartida, y bajarla a `off` haría desaparecer el problema del informe sin
+  tocarlo.
+
+## Cómo saber que has terminado
+
+```bash
+npm --workspace @pmo/web run lint     # 0 problemas
+npm run build                         # los tres paquetes compilan
+```
+
+Cada workspace imprime **su propio resumen**: el «28 problems» que se venía
+citando era solo el de `apps/web`. `@pmo/api` y `@pmo/shared` ya salen en cero.
+
+Y lo de siempre antes de commitear: `npm run lint` en cero **errores**, y añade
+por ruta.
+
+---
+
+# Convenciones vigentes
 
 > Esto no es un encargo: son las cuatro reglas que han costado un disgusto cada
 > una. Se quedan aquí porque siguen aplicando a todo lo que hagas.
