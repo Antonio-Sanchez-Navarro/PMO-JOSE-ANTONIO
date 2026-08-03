@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { conPlazo } from './con-plazo';
 
 /**
  * Tiempo máximo que puede tardar la comprobación antes de darse por caída.
@@ -31,15 +32,7 @@ export class PrismaHealthIndicator extends HealthIndicator {
     const started = Date.now();
 
     try {
-      await Promise.race([
-        this.prisma.$queryRaw`SELECT 1`,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`sin respuesta en ${DB_PING_TIMEOUT_MS} ms`)),
-            DB_PING_TIMEOUT_MS,
-          ).unref(),
-        ),
-      ]);
+      await conPlazo(() => this.prisma.$queryRaw`SELECT 1`, DB_PING_TIMEOUT_MS);
 
       return this.getStatus(key, true, { responseTimeMs: Date.now() - started });
     } catch (error) {

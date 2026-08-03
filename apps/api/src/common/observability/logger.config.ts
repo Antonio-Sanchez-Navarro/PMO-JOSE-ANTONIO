@@ -131,15 +131,46 @@ const conHttpRequest = (
  * `level` para colorear. Con los dos a la vez, la terminal se queda sin
  * colores y sin niveles.
  */
-export function buildLoggerParams(env: {
+export interface EntornoDeLogs {
   NODE_ENV?: string;
   LOG_LEVEL?: string;
   LOG_FORMAT?: string;
   GOOGLE_CLOUD_PROJECT?: string;
-}): Params {
+}
+
+const esFormatoDeGoogle = (env: EntornoDeLogs): boolean =>
+  (env.LOG_FORMAT ?? (env.NODE_ENV === 'production' ? 'gcp' : 'pretty')) === 'gcp';
+
+/**
+ * Lo que hay que decir en voz alta al arrancar, o `null` si no hay nada.
+ *
+ * **Sin `GOOGLE_CLOUD_PROJECT` la correlación por traza se apaga sin avisar.**
+ * No es un fallo —el enlace tiene que ir con la forma `projects/<id>/traces/…`
+ * y a medias no correlaciona nada, así que es mejor no escribirlo—, pero es
+ * silencioso, y lo silencioso se descubre el día que hace falta seguir una
+ * petición entre servicios y no se puede.
+ *
+ * Cloud Run **no** la inyecta: pone `K_SERVICE` y `K_REVISION`, no el id del
+ * proyecto. Hay que ponerla a mano en el despliegue.
+ *
+ * Va como aviso y no como error a propósito: los logs siguen sirviendo sin
+ * rastro, y tumbar el arranque por esto sería peor que el problema.
+ */
+export function avisoDeConfiguracion(env: EntornoDeLogs): string | null {
+  if (esFormatoDeGoogle(env) && !env.GOOGLE_CLOUD_PROJECT) {
+    return (
+      'GOOGLE_CLOUD_PROJECT está vacía: los logs salen en formato de Cloud ' +
+      'Logging pero sin enlace de traza, así que las líneas de una misma ' +
+      'petición no se agruparán en la consola. Cloud Run no la inyecta sola.'
+    );
+  }
+
+  return null;
+}
+
+export function buildLoggerParams(env: EntornoDeLogs): Params {
   const enProduccion = env.NODE_ENV === 'production';
-  const formato = env.LOG_FORMAT ?? (enProduccion ? 'gcp' : 'pretty');
-  const paraGoogle = formato === 'gcp';
+  const paraGoogle = esFormatoDeGoogle(env);
   const projectId = env.GOOGLE_CLOUD_PROJECT;
 
   return {

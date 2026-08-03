@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Options } from 'pino-http';
-import { buildLoggerParams } from './logger.config';
+import { avisoDeConfiguracion, buildLoggerParams } from './logger.config';
 import { REDACTED } from './gcp-logging';
 
 const opciones = (env: Record<string, string | undefined> = {}): Options =>
@@ -267,6 +267,36 @@ describe('Configuración de logs', () => {
         .httpRequest as { requestUrl: string };
 
       expect(requestUrl).not.toContain('secreto');
+    });
+  });
+
+  describe('Avisos al arrancar', () => {
+    /**
+     * Sin `GOOGLE_CLOUD_PROJECT` la correlación por traza se apaga **sin
+     * avisar**: los logs siguen saliendo y parecen correctos, pero las líneas
+     * de una misma petición no se agrupan. Lo silencioso se descubre el día que
+     * hace falta seguir una petición y no se puede, así que se dice en voz alta
+     * al arrancar, como el transporte de correo del copiloto.
+     */
+    it('avisa si va a Google sin id de proyecto', () => {
+      const aviso = avisoDeConfiguracion({ LOG_FORMAT: 'gcp' });
+
+      expect(aviso).toContain('GOOGLE_CLOUD_PROJECT');
+    });
+
+    it('avisa también cuando el formato de Google llega por `NODE_ENV`', () => {
+      // Es el caso que de verdad importa: nadie escribe LOG_FORMAT en Cloud Run.
+      expect(avisoDeConfiguracion({ NODE_ENV: 'production' })).not.toBeNull();
+    });
+
+    it('con el proyecto puesto, no dice nada', () => {
+      expect(
+        avisoDeConfiguracion({ LOG_FORMAT: 'gcp', GOOGLE_CLOUD_PROJECT: 'pmo' }),
+      ).toBeNull();
+    });
+
+    it('en la terminal no molesta: ahí no hay traza que correlacionar', () => {
+      expect(avisoDeConfiguracion({ NODE_ENV: 'development' })).toBeNull();
     });
   });
 

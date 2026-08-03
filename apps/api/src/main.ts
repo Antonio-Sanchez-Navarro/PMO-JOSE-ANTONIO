@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import { Logger as PinoNestLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
+import { avisoDeConfiguracion } from "./common/observability/logger.config";
 
 async function bootstrap() {
   /**
@@ -35,6 +36,18 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const config = app.get(ConfigService);
+
+  /**
+   * Lo que esté a medias en la configuración de logs se dice al arrancar, igual
+   * que el transporte de correo del copiloto. Una capacidad que se apaga en
+   * silencio se descubre el día que hace falta, que es el peor.
+   */
+  const aviso = avisoDeConfiguracion({
+    NODE_ENV: config.get<string>("NODE_ENV"),
+    LOG_FORMAT: config.get<string>("LOG_FORMAT"),
+    GOOGLE_CLOUD_PROJECT: config.get<string>("GOOGLE_CLOUD_PROJECT"),
+  });
+  if (aviso) NestLogger.warn(aviso, "Observabilidad");
 
   app.use(cookieParser());
 

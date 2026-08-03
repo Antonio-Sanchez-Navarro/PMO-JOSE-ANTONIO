@@ -1,4 +1,5 @@
 import { HealthCheckError } from '@nestjs/terminus';
+import { conPlazo } from './con-plazo';
 import { PrismaHealthIndicator } from './prisma.health';
 import { RedisHealthIndicator } from './redis.health';
 import type { PrismaService } from '../../common/prisma/prisma.service';
@@ -13,6 +14,50 @@ import type { Queue } from 'bullmq';
  * y es peor que no tener sonda, porque el orquestador se fía.
  */
 describe('Sondas de salud', () => {
+  describe('conPlazo', () => {
+    /**
+     * La prueba que faltaba, y que se pagó cara.
+     *
+     * La primera versión era un `Promise.race` con un `setTimeout` suelto: al
+     * ganar la consulta, el temporizador perdedor seguía armado los 3 segundos.
+     * Como la sonda se dispara cada pocos segundos, el proceso iba acumulando
+     * temporizadores inútiles. Se vio aquí antes que en producción — estas
+     * siete pruebas tardaban **24 segundos** en vez de milisegundos, porque el
+     * worker de jest esperaba a que vencieran.
+     */
+    it('recoge el temporizador cuando la operación gana', async () => {
+      jest.useFakeTimers();
+
+      await conPlazo(() => Promise.resolve('listo'), 3_000);
+
+      expect(jest.getTimerCount()).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('lo recoge también cuando la operación falla', async () => {
+      jest.useFakeTimers();
+
+      await conPlazo(() => Promise.reject(new Error('caída')), 3_000).catch(() => {});
+
+      expect(jest.getTimerCount()).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('si nadie contesta, el plazo corta con su motivo', async () => {
+      jest.useFakeTimers();
+
+      const colgada = conPlazo(() => new Promise(() => {}), 3_000);
+      const esperado = expect(colgada).rejects.toThrow('sin respuesta en 3000 ms');
+
+      jest.advanceTimersByTime(3_000);
+      await esperado;
+
+      jest.useRealTimers();
+    });
+  });
+
   describe('PrismaHealthIndicator', () => {
     const construir = (queryRaw: jest.Mock) =>
       new PrismaHealthIndicator({ $queryRaw: queryRaw } as unknown as PrismaService);

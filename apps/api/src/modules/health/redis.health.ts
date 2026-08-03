@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import { conPlazo } from './con-plazo';
 
 /** Mismo plazo y mismo motivo que en la comprobación de Postgres. */
 const REDIS_PING_TIMEOUT_MS = 3_000;
@@ -39,15 +40,7 @@ export class RedisHealthIndicator extends HealthIndicator {
     try {
       const client = (await this.queue.client) as unknown as ClienteConPing;
 
-      const pong = await Promise.race([
-        client.ping(),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`sin respuesta en ${REDIS_PING_TIMEOUT_MS} ms`)),
-            REDIS_PING_TIMEOUT_MS,
-          ).unref(),
-        ),
-      ]);
+      const pong = await conPlazo(() => client.ping(), REDIS_PING_TIMEOUT_MS);
 
       if (pong !== 'PONG') {
         throw new Error(`respuesta inesperada al PING: ${pong}`);
