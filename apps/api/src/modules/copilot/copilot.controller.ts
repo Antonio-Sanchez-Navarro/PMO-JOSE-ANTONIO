@@ -232,10 +232,27 @@ export class CopilotController {
         this.write(res, evento, chunk);
       }
     } catch (error) {
+      // **Lo que se le dice al cliente y lo que se registra son cosas
+      // distintas, a propósito.** Al navegador va un texto que no filtra las
+      // tripas del proveedor; al log va la causa literal, que es lo único que
+      // sirve para arreglarlo. Antes se registraba el texto genérico, así que
+      // el log repetía la frase que el usuario ya tenía en pantalla y no añadía
+      // nada: "no pudo completar la respuesta" no es un diagnóstico.
+      const causa = error instanceof Error ? error.message : String(error);
       const mensaje =
         error instanceof HttpException ? error.message : 'El copiloto no pudo completar la respuesta.';
 
-      this.logger.error(`Copiloto interrumpido: ${mensaje}`, error instanceof Error ? error.stack : undefined);
+      // Nivel `error` y la causa en el propio texto porque **esta línea es el
+      // único rastro que va a quedar**: `/copilot/chat` está fuera del log
+      // automático de peticiones (`logger.config.ts`) y, cuando se llega aquí,
+      // la respuesta ya salió con **200** —las cabeceras SSE se enviaron antes
+      // de que nada fallara—, así que ni hay línea de petición ni
+      // `customLogLevel` puede clasificarlo como fallo ni Error Reporting llega
+      // a enterarse. Si esto no lo cuenta, la ruta revienta en silencio.
+      this.logger.error(
+        `Copiloto interrumpido (${dto.provider}/${dto.tier}, hilo ${dto.threadId ?? 'nuevo'}): ${causa}`,
+        error instanceof Error ? error.stack : undefined,
+      );
 
       // El cliente ya está pintando texto: se le avisa por el canal que tiene
       // abierto, porque el código de estado se envió hace rato.

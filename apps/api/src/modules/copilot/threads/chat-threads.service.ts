@@ -60,14 +60,34 @@ export class ChatThreadsService {
   async history(threadId: string): Promise<LlmMessage[]> {
     const filas = await this.prisma.chatMessage.findMany({
       where: { threadId },
-      orderBy: { createdAt: 'desc' },
+      // **Dos criterios, y el segundo no es decorativo.** Los dos mensajes de
+      // un turno entran en el mismo `createMany` dentro de una transacción, y
+      // `now()` de Postgres devuelve la hora de **inicio de la transacción**:
+      // las dos filas se sellan con el mismo instante al milisegundo. Con
+      // `createdAt` como único criterio el empate lo deshace el motor como
+      // quiera, y devolvía el turno del revés —el asistente delante de la
+      // pregunta que lo provocó—. `id` es un cuid, que lleva el instante de
+      // creación en la cabeza, así que dentro del empate ordena por inserción.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: VENTANA,
       select: { role: true, content: true },
     });
 
-    return filas
+    const mensajes: LlmMessage[] = filas
       .reverse()
       .map((m) => ({ role: m.role === ChatRole.USER ? 'user' : 'assistant', content: m.content }));
+
+    // La ventana corta por número de mensajes, no por turnos, así que el corte
+    // puede caer entre una pregunta y su respuesta y dejar el historial
+    // empezando por el asistente. Anthropic exige que el primer mensaje sea del
+    // usuario y responde 400 —el turno entero se pierde por un mensaje que
+    // sobra en la punta—. Se descartan aquí porque una respuesta sin su
+    // pregunta tampoco le dice nada al modelo.
+    while (mensajes.length > 0 && mensajes[0].role === 'assistant') {
+      mensajes.shift();
+    }
+
+    return mensajes;
   }
 
   /**
@@ -85,11 +105,20 @@ export class ChatThreadsService {
     userMessage: string,
     assistant: { content: string; provider: string; model: string },
   ): Promise<void> {
+    // **Las marcas de tiempo se ponen a mano, y separadas.** Dejadas al
+    // `@default(now())` las escribe Postgres con la hora de inicio de la
+    // transacción, que es la misma para las dos filas: el turno quedaba en la
+    // base sin ningún dato que dijera cuál se dijo antes, y rehidratarlo
+    // dependía de cómo el motor deshiciera el empate. Un milisegundo de
+    // separación basta y es el orden real: primero se pregunta, luego se
+    // responde.
+    const ahora = Date.now();
+
     // Una respuesta vacía no se guarda: pasa cuando el turno fue solo una
     // llamada a herramienta, y un mensaje en blanco en el historial solo sirve
     // para confundir al modelo en el turno siguiente.
     const mensajes = [
-      { threadId, role: ChatRole.USER, content: userMessage },
+      { threadId, role: ChatRole.USER, content: userMessage, createdAt: new Date(ahora) },
       ...(assistant.content.trim()
         ? [
             {
@@ -98,6 +127,7 @@ export class ChatThreadsService {
               content: assistant.content,
               provider: assistant.provider,
               model: assistant.model,
+              createdAt: new Date(ahora + 1),
             },
           ]
         : []),
