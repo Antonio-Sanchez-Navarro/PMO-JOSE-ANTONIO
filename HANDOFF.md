@@ -1,126 +1,87 @@
-# Handoff — Sprint 6 (copiloto) y Sprint 8 (métricas)
+# Handoff — Gravity
 
-> **Estado: CERRADO** · cerrado el **2026-07-31** por instrucción del usuario
-> **Asignado a:** nadie. No hay encargo abierto.
+> **Estado: CERRADO** · repasado a fondo el **2026-08-03**
+> **Asignado a:** nadie. **No hay ningún encargo abierto para ti.**
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe. `CERRADO` = el sprint ha concluido.
 >
-> **Los cuatro frentes del ciclo están entregados y verificados en el código el
-> 2026-07-31:**
+> **Todo lo que este archivo te pidió alguna vez está entregado**, comprobado en
+> el código el 2026-08-03 y no en el documento:
 >
-> | Sección | Encargo | Dónde quedó |
-> |---|---|---|
-> | 6 | `threadId` en `/copilot/chat` y lista de conversaciones | `0d2a4f4` |
-> | 7 | El motivo de la prioridad, pintado en la tarjeta | `4191bda` — `TaskCard.tsx:187` |
-> | 8 | Vista de métricas contra `GET /dashboard/metrics` | `4191bda` + `0d2a4f4` — sin `MOCK_METRICS` |
-> | 9 | Mandar `tz` en las dos rutas | `useDashboardMetrics.ts:14` y `time.api.ts:101` |
+> | Lo que se pidió | Dónde quedó |
+> |---|---|
+> | `threadId` en `/copilot/chat` y la lista de conversaciones | `0d2a4f4` |
+> | El motivo de la prioridad, pintado en la tarjeta | `4191bda` — `TaskCard.tsx:187` |
+> | Vista de métricas contra `GET /dashboard/metrics` | `4191bda` + `0d2a4f4`, sin `MOCK_METRICS` |
+> | Mandar `tz` en las dos rutas de fechas | `useDashboardMetrics.ts:14` y `time.api.ts:101` |
+> | Teclado en las filas del Inbox | `d358152` — `role`, `tabIndex`, `onKeyDown` y el `stopPropagation` de los botones anidados |
 >
-> Con esto **el Sprint 6 queda cerrado entero** —backend el 29, interfaz el 30— y
-> del Sprint 8 solo sigue abierto lo que no es de Gravity (observabilidad,
-> CI/CD, runbook, backups).
+> Con esto **el Sprint 6 está cerrado entero** —backend el 29, interfaz el 30— y
+> del Sprint 8 ya no queda nada de tu lado.
 >
-> **Lo siguiente para ti está escrito en la sección 0**: la fila del Inbox se
-> quedó sin teclado. Es lo único pendiente de tu lado, y **no arranques hasta que
-> Doc ponga este campo en `TRABAJAR`** — la regla de que el estado lo pone Doc
-> sigue en pie, y este cierre no la sustituye.
->
-> El Sprint 5 está cerrado; sus contratos siguen más abajo como referencia.
+> **Lo siguiente del proyecto es CI/CD y despliegue en Cloud Run**, que es
+> backend e infraestructura. Lo abre Doc cuando toque; lo que ya está preparado
+> para ello está anotado al final, en «Terreno preparado para el despliegue».
+> **No arranques nada de aquí hasta que Doc ponga este campo en `TRABAJAR`.**
 
 **Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
 
----
-
-# 0. Lo que queda de tu lado: la fila del Inbox perdió el teclado
-
-> Escrito el **2026-07-31**. **A la espera de que Doc lo active** (ver el Estado
-> arriba). Pequeño, acotado, un solo archivo.
-
-Al arreglar el HTML inválido del Inbox en `0d2a4f4` —el `<button>` anidado
-dentro de otro `<button>`, que estaba bien quitado— la fila pasó a ser un
-`<div onClick>`. El HTML ya es válido, pero **un `div` con `onClick` no existe
-para el teclado**: no recibe foco con Tab, no responde a Enter ni a Espacio, y
-un lector de pantalla no lo anuncia como algo que se pueda pulsar. La bandeja
-es la pantalla por la que se entra a todo lo demás, así que quien navegue sin
-ratón se queda fuera del flujo entero.
-
-Las tres piezas, en `apps/web/src/features/inbox/InboxPage.tsx`:
-
-```tsx
-<div
-  role="button"
-  tabIndex={0}
-  onClick={abrirHilo}
-  onKeyDown={(e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();   // si no, Espacio hace scroll de la página
-      abrirHilo();
-    }
-  }}
->
-```
-
-`preventDefault` solo en el caso de la tecla: es lo que evita que Espacio
-desplace la página bajo la fila que acabas de abrir.
-
-**Ojo con el botón ✨ Copiloto que vive dentro de la fila**: ahora que la fila
-entera es pulsable, su `onClick` necesita `e.stopPropagation()` o pedir el
-copiloto abrirá también el hilo. Si ya lo tiene, déjalo como está.
-
-Alternativa igual de válida si te resulta más limpia: devolver la fila a
-`<button>` y bajar el botón del copiloto a hermano en vez de hijo. Tú eliges;
-lo que no puede quedarse es un `div` pulsable sin teclado.
-
-### Y la costumbre que hay que coger: pasa el linter antes de commitear
-
-**Tu commit `0d2a4f4` dejó `master` en rojo.** No por el diseño ni por la
-lógica: por tres `catch (err)` en `CopilotDrawer.tsx` donde `err` no se usa.
-`npm run lint` daba **3 errores**, y con el CI ya escuchando `master` eso es un
-build rojo en cada push.
-
-**Tu commit dejó `master` en rojo.** No por el diseño ni por la lógica: por tres
-`catch (err)` en `CopilotDrawer.tsx` donde `err` no se usa. `npm run lint` daba
-**3 errores**, y con el CI ya escuchando `master` eso es un build rojo en cada
-push.
-
-Lo arreglé yo en `b5995a7` —quitando el binding, sin tocar comportamiento, igual
-que los once de `2ceedd2`— porque el guardarraíl acababa de encenderse y no
-quería dejarlo caído la primera tarde. **No lo voy a seguir haciendo**:
-`apps/web` es tuyo y a partir de ahora los que salgan los arreglas tú.
-
-```bash
-npm run lint     # 0 errores antes de cada commit. Los avisos no bloquean.
-```
-
-Es la regla entera. Los **28 avisos** que quedan son `no-explicit-any`, casi
-todos tuyos, y no bloquean nada: no urgen y el CI pasa con ellos.
-
-> **Por qué es fácil que te vuelva a pasar**: hasta el 2026-07-30 no había
-> configuración de ESLint en el repo, así que `npm run lint` moría antes de
-> abrir un archivo y nadie lo corría. Ahora sí funciona, y ahora sí corta.
-
-Y una que sigue vigente de la versión anterior: **añade por ruta, nunca con
-`git add -A` ni `git add .`**. Trabajamos dos a la vez sobre el mismo árbol y ya
-me llevé por delante un archivo tuyo así una vez.
-
-Y no lo veas en el CI todavía: **no hay remoto configurado** (`git remote -v`
-está vacío), así que el workflow no puede ejecutarse en ninguna parte aunque ya
-escuche `master`. Corre `npm run lint` en local; por ahora es el único
-guardarraíl que existe de verdad.
+> **Cómo leer el resto.** De aquí abajo **ya no hay encargos, solo contratos**:
+> qué manda y qué devuelve cada ruta que consumes. Se conserva porque lo vas a
+> necesitar, no porque quede algo por hacer. Donde algo esté escrito en
+> imperativo —«manda esto», «pinta aquello»—, **léelo en pasado**: se refiere a
+> trabajo que ya hiciste.
 
 ---
 
-# De la 6 a la 9 — entregadas, se quedan como referencia
+# 0. Convenciones vigentes
 
-**Las cuatro secciones que siguen ya no son encargos.** Se cumplieron entre el
-29 y el 30 (ver la tabla del Estado, arriba) y se quedan escritas porque son el
-contrato vigente de esas rutas: cuando dudes de qué manda o qué devuelve
-`/copilot/chat`, `/dashboard/metrics` o `/time/report`, se mira aquí. Lo que
-está redactado en imperativo —"manda esto", "pinta aquello"— hay que leerlo en
-pasado.
+> Esto no es un encargo: son las cuatro reglas que han costado un disgusto cada
+> una. Se quedan aquí porque siguen aplicando a todo lo que hagas.
+
+### 1. Pasa el linter antes de commitear
+
+`npm run lint` en **0 errores**. Los avisos no bloquean: quedan **28**, todos
+`no-explicit-any` y casi todos en `apps/web`. No urgen y el CI pasa con ellos.
+
+Viene de que `0d2a4f4` dejó `master` en rojo con tres `catch (err)` sin usar en
+`CopilotDrawer.tsx`. Se arreglaron desde la terminal de backend (`b5995a7`)
+porque el guardarraíl acababa de encenderse, pero **`apps/web` es tuyo y los que
+salgan los arreglas tú**.
+
+> **Por qué es fácil que se te pase**: hasta el 2026-07-30 no había configuración
+> de ESLint en el repo, así que `npm run lint` moría antes de abrir un archivo y
+> nadie lo corría. Ahora sí funciona, y ahora sí corta.
+
+### 2. Añade por ruta, nunca `git add -A` ni `git add .`
+
+Trabajamos dos a la vez sobre el mismo árbol y ya se llevó por delante un
+archivo tuyo una vez.
+
+### 3. Mira el build antes de dar algo por cerrado
+
+`npm run build` en la raíz compila los tres paquetes. El cierre del Sprint 4
+decía «todos los tests y builds en verde» y `@pmo/web` no compilaba.
+
+### 4. Si el backend te bloquea, pídelo aquí en vez de escribirlo
+
+`modules/emails/` y `modules/time/` son dominio de backend (excepción escrita en
+`AI_ROLES.md`). Ya hubo un choque: los dos escribiendo el módulo de tiempos a la
+vez, en la misma carpeta y la misma mañana. No se perdió nada, pero fue por
+poco, y deshacer un choque es más lento que pedirlo.
+
+Y una de operación: **un solo `npm run dev:api` a la vez**. Dos watchers
+escribiendo en `apps/api/dist` se pisan, y el síntoma engaña porque el código
+fuente está bien y solo falla contra el servidor.
+
+Desde el 2026-07-31 **el CI ya puede correr de verdad**: hay remoto
+(`Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO`, privado) y el workflow escucha
+`master`, así que cada push pasa por lint, build y las pruebas. Hasta entonces
+`npm run lint` en local era el único guardarraíl que existía.
 
 ---
 
-# Sprint 6 — Copiloto de IA
+# Sprint 6 — Copiloto de IA · contrato de referencia
 
 > ### ⚠️ Antes de seguir: pon esto en tu `.env`
 >
@@ -377,12 +338,12 @@ pruebas de unidad, pero ningún correo ha salido todavía por él. Lo valida QA 
 staging (decisión de Doc, 2026-07-29). Si en staging falla algo, lo más probable
 son las credenciales de Google, no el armado del mensaje.
 
-Dos cosas que te tocan a ti:
+Dos detalles del contrato que se ven en la interfaz:
 
 - **`transport` puede venir como `"mock"`.** En ese entorno el correo **no
-  salió**: se registró en el log y ya. Dilo en la interfaz en vez de dar por
-  enviado lo que no se envió — es el modo con el que conviene montar la tarjeta,
-  para que probarla no le llegue a nadie.
+  salió**: se registró en el log y ya. La tarjeta lo dice en vez de dar por
+  enviado lo que no se envió — es el modo con el que conviene probar, para que
+  no le llegue a nadie.
 - **Las direcciones se validan en el servidor.** El modelo redacta el borrador y
   a veces se inventa una dirección; el 400 llega con el campo que falla, así que
   se puede señalar en el editor.
@@ -410,20 +371,19 @@ Detalles que te ahorran sorpresas:
 - **Un `error` no siempre va después de algún `token`**: puede ser el primer
   evento del stream.
 
-## 5. Lo que cambió el 2026-07-29 — léelo antes de seguir
+## 5. Lo que cambió el 2026-07-29
 
 El backend del Sprint 6 quedó terminado. Cuatro cosas te afectan directamente:
 
-**1. `threadId` ya funciona.** Deja de ser decorativo: el copiloto recuerda la
-conversación. Guarda el `threadId` que llega en el evento `done` y mándalo en
-el turno siguiente; sin él se abre una conversación nueva cada vez. Para la
-lista del panel: `GET /copilot/threads` (id, título, fechas),
-`GET /copilot/threads/:id` (con todos los mensajes) y `DELETE` para borrarla.
+**1. `threadId`.** El copiloto recuerda la conversación. El `threadId` llega en
+el evento `done` y viaja en el turno siguiente; sin él se abriría una
+conversación nueva cada vez. La lista del panel sale de
+`GET /copilot/threads` (id, título, fechas), `GET /copilot/threads/:id` (con
+todos los mensajes) y `DELETE` para borrarla.
 
-**2. `context` ya funciona.** Manda `{ taskId }` o `{ emailId }` de lo que la
-persona tenga abierto y el copiloto lo lee de la base. Compruébalo con un caso
-real: con un correo adjunto, preguntarle "¿quién manda esto?" responde con el
-remitente de verdad.
+**2. `context`.** Se manda `{ taskId }` o `{ emailId }` de lo que la persona
+tenga abierto y el copiloto lo lee de la base. Con un correo adjunto,
+preguntarle "¿quién manda esto?" responde con el remitente de verdad.
 
 **3. Hay una segunda tarjeta: `create_task`.** Mismo patrón que el correo —el
 copiloto propone, la persona confirma— pero con su propia ruta:
@@ -450,49 +410,27 @@ pero el primer `token` puede tardar varios segundos más. **No dejes el
 indicador de escritura atado al primer token**; enciéndelo al mandar la
 petición.
 
-## 6. Tu encargo — revisado el 2026-07-29 contra tu código
+## 6. El Sprint 6 quedó entregado por los dos lados
 
-**Casi todo está hecho, y la lista anterior mentía.** Decía "cablear el envío:
-hoy es maqueta"; desde entonces commiteaste `91c0c4e` y `a121799` y eso ya no es
-verdad. Miré tu código antes de escribir esto, así que aquí solo queda lo que
-falta de verdad.
+**Backend** completo y cerrado formalmente por Doc el 2026-07-29: chat con
+streaming, hilos, contexto, las cuatro herramientas, envío de correo y bitácora.
 
-**Confirmado hecho** (`CopilotDrawer.tsx` y compañía): consumes `/copilot/chat`,
-`/emails/send`, `/providers` y `/tasks/create`; lees el stream con `getReader` y
-**cero `EventSource`**; despachas `token`, `tool_call`, `error` y `done`;
-distingues `draft_email` de `create_task`; abortas con `AbortController`; y
-pintas el aviso de simulación con `transport`. El contrato está respetado.
+**Interfaz** completa en `0d2a4f4`. Lo que esta sección pedía —mandar el
+`threadId` recogido del evento `done`, y la lista de conversaciones con sus tres
+rutas— está hecho y comprobado en el código. El resto ya estaba: consumo de
+`/copilot/chat`, `/emails/send`, `/providers` y `/tasks/create`, lectura del
+stream con `getReader` y **cero `EventSource`**, despacho de `token`,
+`tool_call`, `error` y `done`, distinción entre `draft_email` y `create_task`,
+cancelación con `AbortController` y el aviso de simulación con `transport`.
 
-Faltan dos cosas, y la primera importa más de lo que parece:
+También quedó bien resuelto el detalle que se avisaba aquí: **el indicador de
+escritura no cuelga del primer `token`**, se enciende al mandar la petición. Con
+las herramientas de lectura el copiloto puede buscar antes de hablar y tardar
+varios segundos en decir la primera palabra.
 
-1. **Manda `threadId`.** Hoy el cuerpo de `/copilot/chat` va con
-   `{ provider, tier, message, context }` y **sin `threadId`**, así que cada
-   mensaje abre una conversación nueva: el copiloto no recuerda nada de lo
-   anterior aunque el backend lo guarde. Lee el `threadId` del evento `done`,
-   guárdalo en el estado del panel y mándalo en el turno siguiente. Es una
-   línea y es la diferencia entre un chat y una sucesión de preguntas sueltas.
+Si algo del contrato no te cuadra en el futuro, pídelo antes de rodearlo.
 
-2. **La lista de conversaciones.** `GET /copilot/threads` (id, título y fechas),
-   `GET /copilot/threads/:id` (con todos los mensajes, para reabrirla) y
-   `DELETE /copilot/threads/:id`. Hoy no se consume ninguna: las conversaciones
-   se guardan y no hay forma de volver a ellas.
-
-Y una comprobación que conviene hacer: **el indicador de escritura no debe
-colgar del primer `token`**. Con las herramientas de lectura, el copiloto puede
-buscar antes de hablar y tardar varios segundos más en decir la primera palabra.
-Enciéndelo al mandar la petición, no al recibir el primer trozo.
-
-**El backend del Sprint 6 está completo y Doc lo aprobó y cerró formalmente el
-2026-07-29**: chat con streaming, hilos, contexto, las cuatro herramientas,
-envío de correo y bitácora. Lo que falta del sprint es esto de arriba. Si algo
-del contrato no te cuadra, pídelo antes de rodearlo.
-
-> **Antes de probar**: la API tiene que estar levantada (`npm run dev:api`), y
-> **una sola vez** — dos watchers escribiendo en `apps/api/dist` se pisan y el
-> síntoma engaña, porque el código fuente está bien y solo falla contra el
-> servidor (ver `AI_ROLES.md`, notas de operación).
-
-## 7. Nuevo el 2026-07-29 — la tarea ya dice por qué subió de prioridad
+## 7. La tarea dice por qué subió de prioridad
 
 Deuda vieja del Sprint 3, cerrada por el backend hoy con el visto bueno de Doc.
 Hasta ahora, cuando la capa determinista subía la prioridad de una tarea, el
@@ -521,11 +459,9 @@ por las que una prioridad puede subir: la creación manual con fecha apretada, l
 extracción desde correo (que es de donde nace casi todo) y el barrido nocturno
 de tareas vencidas.
 
-**Tu mitad**: pintarlo en `TaskCard`. Sugerencia, no obligación —el badge de
-prioridad con un `title={task.priorityReason}` y alguna marca visual discreta
-al lado, en la línea de lo que ya hace `AiAuditBadge` con la confianza. Si
-prefieres otra forma de enseñarlo, adelante: el dato ya está, la decisión visual
-es tuya.
+**Entregado** en `4191bda`: `TaskCard.tsx:187` comprueba `priorityReason` y saca
+un tooltip con el motivo, la prioridad de origen y la fecha. Con eso la auditoría
+de prioridad queda completa por las dos mitades.
 
 > **Por qué planos y no anidados en un `priorityAudit`**: Doc pidió anidarlos y
 > deliberadamente no lo hice. Prisma los devuelve planos en los tres canales de
@@ -533,12 +469,11 @@ es tuya.
 > se olvidara te llegarían dos formas distintas del mismo dato según por dónde
 > entrara la tarea. Lo aprobó sin reservas el 2026-07-29: se quedan planos.
 
-## 8. Encargo nuevo — `GET /dashboard/metrics` (vista de métricas)
+## 8. `GET /dashboard/metrics` — el contrato de la vista de métricas
 
-**Estado: listo y verificado contra la aplicación levantada. Es tu turno.**
-Es lo último rojo del Sprint 8 por el lado del backend. Contrato acordado con
-Doc el 2026-07-29; el tipo `DashboardMetrics` ya está en `@pmo/shared`, así que
-no tienes que escribirlo.
+**Entregado** en `4191bda` + `0d2a4f4`: el tablero llama a la ruta real con `tz`
+y no queda una sola referencia a `MOCK_METRICS` en `apps/web/src`. Contrato
+acordado con Doc el 2026-07-29; el tipo `DashboardMetrics` está en `@pmo/shared`.
 
 ```
 GET /dashboard/metrics            → 200
@@ -602,13 +537,15 @@ hora local, así que las dos podían repartir los minutos de última hora de la
 tarde en días distintos. Doc dio luz verde el 2026-07-30 y quedó alineado — lee
 la sección 9, que **te cambia algo de lo que ya tienes escrito**.
 
-## 9. Nuevo el 2026-07-30 — `GET /time/report` ya corta los días en hora local
+## 9. `GET /time/report` corta los días en hora local
 
-**Esto toca código que ya tienes escrito** (`time.api.ts` y `TimeReportModal`),
-así que léelo antes de seguir con la vista de métricas. Encargo de Doc del
-2026-07-30, después de ver el problema de la sección 8: la gráfica de métricas
-hablaba en hora local y la de tiempos en UTC, y no había forma de saber cuál de
-las dos mentía.
+Cambió el 2026-07-30, por encargo de Doc, después de ver el problema de la
+sección 8: la gráfica de métricas hablaba en hora local y la de tiempos en UTC,
+y no había forma de saber cuál de las dos mentía.
+
+**Entregado por los dos lados.** El `tz` sale del navegador en las dos rutas
+—`time.api.ts:101` y `useDashboardMetrics.ts:14`—, así que las dos gráficas
+parten los días por el mismo sitio.
 
 **Qué cambia**
 
@@ -626,16 +563,11 @@ GET /time/report?groupBy=day&tz=America/Mexico_City
 { "groupBy": "day", "from": null, "to": null, "tz": "America/Mexico_City", "totalSec": 4200, "rows": [ … ] }
 ```
 
-**Lo que te toca a ti: manda `tz`.** Añádelo a `getTimeReport` en `time.api.ts`
-y sácalo del navegador, no lo escribas a mano:
+La zona se saca del navegador y no se escribe a mano:
 
 ```ts
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 ```
-
-Lo mismo en la vista de métricas de la sección 8. Con las dos rutas recibiendo
-la misma zona, las dos gráficas parten los días por el mismo sitio y el usuario
-deja de ver dos verdades a la vez.
 
 **Cinco cosas que conviene tener claras:**
 
@@ -673,36 +605,17 @@ etiqueta un día.
 > siguen vigentes y los vas a necesitar: el registro de tiempos, la máquina de
 > estados del triage y el resto de la API.
 
-## Antes de nada: dos cosas que arreglé de lo tuyo
+## Dos arreglos del 2026-07-29, y lo único que queda vigente de ellos
 
-**1. El frontend no compilaba.** El cierre del Sprint 4 decía que "todos los
-tests y builds están en verde"; `npm --workspace @pmo/web run build` fallaba con
-dos errores. Los dejé arreglados en `ac32073` para poder seguir:
+Se arreglaron dos cosas de `apps/web` desde la terminal de backend: el frontend
+no compilaba (`ac32073` — un import de `axios`, que no es dependencia del
+frontend, y un `priority: 'MEDIUM'` en crudo donde va el enum) y las etiquetas
+se colgaban sin comprobar de quién eran (`a266111`). Está entregado y no queda
+nada que hacer; lo que salió de ahí son las convenciones 3 y 4 de la sección 0.
 
-- `tags.api.ts` importaba `../../../lib/axios`, que no existe — **axios no es
-  dependencia del frontend**. Lo reescribí con `fetch` y `credentials: 'include'`,
-  como el resto de la capa de API. Si querías axios, hay que añadirlo a
-  `package.json`, que es zona compartida y se avisa antes.
-- `AiValidationModal` creaba la tarea nueva con `priority: 'MEDIUM'` en crudo, y
-  `ProposedTask.priority` es el enum `TaskPriority`.
-
-**Mira el build antes de dar un sprint por cerrado**: `npm run build` en la raíz
-compila los tres paquetes.
-
-**2. Las etiquetas se colgaban sin mirar de quién eran.** En
-`emails.service.ts` metiste `tagIds` directo a `connect`. Con un id inventado
-Prisma reventaba dentro de la transacción con un error opaco, y con el id de
-otra persona la etiqueta ajena acababa colgada de la tarea. Corregido en
-`a266111` con la misma comprobación que ya hacía `POST /tasks`
-(`TagsService.resolveIds`, que devuelve **400** diciendo qué ids fallan).
-
-Ahí va también algo que te sirve: **las tarjetas creadas desde la cuarentena
-vuelven con sus `labels`**, igual que las de `POST /tasks`. Antes la respuesta
-201 y el `task.created` llegaban sin los colores que la persona acababa de
-elegir.
-
-Y recuerda **`modules/emails/` es de Claude** (excepción escrita en
-`AI_ROLES.md`): si necesitas otro campo, pídelo en vez de tocarlo.
+Lo que sí sigue siendo contrato: **las tarjetas creadas desde la cuarentena
+vuelven con sus `labels`**, igual que las de `POST /tasks`. Antes el 201 y el
+`task.created` llegaban sin los colores que la persona acababa de elegir.
 
 ---
 
@@ -731,18 +644,17 @@ lo decide.
   Que el worker lo analizara sigue siendo verdad aunque su dueño lo devuelva a
   la bandeja.
 
-**Aviso, que esto te toca a ti**: la restricción que el cierre del Sprint 4 daba
+**Entregado por los dos lados.** La restricción que el cierre del Sprint 4 daba
 por hecha ("validación en el backend y frontend") **no existía en ninguno de los
-dos lados**. En el backend `updateStatus` escribía cualquier estado sin mirar el
-anterior; ya está implementada y probada. En el frontend lo que no existe es lo
-contrario: **no hay ningún botón que mande `PENDING`**, así que desde el
-navegador no se puede reabrir un correo aunque la API ya lo permita.
+dos**: `updateStatus` escribía cualquier estado sin mirar el anterior, y en el
+navegador no había ningún botón que mandara `PENDING`. El backend quedó
+implementado y probado, y el botón "A Pendientes" entró en `c768db7` mandando
+`{ status: 'PENDING', force: true }` — comprobado que el `force` viaja en el
+cuerpo y no se queda en el cliente.
 
-**Tu encargo**: un botón "Devolver a pendientes" en la fila del correo, visible
-cuando su `status` no sea `PENDING`, que mande `{ status: 'PENDING', force: true
-}`. El 409 no lo verás si mandas el `force`, pero enseña su `message` igual que
-haces con los demás: si mañana la regla cambia, el mensaje del servidor será el
-que explique por qué.
+El 409 no se ve mientras se mande el `force`, pero su `message` se sigue
+enseñando como el de los demás: si mañana la regla cambia, el mensaje del
+servidor será el que explique por qué.
 
 ---
 
@@ -848,7 +760,7 @@ para entrar tal cual en la gráfica.
    `GET /time/active`.
 2. ~~**Los días y las semanas se cortan en UTC**~~ — **cambiado el 2026-07-30**:
    se cortan en la zona de `?tz=`, por defecto `America/Mexico_City`. El detalle
-   completo, con lo que te toca hacer, está en la **sección 9**.
+   completo está en la **sección 9**.
 
 ### Eventos de socket — por el que ya tienes
 
@@ -883,82 +795,117 @@ hecho y comprobado el 2026-07-29:
 5. **La E2E de las dos pestañas**, pendiente desde el Sprint 4, la dio por buena
    el usuario en su revisión manual del mismo día.
 
-**Dos casillas que hubo que reabrir.** El commit de cierre `697784b` marcó
-además el *panel de auditoría de prioridad* y los *filtros por etiqueta y
-fecha*. Ninguna de las dos está hecha —lo dicen sus propias notas, y hoy lo
-comprobé en el código: no hay nada de auditoría en `apps/web` y
-`query-tasks.dto.ts` no tiene filtro de etiqueta ni de fechas— y ninguna
-pertenece al Sprint 4.5 ni al 5, que era lo que se cerraba.
+**Y las dos casillas que hubo que reabrir, también están saldadas.** El commit
+de cierre `697784b` marcó como hechos el *panel de auditoría de prioridad* y los
+*filtros por etiqueta y fecha* sin estarlo; se reabrieron el 2026-07-29 como
+deuda de plan, fuera de sus sprints, y se cerraron las dos ese mismo día y el
+siguiente: los filtros en `417941f`, y la auditoría por sus dos mitades —el
+motivo en el contrato (`795bae1`) y el tooltip en la tarjeta (`4191bda`).
 
-Por decisión del usuario ese mismo día, **se aceptan como deuda**: siguen
-abiertas, pero fuera de sus sprints, en la sección
-**[DEUDA TÉCNICA — Sprints anteriores]** al final de `TASKS.md`, con lo que
-falta de cada una escrito para poder retomarlas sin volver a investigarlas. Así
-el sprint en curso queda libre y las dos siguen a la vista.
-
-No hace falta que las hagas ahora: las prioriza quien planifique el Sprint 6.
-El panel de auditoría, cuando llegue, es de los dos — exponer el motivo en el
-contrato es mío, pintarlo en la tarjeta es tuyo.
-
----
-
-## Nota de coordinación — chocamos en `apps/api` esta mañana
-
-Mientras yo escribía el módulo de tiempos, tú escribías otro con el mismo nombre
-y en la misma carpeta. No se perdió nada, pero fue por poco: **`modules/time/`
-era backend, o sea dominio mío**, igual que `emails/`.
-
-Lo que hice fue quedarme con **tus rutas** y reescribir la implementación, para
-no romper el `time.api.ts` que ya tenías escrito. Tu `GET /tasks` con
-`totalTimeSec` se queda como está; le añadí las pruebas que le faltaban (dos
-tarjetas del `findAll` se caían con `task.timeEntries is not iterable`).
-
-Para la próxima: si el backend te bloquea, **pídelo aquí** en vez de escribirlo.
-Es más rápido que deshacer un choque.
+Queda como recordatorio de por qué ninguna casilla se marca sin mirar el código.
 
 ---
 
 ## Estado del repo
 
-- **`426 pruebas en 14 suites`, todas en verde**, comprobado el 2026-07-30
-  después de tu `0d2a4f4`. El build de `@pmo/web` compila (844 kB, el aviso de
-  tamaño de Vite sigue ahí) y el type-check de la API sale limpio. _La API se
-  comprobó con `npx tsc -p apps/api/tsconfig.spec.json` y no con `npm run
-  build`, porque hay un `dev:api` levantado y los dos escriben en el mismo
-  `dist`._
-- **`npm run lint` ya funciona.** Hasta el 2026-07-30 fallaba siempre, y no por
-  estilo: no había configuración de ESLint en ninguna parte del repo, así que
-  moría antes de abrir un archivo. Ahora hay una sola (`eslint.config.mjs` en la
-  raíz) y sale en **0 errores y 28 avisos**. Los avisos son `no-explicit-any`,
-  casi todos en `apps/web`: son tuyos, no urgen, y no rompen nada.
-  De paso quedaron arreglados 11 `catch (e) {}` de tu capa de API — sin tocar
-  comportamiento, solo quitando el binding que no se usaba. **Otros tres
-  volvieron a aparecer en tu `0d2a4f4` y los quité en `b5995a7`; a partir de
-  ahí los de `apps/web` son tuyos: mira la sección 0.**
+> Al día a **2026-08-03**.
+
+- **`504 pruebas en 18 suites`, todas en verde.** El build de `@pmo/web` compila
+  (844 kB, el aviso de tamaño de Vite sigue ahí) y el type-check de la API sale
+  limpio. _Si hay un `dev:api` levantado, comprueba la API con
+  `npx tsc -p apps/api/tsconfig.spec.json` en vez de `npm run build`: los dos
+  escriben en el mismo `dist` y se pisan._
+- **`npm run lint`: 0 errores y 28 avisos.** Hasta el 2026-07-30 fallaba
+  siempre, y no por estilo: no había configuración de ESLint en ninguna parte
+  del repo, así que moría antes de abrir un archivo. Ahora hay una sola
+  (`eslint.config.mjs` en la raíz). Los avisos son `no-explicit-any`, casi todos
+  en `apps/web`: son tuyos, no urgen y no rompen nada.
 - El formato **no** se comprueba con el linter, a propósito: lo sigue poniendo
   `prettier` por su cuenta. Así nadie te reescribe media `apps/web` en un
   `--fix`.
-- **`@google/genai` instalado** en `apps/api` (luz verde de Doc el 2026-07-29).
-  Se hoistea al `node_modules` de la raíz como el resto; si tu `npm install` no
-  lo trae, vuelve a instalar desde la raíz.
+- **Remoto**: `origin` → `Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO`, **privado**,
+  rama por defecto `master`. Existe desde el 2026-07-31; antes el proyecto vivía
+  entero en un solo disco.
+- **El CI se dispara en cada push a `master`** (`.github/workflows/ci.yml`):
+  `npm ci` → lint → build → pruebas, en Node 20. Escuchaba `main` hasta
+  `eb4449d`, y como la rama de trabajo es `master` no se había disparado nunca —
+  es lo que dejó pasar un `npm run lint` roto durante todo el proyecto.
+  _Pendiente de mirar a mano en la consola de Actions que el run salga verde:
+  `gh` no está instalado en la máquina._
 - Migraciones aplicadas: `20260729140000_add_copilot_threads` (hilos del
   copiloto y su bitácora), `20260729153000_add_time_tracking` (registro de
   tiempos) y `20260729160000_add_priority_audit` (los tres campos de la
-  sección 7: `priorityReason`, `priorityAdjustedAt` y `priorityAdjustedFrom`).
-  Si tu base es anterior, `npx prisma migrate deploy` desde `apps/api`.
-- **El CI ya apunta a la rama correcta, pero todavía no puede correr.** Escuchaba
-  `main` y la rama de trabajo es `master`, así que no se había disparado nunca —
-  es lo que dejó pasar el linter roto. Corregido el 2026-07-30 (`eb4449d`):
-  `push` y `pull_request` sobre `master` pasan por lint, build y las 426
-  pruebas. **Falta la otra mitad: `git remote -v` está vacío**, y sin remoto no
-  hay dónde ejecutar el workflow. Hasta que eso se resuelva, el único
-  guardarraíl real es `npm run lint` en tu máquina.
-- **La API va con Helmet y con límite de peticiones desde el 2026-07-29**: 240
-  por minuto en general y **20 por minuto en todo `/copilot`**, porque cada
-  turno cuesta tokens. Un `429` en el panel de chat no es un fallo del backend:
-  es el límite. Enséñalo como tal en vez de como error genérico.
-- La API y Vite están levantados. Recuerda: **un solo `dev:api` a la vez**
-  (ver `AI_ROLES.md`, notas de operación).
+  sección 7). Si tu base es anterior, `npx prisma migrate deploy` desde
+  `apps/api`. **La observabilidad no añadió ninguna**: no toca el esquema.
+- **Helmet y límite de peticiones desde el 2026-07-29**: 240 por minuto en
+  general y **20 por minuto en todo `/copilot`**, porque cada turno cuesta
+  tokens. Un `429` en el panel de chat no es un fallo del backend: es el límite.
+  Enséñalo como tal en vez de como error genérico.
+- Dependencias del backend añadidas el 2026-07-31 para la observabilidad:
+  `@nestjs/terminus`, `nestjs-pino`, `pino`, `pino-http` y `pino-pretty`. Se
+  hoistean al `node_modules` de la raíz; si tu `npm install` no las trae, vuelve
+  a instalar desde la raíz.
+
+---
+
+# Observabilidad — lo poco que te toca saber
+
+> Entró el 2026-07-31 y el 2026-08-03. **Es backend entero y no te pide nada**,
+> pero hay dos cosas que se ven desde fuera.
+
+**1. Hay tres rutas de salud, y no son intercambiables.**
+
+| Ruta | Qué contesta |
+|---|---|
+| `GET /health` | La de siempre, sin tocar dependencias. Se mantuvo con la misma forma por compatibilidad |
+| `GET /health/live` | ¿El proceso responde? No mira Postgres ni Redis |
+| `GET /health/ready` | ¿Puedo atender? Comprueba Postgres y Redis; **503** con el detalle de cuál falló |
+
+Ninguna necesita sesión y ninguna cuenta para el límite de peticiones. Si alguna
+vez pintas un indicador de estado del sistema, la que quieres es `/health/ready`:
+las otras dos dicen que sí con la base caída, que es justo su trabajo.
+
+**2. Cada respuesta trae `x-request-id`.** Es el identificador con el que esa
+petición quedó registrada en el servidor. Si te encuentras un fallo raro y lo
+reportas, **pega esa cabecera**: con ella se encuentran todas las líneas de log
+de esa petición exacta, en vez de buscar por hora.
+
+Y una que te afecta sin que se vea: los logs del servidor ya **no** guardan la
+cadena de consulta sin filtrar. Si alguna vez metes un dato sensible en un
+parámetro de URL, dilo, porque la lista de los que se tapan es explícita
+(`code`, `state`, `token`, `password`…) y lo que no está en ella se registra.
+
+---
+
+# Terreno preparado para el despliegue
+
+> Para cuando Doc abra el frente de **CI/CD y Cloud Run**. No es un encargo y no
+> es tuyo; se anota aquí para que quien lo abra no vuelva a investigarlo.
+
+Lo que ya está hecho y no habrá que rehacer:
+
+- **Sondas** `/health/live` y `/health/ready` separadas, que es lo que Cloud Run
+  pide para *startup*, *liveness* y *readiness*.
+- **Cierre ordenado**: `enableShutdownHooks()` en `main.ts`, sin el cual el
+  `SIGTERM` de Cloud Run mataba el proceso con las conexiones de Prisma abiertas.
+- **Logs en formato de Cloud Logging** por la salida estándar, que es
+  exactamente como los recoge Cloud Run: sin agente, sin SDK y sin credencial de
+  telemetría. Las excepciones las recoge **Error Reporting** de ahí, con la marca
+  `@type` y el `serviceContext` de la revisión.
+- `K_SERVICE` y `K_REVISION` ya se leen para identificar el servicio y la
+  versión; las inyecta la propia plataforma.
+
+Lo que **falta** y hay que acordarse de poner:
+
+- **`GOOGLE_CLOUD_PROJECT` en el despliegue.** Cloud Run **no** la inyecta, y sin
+  ella la correlación por traza se apaga: los logs salen y parecen correctos,
+  pero las líneas de una misma petición no se agrupan. La API lo avisa al
+  arrancar, así que se verá en el primer log de la primera revisión.
+- Los secretos (`JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`, credenciales de Google y de
+  los modelos) tienen que salir del `.env` y pasar a Secret Manager.
+- Postgres y Redis gestionados: hoy son dos contenedores de `docker-compose`.
+- `WEB_URL` deja de ser `localhost:5173`, y el CORS va acotado a esa variable
+  desde el Sprint 1.
 
 ---
 
