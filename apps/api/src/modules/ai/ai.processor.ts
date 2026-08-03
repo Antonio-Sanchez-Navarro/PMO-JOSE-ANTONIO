@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { EmailClassificationService } from './email-classification.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import type { ClassifyEmailJob, ClassifyEmailResult } from './classify-email.job';
 
 @Processor('classify-email')
 export class AiProcessor extends WorkerHost {
@@ -15,8 +16,14 @@ export class AiProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<any, any, string>): Promise<any> {
-    const emailId = job.data.emailId;
+  async process(
+    job: Job<ClassifyEmailJob, ClassifyEmailResult, string>,
+  ): Promise<ClassifyEmailResult> {
+    // Sigue comprobándose aunque el tipo lo dé por seguro: lo que llega de la
+    // cola es JSON que se serializó en otro proceso, quizá con una versión
+    // anterior del código. El tipo protege de escribir mal el productor, no de
+    // un job viejo que ya estaba en Redis.
+    const emailId = job.data?.emailId;
     if (!emailId) {
       this.logger.warn('Job descartado: falta emailId');
       return;

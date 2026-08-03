@@ -5,6 +5,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { AuthService } from '../auth/auth.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import type { ClassifyEmailJob } from '../ai/classify-email.job';
 
 export interface EmailSnippet {
   id: string;
@@ -38,7 +39,10 @@ export class GmailService {
     private readonly auth: AuthService,
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
-    @InjectQueue('classify-email') private readonly classifyQueue: Queue,
+    // Tipada con el contrato de la cola: si el productor y el consumidor dejan
+    // de estar de acuerdo sobre el nombre del campo, falla aquí y no en
+    // producción con el job ya encolado.
+    @InjectQueue('classify-email') private readonly classifyQueue: Queue<ClassifyEmailJob>,
   ) {}
 
   private async getGmailClient(userId: string): Promise<GmailClient> {
