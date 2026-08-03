@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { Task, TaskStatus } from '../types';
+import { TimeEntry } from '@pmo/shared';
 
 export const TASK_EVENTS = {
   created: 'task.created',
@@ -46,9 +47,9 @@ interface UseSocketProps {
   onTaskUpdated?: (task: Task) => void;
   onTaskDeleted?: (payload: { id: string; status: TaskStatus; userId: string }) => void;
   onTasksReordered?: (payload: { userId: string; columns: ColumnOrder[] }) => void;
-  onEmailUpdated?: (email: any) => void;
-  onTimeStarted?: (timeEntry: any) => void;
-  onTimeStopped?: (timeEntry: any) => void;
+  onEmailUpdated?: (email: Record<string, unknown>) => void;
+  onTimeStarted?: (timeEntry: TimeEntry) => void;
+  onTimeStopped?: (timeEntry: TimeEntry) => void;
 }
 
 export const useSocket = ({
@@ -108,11 +109,11 @@ export const useSocket = ({
       savedOnTaskDeleted.current?.(data);
     const onReordered = (data: { userId: string; columns: ColumnOrder[] }) =>
       savedOnTasksReordered.current?.(data);
-    const onEmailUpdatedHandler = (data: any) =>
+    const onEmailUpdatedHandler = (data: Record<string, unknown>) =>
       savedOnEmailUpdated.current?.(data);
-    const onTimeStartedHandler = (data: any) =>
+    const onTimeStartedHandler = (data: TimeEntry) =>
       savedOnTimeStarted.current?.(data);
-    const onTimeStoppedHandler = (data: any) =>
+    const onTimeStoppedHandler = (data: TimeEntry) =>
       savedOnTimeStopped.current?.(data);
 
     socket.on(TASK_EVENTS.created, onCreated);

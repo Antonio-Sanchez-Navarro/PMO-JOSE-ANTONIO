@@ -82,8 +82,9 @@ export const TimeEntriesModal: React.FC<TimeEntriesModalProps> = ({ isOpen, onCl
       }
       resetForm();
       loadEntries();
-    } catch (error: any) {
-      toast.error(error.message || 'Error al guardar');
+    } catch (error) {
+      const err = error as Error;
+      toast.error(err.message || 'Error al guardar');
     } finally {
       setIsSubmitting(false);
     }
@@ -95,8 +96,9 @@ export const TimeEntriesModal: React.FC<TimeEntriesModalProps> = ({ isOpen, onCl
       await deleteTimeEntry(id);
       toast.success('Entrada eliminada');
       loadEntries();
-    } catch (error: any) {
-      toast.error(error.message || 'Error al eliminar');
+    } catch (error) {
+      const err = error as Error;
+      toast.error(err.message || 'Error al eliminar');
     }
   };
 

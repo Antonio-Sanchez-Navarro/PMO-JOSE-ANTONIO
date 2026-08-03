@@ -279,9 +279,9 @@ export const KanbanBoard: React.FC = () => {
     OVERDUE: tasks.filter((t) => t.status === TaskStatus.OVERDUE),
   };
 
-  const handleCreateTask = async (data: any) => {
+  const handleCreateTask = async (data: { title: string; status: string; priority: string; dueDate?: string }) => {
     try {
-      const newTask = await createTask(data);
+      const newTask = await createTask(data as Partial<Task>);
       // Actualizamos usando el objeto que retorna el servidor (con reglas de negocio aplicadas)
       setTasks((prev) => [...prev, newTask]);
       setIsModalOpen(false);
@@ -314,8 +314,9 @@ export const KanbanBoard: React.FC = () => {
     try {
       await startTimer(id);
       toast.success('Cronómetro iniciado');
-    } catch (error: any) {
-      toast.error(error.message || 'Error al iniciar cronómetro');
+    } catch (error) {
+      const err = error as Error;
+      toast.error(err.message || 'Error al iniciar cronómetro');
     }
   };
 
@@ -323,8 +324,9 @@ export const KanbanBoard: React.FC = () => {
     try {
       await stopTimer(id);
       toast.success('Cronómetro detenido');
-    } catch (error: any) {
-      toast.error(error.message || 'Error al detener cronómetro');
+    } catch (error) {
+      const err = error as Error;
+      toast.error(err.message || 'Error al detener cronómetro');
     }
   };
 
@@ -332,8 +334,9 @@ export const KanbanBoard: React.FC = () => {
     try {
       await updateEmailStatus(emailId, 'PENDING', true);
       toast.success('Correo devuelto a la bandeja');
-    } catch (error: any) {
-      toast.error(error.message || 'Error al regresar correo');
+    } catch (error) {
+      const err = error as Error;
+      toast.error(err.message || 'Error al regresar correo');
     }
   };
 

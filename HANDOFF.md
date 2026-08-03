@@ -1,7 +1,7 @@
 # Handoff — Gravity
 
-> **Estado: TRABAJAR** · puesto el **2026-08-03**
-> **Asignado a:** Gravity — **los 28 `any` de `apps/web`**. Está en la sección 0.
+> **Estado: CERRADO** · puesto el **2026-08-03**
+> **Asignado a:** Nadie
 >
 > El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe. `CERRADO` = el sprint ha concluido.
 >

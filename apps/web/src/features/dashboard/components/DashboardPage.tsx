@@ -100,7 +100,7 @@ export function DashboardPage() {
                 <Tooltip
                   cursor={{ fill: '#f1f5f9' }}
                   contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  labelFormatter={(label: any) => formatDate(String(label))}
+                  labelFormatter={(label) => formatDate(String(label))}
                 />
                 <Bar dataKey="count" name="Completadas" fill="#4f46e5" radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -130,8 +130,8 @@ export function DashboardPage() {
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
                 <Tooltip
                   contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  labelFormatter={(label: any) => formatDate(String(label))}
-                  formatter={(value: any) => [`${value} hrs`, 'Tiempo']}
+                  labelFormatter={(label) => formatDate(String(label))}
+                  formatter={(value) => [`${value} hrs`, 'Tiempo']}
                 />
                 <Area type="monotone" dataKey="hours" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorHours)" />
               </AreaChart>

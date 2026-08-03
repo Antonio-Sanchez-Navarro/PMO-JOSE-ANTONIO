@@ -76,7 +76,7 @@ export const moveTask = async (id: string, status: TaskStatus, position: number)
   return json;
 };
 
-export const createTask = async (data: any): Promise<Task> => {
+export const createTask = async (data: Partial<Task>): Promise<Task> => {
   const socketId = getSocketId();
   const response = await fetch(API_BASE, {
     method: 'POST',
@@ -170,7 +170,7 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
   return json.data || json;
 };
 
-export const updateEmailStatus = async (emailId: string, status: string, force?: boolean): Promise<any> => {
+export const updateEmailStatus = async (emailId: string, status: string, force?: boolean): Promise<unknown> => {
   const socketId = getSocketId();
 
   const response = await fetch(`/api/emails/${emailId}/status`, {

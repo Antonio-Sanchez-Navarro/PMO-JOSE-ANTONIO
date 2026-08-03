@@ -38,7 +38,7 @@ export function InboxPage() {
 
   useSocket({
     onEmailUpdated: (email) => {
-      updateEmail(email);
+      updateEmail(email as unknown as EmailSnippet);
     }
   });
 
@@ -53,11 +53,12 @@ export function InboxPage() {
       toast.dismiss(toastId);
       setAiProposal(result);
       setIsAiModalOpen(true);
-    } catch (e: any) {
-      if (e.response?.status === 409) {
+    } catch (e) {
+      const error = e as Error & { response?: { status: number } };
+      if (error.response?.status === 409) {
         toast.error('Este correo ya fue convertido a tareas.');
       } else {
-        toast.error(e.message || 'Error al analizar el correo');
+        toast.error(error.message || 'Error al analizar el correo');
       }
     }
   };
@@ -95,7 +96,7 @@ export function InboxPage() {
         ].map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => setActiveTab(tab.id as 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED')}
             className={`py-3 text-sm font-medium border-b-2 transition-colors ${
               activeTab === tab.id
                 ? 'border-indigo-600 text-indigo-600'
@@ -145,9 +146,10 @@ export function InboxPage() {
                 onUpdateStatus={async (id, newStatus, force) => {
                   try {
                     const updated = await updateEmailStatus(id, newStatus, force);
-                    updateEmail(updated);
-                  } catch (e: any) {
-                    toast.error(e.message || 'Error al cambiar estado');
+                    updateEmail(updated as unknown as EmailSnippet);
+                  } catch (e) {
+                    const error = e as Error;
+                    toast.error(error.message || 'Error al cambiar estado');
                   }
                 }}
               />
@@ -184,9 +186,10 @@ export function InboxPage() {
             setAiProposal(null);
             // Refrescar bandeja para actualizar el estado visual de los correos
             refresh();
-          } catch (e: any) {
-            toast.error(e?.message || "Error al crear las tareas propuestas.");
-            console.error(e);
+          } catch (e) {
+            const error = e as Error;
+            toast.error(error?.message || "Error al crear las tareas propuestas.");
+            console.error(error);
           }
         }}
       />

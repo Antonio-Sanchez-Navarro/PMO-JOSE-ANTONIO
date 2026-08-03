@@ -3,6 +3,7 @@ import { CopilotHeader, AiProvider, AiTier, ProviderStatus } from './CopilotHead
 import { ChatMessage, Message } from './ChatMessage';
 import { useCopilot } from '../CopilotContext';
 import { CopilotThread, fetchThreads, fetchThreadMessages, deleteThread } from '../api/copilot.api';
+import { TaskPriority } from '../../kanban/types';
 import { toast } from 'sonner';
 
 interface CopilotDrawerProps {
@@ -119,7 +120,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
         for (const bloque of bloques) {
           const evento = bloque.match(/^event: (.+)$/m)?.[1];
           const dataStr = bloque.match(/^data: (.+)$/m)?.[1] ?? '{}';
-          let data: any = {};
+          let data: { type?: string; text?: string; toolName?: string; payload?: { to?: string | string[]; subject?: string; body?: string; title?: string; description?: string; priority?: string; dueDate?: string | null; sourceEmailId?: string | null }; message?: string; threadId?: string } = {};
           try {
             data = JSON.parse(dataStr);
           } catch {
@@ -133,35 +134,35 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
               }
               return msg;
             }));
-          } else if (evento === 'tool_call') {
-            if (data.toolName === 'draft_email' && data.payload) {
+          } else if (evento === 'tool_call') {            const payload = data.payload;
+            if (data.toolName === 'draft_email' && payload) {
               setMessages((prev) => prev.map(msg => {
                 if (msg.id === assistantMessageId) {
-                  return { 
-                    ...msg, 
+                  return {
+                    ...msg,
                     status: 'complete',
                     draftEmail: {
                       id: Date.now().toString(),
-                      to: Array.isArray(data.payload.to) ? data.payload.to.join(', ') : (data.payload.to || ''),
-                      subject: data.payload.subject || '',
-                      body: data.payload.body || ''
+                      to: Array.isArray(payload.to) ? payload.to.join(', ') : (payload.to || ''),
+                      subject: payload.subject || '',
+                      body: payload.body || ''
                     }
                   };
                 }
                 return msg;
               }));
-            } else if (data.toolName === 'create_task' && data.payload) {
+            } else if (data.toolName === 'create_task' && payload) {
               setMessages((prev) => prev.map(msg => {
                 if (msg.id === assistantMessageId) {
                   return { 
                     ...msg, 
                     status: 'complete',
                     createTask: {
-                      title: data.payload.title || '',
-                      description: data.payload.description || '',
-                      priority: data.payload.priority || 'MEDIUM',
-                      dueDate: data.payload.dueDate || null,
-                      sourceEmailId: data.payload.sourceEmailId || null
+                      title: payload.title || '',
+                      description: payload.description || '',
+                      priority: (payload.priority as TaskPriority) || 'MEDIUM',
+                      dueDate: payload.dueDate || null,
+                      sourceEmailId: payload.sourceEmailId || null
                     }
                   };
                 }
@@ -180,13 +181,14 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
       }
 
       setMessages((prev) => prev.map(msg => msg.id === assistantMessageId ? { ...msg, status: 'complete' } : msg));
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
         setMessages((prev) => prev.map(msg => msg.id === assistantMessageId ? { ...msg, status: 'complete' } : msg));
       } else {
+        const error = err as Error;
         setMessages((prev) => prev.map(msg => msg.id === assistantMessageId ? { 
           ...msg, 
-          content: msg.content + (msg.content ? '\n\n' : '') + `⚠️ Error: ${err.message}`,
+          content: msg.content + (msg.content ? '\n\n' : '') + `⚠️ Error: ${error.message}`,
           status: 'complete' 
         } : msg));
       }
@@ -238,7 +240,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
                   <li key={t.id} className="p-4 hover:bg-white cursor-pointer group flex justify-between items-center transition" onClick={async () => {
                     try {
                       const msgs = await fetchThreadMessages(t.id);
-                      setMessages(msgs.map((m: any) => ({
+                      setMessages(msgs.map((m) => ({
                         id: m.id,
                         role: m.role,
                         content: m.content,

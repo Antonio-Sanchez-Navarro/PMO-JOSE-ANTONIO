@@ -77,7 +77,7 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
       return;
     }
 
-    const finalPayload: any = {
+    const finalPayload: Partial<EmailClassification> = {
       ...proposal,
       tasks,
     };

@@ -45,8 +45,9 @@ export const CreateTaskCard: React.FC<CreateTaskCardProps> = ({ task }) => {
       }
 
       setStatus('created');
-    } catch (err: any) {
-      setErrorMsg(err.message);
+    } catch (err) {
+      const error = err as Error;
+      setErrorMsg(error.message);
       setStatus('idle');
     }
   };

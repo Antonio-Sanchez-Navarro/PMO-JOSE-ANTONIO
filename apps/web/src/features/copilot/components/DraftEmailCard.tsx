@@ -46,8 +46,9 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
       }
 
       setStatus('sent');
-    } catch (err: any) {
-      setErrorMsg(err.message);
+    } catch (err) {
+      const error = err as Error;
+      setErrorMsg(error.message);
       setStatus('idle');
     }
   };

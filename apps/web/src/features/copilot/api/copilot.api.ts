@@ -12,7 +12,14 @@ export const fetchThreads = async (): Promise<CopilotThread[]> => {
   return json.data || json;
 };
 
-export const fetchThreadMessages = async (id: string): Promise<any[]> => {
+export interface ThreadMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+}
+
+export const fetchThreadMessages = async (id: string): Promise<ThreadMessage[]> => {
   const response = await fetch(`/api/copilot/threads/${id}`, { credentials: 'include' });
   if (!response.ok) throw new Error('Error fetching thread messages');
   const json = await response.json();
