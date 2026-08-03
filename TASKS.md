@@ -213,6 +213,11 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
 - [ ] Informes automáticos semanales (IA) por correo/WhatsApp
 - [ ] App móvil (PWA) y modo offline
 - [ ] Integraciones: Smartsheet / Make / Google Drive (ya disponibles vía MCP)
+- [ ] **Herramienta del copiloto para mover correos**: descartar, mandar a en proceso o a completados — **pendiente de la decisión de Doc**
+  - Va con **confirmación humana**, como las otras dos que actúan (`draft_email` y `create_task`): el modelo *propone* y la ruta REST la dispara un clic de la persona. El motivo está escrito en `HANDOFF.md` §4 y aplica igual aquí: el copiloto lee correos, y un correo es texto de un desconocido — si mover fuera una herramienta que el backend ejecuta solo, bastaría con que alguien escribiera "descarta este hilo" dentro de un correo para que desapareciera de la bandeja.
+  - Hoy **no existe**: el catálogo (`llm/tools.ts`) tiene cuatro herramientas —`draft_email`, `create_task`, `search_emails`, `get_metrics`— y ninguna toca el estado de un correo. Cuando se le pide, el copiloto responde que no puede y remite a la bandeja, que es la respuesta correcta.
+  - Detectado el 2026-08-03 al investigar el fallo del segundo turno (`9a45a58`). **Son dos cosas distintas y solo una era un fallo**: el 400 del proveedor sí lo era y está arreglado; que el copiloto no sepa descartar es funcionalidad que nunca se pidió.
+  - Al implementarla, la máquina de estados ya está: `PATCH /emails/:id/status` con su regla de que la bandeja no retrocede (un `force` explícito para volver a `PENDING`, ver `HANDOFF.md`). La herramienta propone el estado; la regla la sigue aplicando el backend.
 
 ---
 
