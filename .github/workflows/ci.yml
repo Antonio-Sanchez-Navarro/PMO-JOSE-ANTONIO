@@ -30,11 +30,23 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
-    # Sin `--max-warnings`, a propósito. Los avisos que quedan son
-    # `no-explicit-any` heredados y ponerlos en cero de golpe obligaría a tocar
-    # `apps/web`, que es de otro dominio. Los errores sí cortan.
+    # `--max-warnings 0`: los avisos también cortan, desde el 2026-08-03.
+    #
+    # Hasta ese día esto iba sin la bandera a propósito, porque quedaban 28
+    # `no-explicit-any` heredados y casi todos vivían en `apps/web`, que es de
+    # otro dominio: encenderla habría cortado en el primer push por deuda que
+    # no le tocaba arreglar a quien empujara. Gravity la saldó en `9501647`
+    # —los 28, en 11 archivos— y los tres paquetes salen hoy en cero avisos.
+    # Esa era la condición para encenderla, y este paso es lo que impide que
+    # vuelvan a entrar de uno en uno.
+    #
+    # Ojo con la forma de invocarlo: **no** vale `npm run lint -- --max-warnings 0`.
+    # El script de la raíz es `npm --workspaces --if-present run lint`, así que
+    # el argumento se lo quedaría npm como flag propia en vez de llegar a
+    # eslint, y el paso pasaría a ser decorativo sin decirlo. Recorriendo los
+    # workspaces aquí, el `--` sí llega a cada `eslint` (comprobado).
     - name: Run Linter
-      run: npm run lint --if-present
+      run: npm run lint --workspaces --if-present -- --max-warnings 0
 
     - name: Build Projects
       run: npm run build
