@@ -5,6 +5,8 @@
   "scripts": {
     "start:dev": "cross-env NODE_OPTIONS=--max-old-space-size=4096 nest start --watch",
     "start": "node dist/main.js",
+    "//prebuild": "El cliente de Prisma es CODIGO GENERADO: sin `prisma generate` no existen ni los tipos de los modelos ni el namespace `Prisma`, y el build se cae con errores que parecen del codigo. En una maquina de desarrollo no se nota porque lo genero `prisma migrate` hace semanas; en un CI, que parte de un `npm ci` limpio, no lo ha generado nadie. El postinstall de @prisma/client no lo cubre: busca el esquema desde la raiz del monorepo y el nuestro esta en apps/api/prisma. Aqui el directorio de trabajo es apps/api, asi que lo encuentra.",
+    "prebuild": "prisma generate",
     "build": "nest build",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "jest"
