@@ -194,7 +194,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
             )}
           </div>
           {/* Source Badge */}
-          {task.source && SOURCE_LABELS[task.source] && (
+          {task.source && task.source !== TaskSource.MANUAL && SOURCE_LABELS[task.source] && (
             <span 
               className={`flex items-center gap-1 px-2 py-0.5 rounded font-medium ${SOURCE_LABELS[task.source].style}`} 
               title={`Origen: ${SOURCE_LABELS[task.source].label}`}
