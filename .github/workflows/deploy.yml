@@ -28,7 +28,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    # **Las tres condiciones son necesarias y ninguna sobra:**
+    # **Las cuatro condiciones son necesarias y ninguna sobra:**
     #
     # - `conclusion == 'success'` — `workflow_run` se dispara también cuando el
     #   CI **falla**; sin esto se desplegaría precisamente el commit roto.
@@ -37,10 +37,25 @@ jobs:
     # - `event == 'push'` — un CI lanzado por un PR puede traer `head_branch`
     #   apuntando a master en algunos flujos de fork; exigir que el origen sea
     #   un push cierra ese hueco.
+    # - `vars.GCP_PROJECT_ID != ''` — mientras la nube no esté provisionada, el
+    #   job se **salta** en vez de fallar. Un rojo permanente en Actions por algo
+    #   que se sabe que falta enseña a ignorar los rojos, que es justo lo que un
+    #   guardarraíl no puede permitirse.
+    #
+    # **Se comprueba `vars` y no `secrets` a propósito.** El contexto `secrets`
+    # **no existe** en el `if` de un job: los contextos admitidos ahí son
+    # `github`, `needs`, `vars` e `inputs`. Escribir
+    # `if: secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != ''` no deja el job en
+    # espera — GitHub rechaza el archivo entero al parsearlo con
+    # `Unrecognized named-value: 'secrets'`, así que el workflow deja de existir
+    # y no se dispara nunca. `vars.GCP_PROJECT_ID` sirve igual: se pone en el
+    # mismo paso de provisión que los secretos, así que su presencia es la misma
+    # señal.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'master' &&
-      github.event.workflow_run.event == 'push'
+      github.event.workflow_run.event == 'push' &&
+      vars.GCP_PROJECT_ID != ''
 
     permissions:
       # Federación de identidades: el runner pide un token de OIDC a GitHub y
