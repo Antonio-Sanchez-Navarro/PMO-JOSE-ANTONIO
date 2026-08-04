@@ -1,154 +1,266 @@
-# Handoff — Gravity
+# HANDOFF
 
-> **Estado: EN PAUSA** · ⚠️ **pendiente de que Doc lo decida**
-> **Asignado a:** nadie todavía
->
-> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el
-> encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no
-> existe. `CERRADO` = el sprint ha concluido.
->
-> _Este archivo se reensambló el 2026-08-03 desde el historial de git, tras la
-> reescritura que lo dejó en 10 líneas. **El campo de arriba se ha dejado como
-> estaba** —el que reensambla no es quien reparte—: hay dos candidatos abajo (la
-> sección 0 y la provisión de la nube) y elegir cuál se abre, y cuándo, es de
-> Doc._
+**Estado:** TRABAJAR
 
-**Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí,
-no es un encargo.
-
-> **Cómo leer el resto.** De «Convenciones» en adelante **ya no hay encargos,
-> solo contratos**: qué manda y qué devuelve cada ruta que consumes. Se conserva
-> porque lo vas a necesitar, no porque quede algo por hacer. Donde algo esté
-> escrito en imperativo —«manda esto», «pinta aquello»—, **léelo en pasado**: se
-> refiere a trabajo que ya hiciste.
-
-### Lo último que entregaste
-
-| Encargo | Dónde quedó |
-|---|---|
-| Indicador de origen en la tarjeta (`task.source`) | `eb9329f` — con `MANUAL` sin insignia, como se pidió |
-| Los 28 `any` de `apps/web` | `9501647` — los tres paquetes en cero avisos |
-| Teclado en las filas del Inbox | `d358152` |
-| `threadId` y lista de conversaciones del copiloto | `0d2a4f4` |
-| Vista de métricas contra datos reales | `4191bda` + `0d2a4f4` |
-
-El encargo del origen no necesitaba su punto 4: `TaskSource` y el campo
-`source` ya estaban en `@pmo/shared` (`index.ts:20` y `:71`), así que los tipos
-no había que actualizarlos.
+**@Gravity:** Has asegurado el indicador visual en `TaskCard.tsx`. Tu nueva y
+única misión para este cierre de sprint es la **Provisión de Infraestructura en
+Google Cloud (DevOps)**. No tocarás código de frontend ni de backend hasta
+terminar y reportar esto.
 
 ---
 
-# 0. Encargo abierto — el tablero enseña tareas inventadas cuando la API falla
+## 1. Misión: Provisión GCP y GitHub Actions
 
-> Puesto el **2026-08-03**. Vive entero en `apps/web`, que es tuyo.
+Ejecuta secuencialmente estos comandos en tu terminal autenticada con Google
+Cloud. **Los nombres de las variables no son modificables**: el workflow
+`deploy.yml` los espera exactamente así, y cambiar uno obliga a cambiar el
+workflow.
 
-## Qué pasa
-
-`KanbanBoard.tsx:71-73`:
-
-```ts
-} catch (error) {
-  console.error("Error al cargar tareas, usando mock de respaldo:", error);
-  setTasks(MOCK_TASKS);
-}
-```
-
-Si `GET /tasks` falla —la API caída, un 401 con la sesión caducada, el wifi—,
-el tablero **se rellena con las cinco tareas de `mockTasks.ts`** y sigue como si
-nada. No hay aviso, no hay estado de error, no hay diferencia visible entre eso
-y el tablero de verdad. El único rastro es una línea en la consola del
-navegador, que no mira nadie.
-
-## Por qué importa más que el mock de métricas
-
-Ya pasó una vez: el tablero de métricas pintaba `MOCK_METRICS` con la llamada
-real comentada, y se quitó en `0d2a4f4`. Aquello era una pantalla de solo
-lectura. **Esto es la superficie de trabajo principal**, y las tarjetas falsas
-son operables: se pueden arrastrar, editar, y se les puede arrancar el
-cronómetro. Cada una de esas acciones dispara una petición contra un `id` que no
-existe en la base, así que el usuario ve fallar cosas sin entender por qué —o
-peor, ve que "funcionan" en local y no se guardan.
-
-Y hay un caso concreto y nada raro: **la sesión caduca a los 15 minutos**. Si el
-refresco falla, lo que aparece no es una pantalla de "vuelve a entrar", es un
-tablero plausible con trabajo que no es el tuyo.
-
-## Qué hacer
-
-1. **Quita el fallback.** Un fallo de carga tiene que dejar el tablero vacío y
-   decirlo: un estado de error con el mensaje del servidor y un botón de
-   reintentar. Vacío y honesto es mejor que lleno y falso.
-2. **`mockTasks.ts` se borra** si no queda ningún otro uso. Un fichero de datos
-   de mentira dentro de `components/` es una invitación a que vuelva a
-   enchufarse.
-3. Si quieres conservar algo para desarrollar sin backend, que sea detrás de una
-   bandera explícita (`import.meta.env.DEV` **y** una variable propia), nunca en
-   un `catch`.
-
-## Cómo saber que has terminado
+### Paso 0 — Variables de la sesión
 
 ```bash
-npm --workspace @pmo/web run lint     # 0 problemas
-npm run build                         # los tres paquetes compilan
+export PROJECT_ID="pmo-jose-antonio"
+export REGION="us-central1"
+export REPOSITORY="pmo"
+export SERVICE="pmo-api"
+export GH_REPO="Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO"
+
+gcloud config set project "$PROJECT_ID"
 ```
 
-Y a mano: levanta el frontend **con la API parada**. El tablero tiene que
-quedarse vacío y explicar por qué.
+### Paso 1 — APIs necesarias
+
+```bash
+gcloud services enable \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  secretmanager.googleapis.com \
+  iamcredentials.googleapis.com \
+  sts.googleapis.com
+```
+
+`iamcredentials` y `sts` son las que hacen funcionar la federación de
+identidades. Sin ellas, el paso de autenticación del workflow falla con un
+mensaje que no menciona ninguna API.
+
+### Paso 2 — Repositorio de Artifact Registry
+
+```bash
+gcloud artifacts repositories create "$REPOSITORY" \
+  --repository-format=docker \
+  --location="$REGION" \
+  --description="Imágenes de PMO"
+```
+
+La imagen quedará en
+`${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}`, que es
+exactamente lo que compone `deploy.yml`.
+
+### Paso 3 — Cuenta de servicio del despliegue
+
+```bash
+gcloud iam service-accounts create github-deployer \
+  --display-name="Despliegues desde GitHub Actions"
+
+export SA="github-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+
+for ROL in roles/run.admin roles/artifactregistry.writer roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${SA}" --role="$ROL"
+done
+```
+
+⚠️ **`iam.serviceAccountUser` se olvida siempre.** Es el que permite a esta
+cuenta desplegar un servicio que corre *como* otra identidad. Sin él,
+`gcloud run deploy` falla **al final**, después de haber construido y subido la
+imagen, y el error no menciona el rol que falta.
+
+### Paso 4 — Credenciales de corto plazo (Workload Identity Federation)
+
+```bash
+gcloud iam workload-identity-pools create github \
+  --location=global --display-name="GitHub Actions"
+
+gcloud iam workload-identity-pools providers create-oidc github-provider \
+  --location=global --workload-identity-pool=github \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository == '${GH_REPO}'"
+
+export PROJECT_NUM=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+
+gcloud iam service-accounts add-iam-policy-binding "$SA" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUM}/locations/global/workloadIdentityPools/github/attribute.repository/${GH_REPO}"
+
+echo "projects/${PROJECT_NUM}/locations/global/workloadIdentityPools/github/providers/github-provider"
+```
+
+⚠️ **El `attribute-condition` no es opcional.** Sin él, cualquier repositorio de
+GitHub puede pedir un token para esta cuenta de servicio. Es la diferencia entre
+federación y una puerta abierta.
+
+Guarda la salida del `echo`: es el valor de `GCP_WORKLOAD_IDENTITY_PROVIDER`.
+
+### Paso 5 — Secretos de la aplicación
+
+```bash
+crear() { printf '%s' "$2" | gcloud secrets create "$1" --data-file=- --replication-policy=automatic; }
+
+crear pmo-database-url          "postgresql://USUARIO:CLAVE@HOST:5432/pmo"
+crear pmo-redis-url             "redis://HOST:6379"
+crear pmo-jwt-secret            "$(openssl rand -base64 48)"
+crear pmo-token-encryption-key  "$(openssl rand -hex 32)"
+crear pmo-google-client-id      "REEMPLAZAR"
+crear pmo-google-client-secret  "REEMPLAZAR"
+crear pmo-anthropic-api-key     "REEMPLAZAR"
+crear pmo-gemini-api-key        "REEMPLAZAR"
+
+for S in pmo-database-url pmo-redis-url pmo-jwt-secret pmo-token-encryption-key \
+         pmo-google-client-id pmo-google-client-secret pmo-anthropic-api-key pmo-gemini-api-key; do
+  gcloud secrets add-iam-policy-binding "$S" \
+    --member="serviceAccount:${PROJECT_NUM}-compute@developer.gserviceaccount.com" \
+    --role=roles/secretmanager.secretAccessor
+done
+```
+
+⚠️ **`TOKEN_ENCRYPTION_KEY` son 32 bytes en hex, no base64.** Generado como el
+`JWT_SECRET`, la API arranca bien y revienta al descifrar el primer token de
+Gmail — un fallo que aparece lejos de su causa.
+
+Quien lee los secretos es la identidad **con la que corre el servicio**, no la
+del despliegue. Arriba va la cuenta de cómputo por defecto; si le pones una
+dedicada a Cloud Run, el binding va a esa.
+
+### Paso 6 — Variables y secretos en GitHub
+
+```bash
+gh variable set GCP_PROJECT_ID    --body "$PROJECT_ID"        --repo "$GH_REPO"
+gh variable set GCP_REGION        --body "$REGION"            --repo "$GH_REPO"
+gh variable set GAR_REPOSITORY    --body "$REPOSITORY"        --repo "$GH_REPO"
+gh variable set CLOUD_RUN_SERVICE --body "$SERVICE"           --repo "$GH_REPO"
+gh variable set WEB_URL           --body "https://REEMPLAZAR" --repo "$GH_REPO"
+
+gh secret set GCP_WORKLOAD_IDENTITY_PROVIDER --repo "$GH_REPO" \
+  --body "projects/${PROJECT_NUM}/locations/global/workloadIdentityPools/github/providers/github-provider"
+gh secret set GCP_SERVICE_ACCOUNT --repo "$GH_REPO" --body "$SA"
+```
+
+### Paso 7 — Migraciones (referencia post-despliegue)
+
+Se ejecutan como un Job de Cloud Run aislado, **no como paso del workflow**: el
+runner de GitHub no llega a Cloud SQL sin el Auth Proxy, y un Job vive dentro y
+usa la misma conexión que el servicio.
+
+```bash
+gcloud run jobs create pmo-api-migrate \
+  --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:latest" \
+  --region "$REGION" \
+  --set-secrets "DATABASE_URL=pmo-database-url:latest" \
+  --command npm \
+  --args "--workspace,@pmo/api,exec,--,prisma,migrate,deploy"
+
+gcloud run jobs execute pmo-api-migrate --region "$REGION" --wait
+```
+
+### Cómo saber que salió bien
+
+```bash
+gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)'
+
+gcloud run services describe "$SERVICE" --region "$REGION" \
+  --format='value(spec.template.spec.containers[0].env)' | tr ',' '\n' | grep GOOGLE_CLOUD_PROJECT
+```
+
+Ese último `grep` es el que confirma que la correlación por traza no se quedó
+apagada en silencio. **Cloud Run no inyecta `GOOGLE_CLOUD_PROJECT`** —pone
+`K_SERVICE` y `K_REVISION`—, y sin ella los logs salen, se leen bien y parecen
+correctos, pero las líneas de una misma petición dejan de agruparse.
+
+> **El primer despliegue no se disparará solo.** `deploy.yml` escucha a que
+> termine el CI, y el CI solo corre al hacer push. Hasta que no entre un commit
+> nuevo en `master`, no se encadenan.
 
 ---
 
-# Convenciones vigentes
+## 2. Memoria histórica y contratos (lectura obligatoria)
 
-> Esto no es un encargo: son las reglas que han costado un disgusto cada una.
-> Se quedan aquí porque siguen aplicando a todo lo que hagas.
+### Convenciones vigentes
 
-### 1. Pasa el linter antes de commitear — y ahora los avisos también cortan
+**Pasa el linter antes de commitear.** `npm run lint` en **0 errores y 0
+avisos**. El CI corre desde `d653b5f` con `--max-warnings 0`, así que cualquier
+aviso bloquea la pipeline de despliegue. Arréglalos tú.
 
-`npm run lint` tiene que salir en **0 errores y 0 avisos**.
+**Añade por ruta.** Nunca `git add -A` ni `git add .`. Trabajamos a la vez sobre
+el mismo árbol y puedes pisar código de backend.
 
-Esto cambió el 2026-08-03 y es lo único de esta sección que no dice lo mismo que
-antes. Durante meses la regla era «0 errores, los avisos no bloquean», porque
-quedaban 28 `no-explicit-any` heredados y casi todos en `apps/web`: encender el
-corte habría cortado en el primer push por deuda que no le tocaba arreglar a
-quien empujara. **Los saldaste en `9501647`**, los tres paquetes salen en cero,
-y el CI corre desde `d653b5f` con:
+**Mira el build antes de dar algo por cerrado.** `npm run build` en la raíz
+compila los tres paquetes.
 
-```
-npm run lint --workspaces --if-present -- --max-warnings 0
-```
+**Respeta los dominios.** Revisa `AI_ROLES.md`. Si el backend te bloquea, pídelo
+aquí en vez de escribir en dominio ajeno.
 
-Así que un `any` nuevo ya no es un aviso que se acumula: **tumba el CI**.
-
-> **Por qué es fácil que se te pase**: hasta el 2026-07-30 no había configuración
-> de ESLint en el repo, así que `npm run lint` moría antes de abrir un archivo y
-> nadie lo corría. Ahora sí funciona, y ahora sí corta.
-
-### 2. Añade por ruta, nunca `git add -A` ni `git add .`
-
-Trabajamos dos a la vez sobre el mismo árbol y ya se llevó por delante un
-archivo tuyo una vez.
-
-### 3. Mira el build antes de dar algo por cerrado
-
-`npm run build` en la raíz compila los tres paquetes. El cierre del Sprint 4
-decía «todos los tests y builds en verde» y `@pmo/web` no compilaba.
-
-### 4. Si el backend te bloquea, pídelo aquí en vez de escribirlo
-
-`modules/emails/` y `modules/time/` son dominio de backend (excepción escrita en
-`AI_ROLES.md`). Ya hubo un choque: los dos escribiendo el módulo de tiempos a la
-vez, en la misma carpeta y la misma mañana. No se perdió nada, pero fue por
-poco, y deshacer un choque es más lento que pedirlo.
-
-### 5. Un solo `npm run dev:api` a la vez
-
-Dos watchers escribiendo en `apps/api/dist` se pisan, y el síntoma engaña porque
-el código fuente está bien y solo falla contra el servidor. El 2026-08-03 había
-**tres cadenas a la vez**: matar el proceso del puerto 3000 no basta, porque ese
-es solo el último eslabón (`npm run dev:api` → `start:dev` → `cross-env` →
+**Un solo `npm run dev:api` a la vez.** Dos watchers escribiendo en
+`apps/api/dist` se pisan, y el síntoma engaña porque el código fuente está bien
+y solo falla contra el servidor. Matar el proceso del puerto 3000 no basta: ese
+es el último eslabón de cuatro (`npm run dev:api` → `start:dev` → `cross-env` →
 `nest start --watch`) y el watcher vuelve a levantarlo.
 
 ---
+
+### Eventos de socket — tareas
+
+> **Este bloque no se recuperó: se escribió.** `task.created`, `task.updated`,
+> `task.reordered` y `task.deleted` **no aparecen en ninguna revisión de
+> `HANDOFF.md`** — se comprobó recorriendo el historial completo del archivo.
+> Nunca estuvieron ahí, así que el borrado del 2026-08-03 no los perdió: ya
+> faltaban. Lo que sigue sale de leer `apps/api/src/modules/tasks/tasks.gateway.ts`
+> el 2026-08-03, no de otro documento.
+
+Todos van por el **mismo socket** que ya usa `useSocket`, con la sala por
+`userId` (`ws://localhost:3000`, namespace por defecto, handshake con cookie).
+
+| Evento | Cuerpo | Cuándo |
+|---|---|---|
+| `task.created` | La tarea entera | Alta manual, extracción desde correo o `POST /copilot/tasks/create` |
+| `task.updated` | La tarea entera | Cualquier edición, incluido el cambio de columna de un arrastre |
+| `task.reordered` | `{ userId, columns }` | Se renumeró el orden dentro de una o varias columnas |
+| `task.deleted` | `{ id, status, userId }` | Se borró. Llega lo justo para quitarla del tablero sin volver a pedirla |
+
+**Un arrastre emite dos eventos, y el orden importa:** primero `task.updated`
+—la tarjeta con su columna nueva— y después `task.reordered` con el orden final.
+Al revés, el reordenamiento llegaría con un id que la columna todavía no tiene.
+
+**Por qué `task.reordered` manda ids y no filas.** Mover una tarjeta renumera a
+todas las que van detrás. Con solo `task.updated` viajaba únicamente la movida,
+así que los demás clientes veían el cambio de columna pero conservaban el orden
+viejo de sus hermanas. Mandar cada fila renumerada serían N eventos por
+arrastre; se manda la lista de ids de cada columna tocada y el cliente reordena
+lo que ya tiene.
+
+**Supresión de eco — `x-socket-id`.** El cliente manda su `socket.id` en esa
+cabecera y el backend emite con `.except(socketId)`, así que quien originó el
+cambio no recibe el eco de algo que ya pintó. Vale para `POST`, `PATCH`, el
+movimiento y `DELETE` sin tocar ningún DTO. **El `socket.id` cambia en cada
+reconexión**: hay que leerlo en el momento de la petición, no guardarlo al
+montar.
+
+Los mismos eventos de correos y tiempos —`email.updated`, `time.started`,
+`time.stopped`, `time.deleted`— salen por el mismo camino y respetan la misma
+cabecera.
+
+> Detalle de implementación, por si algún día cuadra un comportamiento raro: si
+> el payload llega sin `userId`, el gateway **difunde a todos los clientes** y
+> deja un aviso en el log. Es un cinturón, no el camino normal.
+
+---
+
+### Contratos REST — vigentes
+
+> Recuperados literalmente de `git show HEAD:HANDOFF.md` y de
+> `git show 7232c17:HANDOFF.md`. Alguna frase habla en presente de trabajo
+> que ya entregaste —los ids de correo de ejemplo puede que ya no existan—,
+> pero **los contratos de las rutas siguen vigentes**.
 
 # Sprint 6 — Copiloto de IA · contrato de referencia
 
@@ -851,14 +963,9 @@ Ojo con un caso que sí verás: **cambiar de tarea emite los dos**, primero el
 
 # Sprint 4 — la bandeja de correos · contrato de referencia
 
-> Recuperado de `git show 7232c17:HANDOFF.md` el 2026-08-03, palabra por
-> palabra. Estas secciones se habían quedado fuera del archivo desde julio: no
-> las borró la reescritura del 3 de agosto, ya faltaban antes.
->
-> Es de la época de la prueba E2E de la cuarentena, así que alguna frase habla
-> en presente de trabajo que ya entregaste —los ids de correo de ejemplo, sin ir
-> más lejos, puede que ya no existan—. **Los contratos de las rutas siguen
-> vigentes**; lo que envejeció es el relato alrededor.
+> Recuperado de `git show 7232c17:HANDOFF.md`, palabra por palabra. Estas
+> secciones llevaban fuera del archivo desde julio: no las borró la reescritura
+> del 3 de agosto, ya faltaban antes.
 
 ### `GET /emails` — la bandeja de triage · **nuevo, ya en la rama**
 
@@ -1134,51 +1241,6 @@ exige un cast acotado. Está documentado en `gmail.service.ts`.
 ---
 
 
-# Eventos de socket — tareas
-
-> **Este bloque no se recuperó: se escribió.** `task.created`, `task.updated`,
-> `task.reordered` y `task.deleted` **no aparecen en ninguna revisión de
-> `HANDOFF.md`** — se comprobó recorriendo el historial completo del archivo.
-> Nunca estuvieron ahí, así que el borrado del 2026-08-03 no los perdió: ya
-> faltaban. Lo que sigue sale de leer `apps/api/src/modules/tasks/tasks.gateway.ts`
-> el 2026-08-03, no de otro documento.
-
-Todos van por el **mismo socket** que ya usa `useSocket`, con la sala por
-`userId` (`ws://localhost:3000`, namespace por defecto, handshake con cookie).
-
-| Evento | Cuerpo | Cuándo |
-|---|---|---|
-| `task.created` | La tarea entera | Alta manual, extracción desde correo o `POST /copilot/tasks/create` |
-| `task.updated` | La tarea entera | Cualquier edición, incluido el cambio de columna de un arrastre |
-| `task.reordered` | `{ userId, columns }` | Se renumeró el orden dentro de una o varias columnas |
-| `task.deleted` | `{ id, status, userId }` | Se borró. Llega lo justo para quitarla del tablero sin volver a pedirla |
-
-**Un arrastre emite dos eventos, y el orden importa:** primero `task.updated`
-—la tarjeta con su columna nueva— y después `task.reordered` con el orden final.
-Al revés, el reordenamiento llegaría con un id que la columna todavía no tiene.
-
-**Por qué `task.reordered` manda ids y no filas.** Mover una tarjeta renumera a
-todas las que van detrás. Con solo `task.updated` viajaba únicamente la movida,
-así que los demás clientes veían el cambio de columna pero conservaban el orden
-viejo de sus hermanas. Mandar cada fila renumerada serían N eventos por
-arrastre; se manda la lista de ids de cada columna tocada y el cliente reordena
-lo que ya tiene.
-
-**Supresión de eco — `x-socket-id`.** El cliente manda su `socket.id` en esa
-cabecera y el backend emite con `.except(socketId)`, así que quien originó el
-cambio no recibe el eco de algo que ya pintó. Vale para `POST`, `PATCH`, el
-movimiento y `DELETE` sin tocar ningún DTO. **El `socket.id` cambia en cada
-reconexión**: hay que leerlo en el momento de la petición, no guardarlo al
-montar.
-
-Los mismos eventos de correos y tiempos —`email.updated`, `time.started`,
-`time.stopped`, `time.deleted`— salen por el mismo camino y respetan la misma
-cabecera.
-
-> Detalle de implementación, por si algún día cuadra un comportamiento raro: si
-> el payload llega sin `userId`, el gateway **difunde a todos los clientes** y
-> deja un aviso en el log. Es un cinturón, no el camino normal.
-
 ---
 
 # Observabilidad — lo poco que te toca saber
@@ -1217,81 +1279,3 @@ parámetro de URL, dilo, porque la lista de los que se tapan es explícita
 refresco, 30 días). Ante un 401 el frontend renueva con `POST /auth/refresh`;
 `POST /auth/logout` borra las dos. El claim `typ` impide que un refresco se use
 como token de acceso, y el socket exige `typ: access` en su handshake.
-
----
-
-# Provisión de la nube — candidato a encargo, sin activar
-
-> Puesto el **2026-08-03**, después del reparto nuevo de `AI_ROLES.md` que te
-> hace **Operador DevOps**: la ejecución de comandos `gcloud`, los despliegues y
-> la configuración de variables y secretos en la nube pasan a ser tuyas.
->
-> **No está activado.** Lo activa Doc con el campo Estado de la cabecera. Se
-> anota aquí para que, cuando toque, no haya que investigarlo otra vez.
-
-## Lo que ya está escrito y no tienes que hacer
-
-`ebd06cc` dejó puesta toda la parte de archivos, que por el mismo reparto es de
-Claude Code:
-
-- `apps/api/Dockerfile` — tres etapas, dependencias de producción acotadas a
-  `@pmo/api` y `@pmo/shared`, usuario sin privilegios. **Construido y arrancado
-  de verdad** contra Postgres y Redis: sondas en 200 y `docker stop` saliendo
-  con código 0, o sea que el cierre ordenado funciona.
-- `.github/workflows/deploy.yml` — encadenado al CI con `workflow_run`, así que
-  no se despliega nada que no haya pasado lint, build y pruebas.
-- `.dockerignore` y la documentación de `GOOGLE_CLOUD_PROJECT` en `.env.example`.
-
-## Lo que falta, que es ejecución en la nube
-
-El workflow referencia por nombre cosas que todavía no existen. **Los nombres no
-son decorativos**: cambiar uno obliga a cambiar el workflow.
-
-| Qué | Nombre exacto que espera el workflow |
-|---|---|
-| Variables del repo | `GCP_PROJECT_ID`, `GCP_REGION`, `GAR_REPOSITORY`, `CLOUD_RUN_SERVICE`, `WEB_URL` |
-| Secretos del repo | `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` |
-| Secret Manager | `pmo-database-url`, `pmo-redis-url`, `pmo-jwt-secret`, `pmo-token-encryption-key`, `pmo-google-client-id`, `pmo-google-client-secret`, `pmo-anthropic-api-key`, `pmo-gemini-api-key` |
-
-Los comandos completos —APIs a habilitar, Artifact Registry, cuenta de servicio,
-federación de identidades y los ocho secretos— **están redactados y se te pasan
-aparte**; no se copian aquí para no duplicarlos en dos sitios que luego se
-separan.
-
-## Tres cosas que te van a morder si no las sabes
-
-1. **`iam.serviceAccountUser` se olvida siempre.** Sin ese rol, `gcloud run
-   deploy` falla **al final**, después de haber construido y subido la imagen, y
-   el mensaje no menciona el rol que falta.
-2. **El `attribute-condition` de la federación no es opcional.** Sin él,
-   cualquier repositorio de GitHub puede pedir un token para esa cuenta de
-   servicio. Es la diferencia entre federación y una puerta abierta.
-3. **`TOKEN_ENCRYPTION_KEY` son 32 bytes en hex**, no base64. Generado como el
-   `JWT_SECRET`, la API arranca bien y revienta al descifrar el primer token de
-   Gmail — un fallo que aparece lejos de su causa.
-
-## Y una decisión que sigue abierta
-
-**Las migraciones no las corre el workflow.** El CLI de Prisma se dejó dentro de
-la imagen para poder ejecutarlas, pero el paso no se escribió porque depende de
-cómo se provisione Postgres, que no está decidido. Con Cloud SQL, lo que encaja
-es un Job de Cloud Run con la misma imagen: **el runner de GitHub no llega a
-Cloud SQL sin el Auth Proxy**, y un Job vive dentro y usa la misma conexión que
-el servicio.
-
----
-
-# Nota sobre este archivo
-
-Reensamblado el **2026-08-03**. La versión anterior pasó de 1041 líneas a 10 en
-una reescritura, y con ella se fueron todos los contratos de la API. Se
-recuperaron de `git show HEAD:HANDOFF.md` y de `git show 7232c17:HANDOFF.md`,
-palabra por palabra.
-
-Dos cosas que conviene saber de la reconstrucción:
-
-- **Los eventos de socket de tareas nunca estuvieron aquí.** Se comprobó
-  recorriendo todas las revisiones del archivo. Esa sección está escrita desde
-  `tasks.gateway.ts`, no recuperada, y lo dice en su cabecera.
-- **La regla del linter cambió** y es lo único de «Convenciones» que no dice lo
-  mismo que la versión vieja: los avisos ya cortan el CI.
