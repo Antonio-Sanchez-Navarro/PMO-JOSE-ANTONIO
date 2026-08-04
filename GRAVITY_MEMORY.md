@@ -10,7 +10,7 @@ infraestructura de Gravity.
 
 ## Encargo en curso
 
-**Estado:** TRABAJAR · lo decide **solo Doc**
+**Estado:** EN PAUSA · lo decide **solo Doc**
 
 **@Gravity:** Has asegurado el indicador visual en `TaskCard.tsx`. Tu nueva y
 única misión para este cierre de sprint es la **Provisión de Infraestructura en
@@ -32,6 +32,7 @@ terminar y reportar esto.
 | Teclado en las filas del Inbox | `d358152` |
 | `threadId` y lista de conversaciones del copiloto | `0d2a4f4` |
 | Vista de métricas contra datos reales | `4191bda` + `0d2a4f4` |
+| Provisión de Infraestructura GCP (Paso 0-5) | Completado (parcial manual por gh) |
 
 ## Deuda conocida de `apps/web`, sin asignar
 
