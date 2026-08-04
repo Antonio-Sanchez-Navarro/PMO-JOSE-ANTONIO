@@ -22,7 +22,7 @@ on:
 # tiene que quedar arriba es el último, no el que acabe de tardar más.
 concurrency:
   group: deploy-cloud-run
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
