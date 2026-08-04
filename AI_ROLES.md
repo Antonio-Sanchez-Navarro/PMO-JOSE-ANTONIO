@@ -6,56 +6,85 @@
 
 ## Agentes
 
-Reglas fijadas por el usuario el 2026-07-27.
+Reglas fijadas por el usuario el 2026-08-03 con una nueva división operativa:
 
 | Agente | Dónde corre | Papel |
 |---|---|---|
 | **Doc** | Gemini en Chrome | Project manager y arquitecto principal. **No escribe código**: supervisa la integración, decide arquitectura, valida el trabajo y orquesta los siguientes pasos. |
-| **Gravity** | Gemini local (IDE) | Desarrollador frontend (`@pmo/web`): React, UI/UX, Tailwind, Vite y estado del cliente. |
-| **Claude Code** | Terminal (Claude Code) | Desarrollador backend (`@pmo/api`): Node, Prisma, migraciones, lógica de negocio y testing. |
+| **Gravity** | Gemini local (IDE) | **Ejecutor Frontend y Operador DevOps**. Especialidad: Agilidad, ejecución de scripts de terminal y afinidad nativa con Google Cloud. |
+| **Claude Code** | Terminal (Claude Code) | **Arquitecto Backend y Motor Lógico**. Especialidad: Lógica profunda del servidor, refactorizaciones complejas y memoria extensa. |
 
 **Todo lo que haga cualquiera de los dos desarrolladores se le informa a Doc**,
 que es quien reparte el trabajo. A Doc no se le mandan fragmentos para que los
 refactorice: el código lo escriben Gravity y Claude Code.
 
-### Canal único con Gravity — `HANDOFF.md`
+### Comunicación y canales
 
-Regla fijada por el usuario el 2026-07-27, para no repartir el trabajo por
-canales distintos:
+> Arquitectura de cuatro archivos, fijada el **2026-08-03**. Cada agente tiene
+> **una** bitácora, y los contratos viven aparte de las órdenes para que nadie
+> tenga que leer encargos ajenos para saber qué devuelve una ruta.
 
-- **Todas las instrucciones para Gravity van escritas en `HANDOFF.md`.** Ese
-  archivo es su única fuente. Nada de encargos por chat, por captura ni de
-  palabra: si no está en el `.md`, no existe.
-- **A Gravity solo se le dice una cosa: «lee tu md».** Ni el encargo ni los
-  matices se repiten fuera del archivo.
-- **Doc marca el arranque y el alto.** La cabecera de `HANDOFF.md` lleva un
-  campo **Estado** que solo Doc cambia: `TRABAJAR` cuando Gravity debe ponerse,
-  `EN PAUSA` cuando toca esperar porque el trabajo depende de otra pieza. Doc
-  decide según lo que el equipo tenga entre manos.
-- **Quien escribe el encargo en el archivo es quien tiene el detalle técnico**
-  (normalmente Claude Code, con los contratos del backend ya resueltos), pero el
-  estado lo pone Doc.
+| Archivo | Qué es | Quién escribe |
+|---|---|---|
+| **`GRAVITY_MEMORY.md`** | **La única lista de tareas y bitácora de estado de Gravity.** Encargo en curso con su campo `Estado`, lo entregado y la deuda conocida de su dominio | Doc reparte · Gravity anota lo hecho |
+| **`CLAUDE_MEMORY.md`** | Lo mismo para el backend: estado de `@pmo/api`, refactorizaciones, variables de entorno y trampas de operación | Doc reparte · Claude Code anota lo hecho |
+| **`API_CONTRACTS.md`** | **Territorio neutral, de solo lectura** — ver abajo | Nadie, salvo cambio estructural acordado |
+| **`DOC.md`** | Bitácora de alto nivel del PM: decisiones, pendientes y contexto activo | Doc |
+
+- **Claude Code** recibe instrucciones por el chat de su terminal, y deja
+  constancia de lo que hace en `CLAUDE_MEMORY.md`.
+- **Gravity** recibe órdenes **estrictamente por `GRAVITY_MEMORY.md`**. Ese
+  archivo es su única fuente. Nada de encargos por chat: si no está en el `.md`,
+  no existe.
+- **Doc marca el arranque y el alto.** Cada bitácora lleva un campo **Estado**
+  que **solo Doc cambia**: `TRABAJAR` cuando hay que ponerse, `EN PAUSA` cuando
+  toca esperar a una pieza que aún no existe, `CERRADO` cuando el ciclo acabó.
+  Ha fallado en los dos sentidos —trabajo entrando con el documento en pausa, y
+  encargos pidiendo cosas ya entregadas—, así que el que ejecuta no lo toca y el
+  que reparte lo revisa antes de cerrar.
+
+### El puente — `API_CONTRACTS.md`
+
+**Es territorio neutral y se lee, no se edita.** Describe qué manda y qué
+devuelve cada ruta, los eventos de socket, las sondas y el esquema de sesión:
+es lo que un agente consulta para **consumir** la interfaz del otro sin tener
+que abrir su código ni su bitácora.
+
+Tres reglas:
+
+1. **Ahí no se reparte trabajo.** Ninguna instrucción, ningún `Estado`, ningún
+   encargo. Si aparece un imperativo, es lenguaje heredado de cuando contratos y
+   órdenes vivían en el mismo archivo, y se lee en pasado.
+2. **Solo se edita cuando hay un cambio estructural acordado**: una ruta nueva,
+   un campo que cambia de forma, un evento que se añade o se retira. Lo escribe
+   quien implementa ese lado del contrato, **después** de acordarlo con Doc, y
+   en el mismo commit que el cambio — un contrato que se documenta «luego» es un
+   contrato que ya divergió.
+3. **Si algo no cuadra, se pregunta antes de rodearlo.** Programar contra lo que
+   hace el servidor en vez de contra lo que dice el contrato es cómo se acumulan
+   dos verdades: ya pasó con `GET /time/active`, donde el que no cumplía el
+   contrato escrito era el backend.
 
 ---
 
-## Dominio de Claude Code — backend profundo
+## Dominio de Claude Code — Backend y Motor Lógico
 
-- **Workers y colas** (BullMQ): `gmail.processor.ts`, `ai.processor.ts`,
-  `dead-letter/`, configuración de reintentos y backoff.
-- **Prisma**: `schema.prisma`, migraciones, scripts de datos y limpieza de DB.
-- **Tubería de IA**: `modules/ai/` — prompts, JSON Schemas, parseo y validación
-  de la salida del modelo.
-- **Pruebas unitarias**: todos los `.spec.ts` y sus fixtures.
-- **Lógica core del backend**: servicios de dominio que no son CRUD
-  (`GmailService`, `AuthService`, `CryptoService`, guards, integraciones).
+- **Especialidad:** Lógica profunda del servidor, refactorizaciones complejas y manejo de memoria de contexto extensa.
+- **Responsabilidades:**
+  - Desarrollo en NestJS, workers y colas (BullMQ).
+  - Bases de datos (Prisma), migraciones, scripts de datos.
+  - Tubería de IA, pruebas unitarias y lógica core.
+  - Escritura de archivos estáticos de configuración (como redactar el código del Dockerfile o los YAML de GitHub Actions).
+  - Depuración de errores lógicos.
 
-## Dominio de Gravity — frontend y capa REST
+## Dominio de Gravity — Frontend y Operaciones DevOps
 
-- **Frontend** completo: `apps/web/` — React, componentes, hooks, routing.
-- **UI/UX**: Tailwind, layout, estados de carga/error/vacío.
-- **Estado en cliente**: React Query, hooks de sesión, caché.
-- **Capa REST de NestJS**: controladores, DTOs y servicios CRUD
-  (p. ej. `modules/tasks/`).
+- **Especialidad:** Agilidad, ejecución de scripts de terminal y afinidad nativa con el ecosistema de Google Cloud.
+- **Responsabilidades:**
+  - Desarrollo visual frontend completo (`apps/web/`): React, Tailwind, UI/UX, estado en cliente (React Query).
+  - Capa REST de NestJS (controladores, DTOs y servicios CRUD para UI).
+  - Ejecución de procesos de construcción (esbuild, npm, Vite).
+  - Operaciones directas de infraestructura: ejecución de comandos `gcloud`, despliegues manuales, configuración de variables/secretos en la nube.
 
 ---
 
@@ -70,9 +99,13 @@ escribir código.
 Estos archivos los necesitan ambos; avisar antes de editarlos:
 
 - `apps/api/src/app.module.ts` (registro de módulos)
-- `TASKS.md`, `ARCHITECTURE.md`, `HANDOFF.md`, este archivo
+- `TASKS.md`, `ARCHITECTURE.md`, `API_CONTRACTS.md`, este archivo
 - `package.json` de la raíz y de los workspaces
 - `.env` / `.env.example`
+
+**Las bitácoras no son zona compartida**: cada una tiene un dueño y un escritor.
+Nadie edita la memoria del otro — para eso está `DOC.md`, donde Doc anota lo que
+afecta a los dos.
 
 ## Excepciones vigentes
 
@@ -215,6 +248,7 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
 ## Deuda técnica anotada
 
 - ~~**Origen de la tarea**: etiqueta `'manual'` en `tags[]` como apaño~~ —
-  **saldada el 2026-07-27**: existe la columna `Task.source`
-  (`EMAIL` | `WHATSAPP` | `MANUAL`) y el reproceso automático filtra por ella.
-  Falta solo pintar el indicador en la tarjeta del tablero (Gemini).
+  **saldada entera**. La columna `Task.source` (`EMAIL` | `WHATSAPP` | `MANUAL`)
+  existe desde el 2026-07-27 y el reproceso automático filtra por ella; el
+  indicador en la tarjeta lo entregó Gravity el **2026-08-03** en `eb9329f`,
+  sin insignia para `MANUAL` para no saturar la vista.
