@@ -1,134 +1,89 @@
 # Handoff — Gravity
 
-> **Estado: CERRADO** · puesto el **2026-08-03**
-> **Asignado a:** Nadie
+> **Estado: EN PAUSA** · ⚠️ **pendiente de que Doc lo decida**
+> **Asignado a:** nadie todavía
 >
-> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no existe. `CERRADO` = el sprint ha concluido.
+> El valor de este campo lo decide **solo Doc**. `TRABAJAR` = ponte con el
+> encargo. `EN PAUSA` = espera, el trabajo depende de una pieza que aún no
+> existe. `CERRADO` = el sprint ha concluido.
 >
-> El ciclo anterior quedó entregado entero, comprobado en el código el
-> 2026-08-03 y no en el documento:
->
-> | Lo que se pidió | Dónde quedó |
-> |---|---|
-> | `threadId` en `/copilot/chat` y la lista de conversaciones | `0d2a4f4` |
-> | El motivo de la prioridad, pintado en la tarjeta | `4191bda` — `TaskCard.tsx:187` |
-> | Vista de métricas contra `GET /dashboard/metrics` | `4191bda` + `0d2a4f4`, sin `MOCK_METRICS` |
-> | Mandar `tz` en las dos rutas de fechas | `useDashboardMetrics.ts:14` y `time.api.ts:101` |
-> | Teclado en las filas del Inbox | `d358152` — `role`, `tabIndex`, `onKeyDown` y el `stopPropagation` de los botones anidados |
->
-> Con esto **el Sprint 6 está cerrado entero** —backend el 29, interfaz el 30— y
-> del Sprint 8 ya no queda nada de tu lado.
->
-> **El otro frente del proyecto es CI/CD y despliegue en Cloud Run**, que es
-> backend e infraestructura y **no es tuyo**. Lo que ya está preparado para él
-> está anotado al final, en «Terreno preparado para el despliegue».
+> _Este archivo se reensambló el 2026-08-03 desde el historial de git, tras la
+> reescritura que lo dejó en 10 líneas. **El campo de arriba se ha dejado como
+> estaba** —el que reensambla no es quien reparte—: hay dos candidatos abajo (la
+> sección 0 y la provisión de la nube) y elegir cuál se abre, y cuándo, es de
+> Doc._
 
-**Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí, no es un encargo.
+**Este archivo es tu única fuente de encargos.** Si algo no está escrito aquí,
+no es un encargo.
 
-> **Cómo leer el resto.** De la sección 1 en adelante **ya no hay encargos, solo
-> contratos**: qué manda y qué devuelve cada ruta que consumes. Se conserva
+> **Cómo leer el resto.** De «Convenciones» en adelante **ya no hay encargos,
+> solo contratos**: qué manda y qué devuelve cada ruta que consumes. Se conserva
 > porque lo vas a necesitar, no porque quede algo por hacer. Donde algo esté
 > escrito en imperativo —«manda esto», «pinta aquello»—, **léelo en pasado**: se
 > refiere a trabajo que ya hiciste.
 
+### Lo último que entregaste
+
+| Encargo | Dónde quedó |
+|---|---|
+| Indicador de origen en la tarjeta (`task.source`) | `eb9329f` — con `MANUAL` sin insignia, como se pidió |
+| Los 28 `any` de `apps/web` | `9501647` — los tres paquetes en cero avisos |
+| Teclado en las filas del Inbox | `d358152` |
+| `threadId` y lista de conversaciones del copiloto | `0d2a4f4` |
+| Vista de métricas contra datos reales | `4191bda` + `0d2a4f4` |
+
+El encargo del origen no necesitaba su punto 4: `TaskSource` y el campo
+`source` ya estaban en `@pmo/shared` (`index.ts:20` y `:71`), así que los tipos
+no había que actualizarlos.
+
 ---
 
-# 0. Encargo abierto — los 28 `any` de `apps/web`
+# 0. Encargo abierto — el tablero enseña tareas inventadas cuando la API falla
 
-> Puesto el **2026-08-03**. Todo el encargo vive en `apps/web`, que es tuyo
-> entero. **No toques `apps/api`**: sus tres `any` ya están arreglados
-> (`a3c887a`) y esa parte queda en cero.
+> Puesto el **2026-08-03**. Vive entero en `apps/web`, que es tuyo.
 
-## Empecemos por lo que **no** es
+## Qué pasa
 
-**Esto no está rompiendo el CI, y conviene que lo sepas antes de empezar** para
-que no vayas con prisa ni te tiente el atajo:
-
-- `@typescript-eslint/no-explicit-any` está declarado **`'warn'`** en
-  `eslint.config.mjs`.
-- **No hay `--max-warnings` en ninguna parte** — ni en los tres scripts de lint,
-  ni en el workflow.
-- ESLint sale con **código 0** cuando solo hay avisos.
-
-Se pidió esto a raíz de un fallo del CI atribuido a «avisos tratados como
-errores fatales». Esa explicación no se sostiene contra la configuración del
-repo; la causa que sí encaja era la versión de Node —ESLint 10 exige
-`^20.19.0 || ^22.13.0 || >=24` y el workflow pedía `20.x`, que podía resolverse
-a una anterior—, y ya está corregida.
-
-**Lo que sí justifica el encargo** es que cada uno de estos `any` es un agujero
-real, y que con `apps/web` en cero se puede encender `--max-warnings 0` y que no
-vuelvan a entrar. Hoy no se puede encender: cortaría en el primer push.
-
-## La lista completa — 28 avisos en 11 archivos
-
-Ojo, porque la lista que circuló tenía **7 de estos**. Estos son todos, sacados
-de `npm --workspace @pmo/web run lint` el 2026-08-03:
-
-| Archivo (desde `apps/web/src/`) | Líneas |
-|---|---|
-| `features/kanban/hooks/useSocket.ts` | 49, 50, 51, 111, 113, 115 |
-| `features/kanban/components/KanbanBoard.tsx` | 282, 317, 326, 335 |
-| `features/inbox/InboxPage.tsx` | 56, 98, 149, 187 |
-| `features/copilot/components/CopilotDrawer.tsx` | 122, 183, 241 |
-| `features/dashboard/components/DashboardPage.tsx` | 103, 133, 134 |
-| `features/kanban/api/tasks.api.ts` | 79, 173 |
-| `features/kanban/components/TimeEntriesModal.tsx` | 85, 98 |
-| `features/copilot/api/copilot.api.ts` | 15 |
-| `features/copilot/components/CreateTaskCard.tsx` | 48 |
-| `features/copilot/components/DraftEmailCard.tsx` | 49 |
-| `features/kanban/components/AiValidationModal.tsx` | 80 |
-
-## Qué tipo va en cada familia
-
-No son 28 problemas distintos: son cuatro, repetidos.
-
-**1. Manejadores de socket** (`useSocket.ts`, las seis). Hoy:
+`KanbanBoard.tsx:71-73`:
 
 ```ts
-onEmailUpdated?: (email: any) => void;
-onTimeStarted?: (timeEntry: any) => void;
+} catch (error) {
+  console.error("Error al cargar tareas, usando mock de respaldo:", error);
+  setTasks(MOCK_TASKS);
+}
 ```
 
-`TimeEntry` **ya está en `@pmo/shared`** y lo importas igual que `Task`. Para el
-correo no hay interfaz compartida —solo los enums `EmailStatus` y
-`EmailCategory`—, así que o declaras la forma que consumes en `apps/web`, o
-**me pides un `Email` en `@pmo/shared` y lo añado**: `packages/shared` es zona
-compartida y se acuerda antes de tocarla.
+Si `GET /tasks` falla —la API caída, un 401 con la sesión caducada, el wifi—,
+el tablero **se rellena con las cinco tareas de `mockTasks.ts`** y sigue como si
+nada. No hay aviso, no hay estado de error, no hay diferencia visible entre eso
+y el tablero de verdad. El único rastro es una línea en la consola del
+navegador, que no mira nadie.
 
-**2. El parseo del stream del copiloto** (`CopilotDrawer.tsx:122`,
-`let data: any = {}`). Este es el que más rinde: los eventos SSE son un conjunto
-cerrado y están documentados en la **sección 3** de este archivo. Una unión
-discriminada por `type` —`token`, `tool_call`, `done`, `error`— hace que el
-compilador te avise si el backend añade un evento y tú no lo tratas, que es
-exactamente el fallo que hoy pasaría en silencio.
+## Por qué importa más que el mock de métricas
 
-**3. `catch (err: any)`** (`CopilotDrawer.tsx:183` y compañía). Quítale el tipo y
-déjalo en `catch (err)`: TypeScript ya lo da como `unknown`. Para distinguir la
-cancelación, comprueba antes de usarlo:
+Ya pasó una vez: el tablero de métricas pintaba `MOCK_METRICS` con la llamada
+real comentada, y se quitó en `0d2a4f4`. Aquello era una pantalla de solo
+lectura. **Esto es la superficie de trabajo principal**, y las tarjetas falsas
+son operables: se pueden arrastrar, editar, y se les puede arrancar el
+cronómetro. Cada una de esas acciones dispara una petición contra un `id` que no
+existe en la base, así que el usuario ve fallar cosas sin entender por qué —o
+peor, ve que "funcionan" en local y no se guardan.
 
-```ts
-if (err instanceof DOMException && err.name === 'AbortError') { … }
-```
+Y hay un caso concreto y nada raro: **la sesión caduca a los 15 minutos**. Si el
+refresco falla, lo que aparece no es una pantalla de "vuelve a entrar", es un
+tablero plausible con trabajo que no es el tuyo.
 
-Es el mismo patrón de los `catch` que se limpiaron en `b5995a7`.
+## Qué hacer
 
-**4. Respuestas de la API sin tipar** (`copilot.api.ts:15` con `Promise<any[]>`,
-`tasks.api.ts`, y los `any` de las tarjetas). Declara la forma que consumes.
-Para los hilos del copiloto no hay tipo compartido todavía; sirve uno local en
-`copilot.api.ts`, que es donde se lee.
-
-Los de `DashboardPage.tsx` (103, 133, 134) son formateadores de Recharts: con
-`(label: string | number)` se van, sin inventar nada.
-
-## Dos cosas que no valen
-
-- **Nada de `// eslint-disable-next-line`** ni de `as any`. Silencian el aviso y
-  dejan el agujero: el objetivo es poder encender `--max-warnings 0`, y un
-  archivo lleno de excepciones lo hace inútil.
-- **No cambies la severidad de la regla** en `eslint.config.mjs`. Es zona
-  compartida, y bajarla a `off` haría desaparecer el problema del informe sin
-  tocarlo.
+1. **Quita el fallback.** Un fallo de carga tiene que dejar el tablero vacío y
+   decirlo: un estado de error con el mensaje del servidor y un botón de
+   reintentar. Vacío y honesto es mejor que lleno y falso.
+2. **`mockTasks.ts` se borra** si no queda ningún otro uso. Un fichero de datos
+   de mentira dentro de `components/` es una invitación a que vuelva a
+   enchufarse.
+3. Si quieres conservar algo para desarrollar sin backend, que sea detrás de una
+   bandera explícita (`import.meta.env.DEV` **y** una variable propia), nunca en
+   un `catch`.
 
 ## Cómo saber que has terminado
 
@@ -137,28 +92,32 @@ npm --workspace @pmo/web run lint     # 0 problemas
 npm run build                         # los tres paquetes compilan
 ```
 
-Cada workspace imprime **su propio resumen**: el «28 problems» que se venía
-citando era solo el de `apps/web`. `@pmo/api` y `@pmo/shared` ya salen en cero.
-
-Y lo de siempre antes de commitear: `npm run lint` en cero **errores**, y añade
-por ruta.
+Y a mano: levanta el frontend **con la API parada**. El tablero tiene que
+quedarse vacío y explicar por qué.
 
 ---
 
 # Convenciones vigentes
 
-> Esto no es un encargo: son las cuatro reglas que han costado un disgusto cada
-> una. Se quedan aquí porque siguen aplicando a todo lo que hagas.
+> Esto no es un encargo: son las reglas que han costado un disgusto cada una.
+> Se quedan aquí porque siguen aplicando a todo lo que hagas.
 
-### 1. Pasa el linter antes de commitear
+### 1. Pasa el linter antes de commitear — y ahora los avisos también cortan
 
-`npm run lint` en **0 errores**. Los avisos no bloquean: quedan **28**, todos
-`no-explicit-any` y casi todos en `apps/web`. No urgen y el CI pasa con ellos.
+`npm run lint` tiene que salir en **0 errores y 0 avisos**.
 
-Viene de que `0d2a4f4` dejó `master` en rojo con tres `catch (err)` sin usar en
-`CopilotDrawer.tsx`. Se arreglaron desde la terminal de backend (`b5995a7`)
-porque el guardarraíl acababa de encenderse, pero **`apps/web` es tuyo y los que
-salgan los arreglas tú**.
+Esto cambió el 2026-08-03 y es lo único de esta sección que no dice lo mismo que
+antes. Durante meses la regla era «0 errores, los avisos no bloquean», porque
+quedaban 28 `no-explicit-any` heredados y casi todos en `apps/web`: encender el
+corte habría cortado en el primer push por deuda que no le tocaba arreglar a
+quien empujara. **Los saldaste en `9501647`**, los tres paquetes salen en cero,
+y el CI corre desde `d653b5f` con:
+
+```
+npm run lint --workspaces --if-present -- --max-warnings 0
+```
+
+Así que un `any` nuevo ya no es un aviso que se acumula: **tumba el CI**.
 
 > **Por qué es fácil que se te pase**: hasta el 2026-07-30 no había configuración
 > de ESLint en el repo, así que `npm run lint` moría antes de abrir un archivo y
@@ -181,14 +140,13 @@ decía «todos los tests y builds en verde» y `@pmo/web` no compilaba.
 vez, en la misma carpeta y la misma mañana. No se perdió nada, pero fue por
 poco, y deshacer un choque es más lento que pedirlo.
 
-Y una de operación: **un solo `npm run dev:api` a la vez**. Dos watchers
-escribiendo en `apps/api/dist` se pisan, y el síntoma engaña porque el código
-fuente está bien y solo falla contra el servidor.
+### 5. Un solo `npm run dev:api` a la vez
 
-Desde el 2026-07-31 **el CI ya puede correr de verdad**: hay remoto
-(`Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO`, privado) y el workflow escucha
-`master`, así que cada push pasa por lint, build y las pruebas. Hasta entonces
-`npm run lint` en local era el único guardarraíl que existía.
+Dos watchers escribiendo en `apps/api/dist` se pisan, y el síntoma engaña porque
+el código fuente está bien y solo falla contra el servidor. El 2026-08-03 había
+**tres cadenas a la vez**: matar el proceso del puerto 3000 no basta, porque ese
+es solo el último eslabón (`npm run dev:api` → `start:dev` → `cross-env` →
+`nest start --watch`) y el watcher vuelve a levantarlo.
 
 ---
 
@@ -889,73 +847,337 @@ Ojo con un caso que sí verás: **cambiar de tarea emite los dos**, primero el
 
 ---
 
-## El Sprint 5 está cerrado — no queda encargo abierto
+---
 
-Lo que en la versión anterior de este archivo eran cuatro encargos tuyos está
-hecho y comprobado el 2026-07-29:
+# Sprint 4 — la bandeja de correos · contrato de referencia
 
-1. **Cronómetro de la tarjeta** — `TaskCard` con reloj y botón (`d73637f`).
-2. **Entradas manuales** — `TimeEntriesModal.tsx` (`a431022`).
-3. **Gráfica de tiempos** — `TimeReportModal.tsx` con `BarChart` de Recharts
-   (`a431022`). Recharts `^3.10.1` quedó en `apps/web/package.json` con el
-   `package-lock.json` al día. _Aviso sin urgencia: el bundle pasó de 411 kB a
-   794 kB y Vite ya lo comenta. Cuando toque, se parte con `import()` dinámico._
-4. **Botón "A Pendientes"** — `c768db7`, mandando `{ status: 'PENDING',
-   force: true }`. Comprobado que el `force` viaja en el cuerpo y no se queda en
-   el cliente.
-5. **La E2E de las dos pestañas**, pendiente desde el Sprint 4, la dio por buena
-   el usuario en su revisión manual del mismo día.
+> Recuperado de `git show 7232c17:HANDOFF.md` el 2026-08-03, palabra por
+> palabra. Estas secciones se habían quedado fuera del archivo desde julio: no
+> las borró la reescritura del 3 de agosto, ya faltaban antes.
+>
+> Es de la época de la prueba E2E de la cuarentena, así que alguna frase habla
+> en presente de trabajo que ya entregaste —los ids de correo de ejemplo, sin ir
+> más lejos, puede que ya no existan—. **Los contratos de las rutas siguen
+> vigentes**; lo que envejeció es el relato alrededor.
 
-**Y las dos casillas que hubo que reabrir, también están saldadas.** El commit
-de cierre `697784b` marcó como hechos el *panel de auditoría de prioridad* y los
-*filtros por etiqueta y fecha* sin estarlo; se reabrieron el 2026-07-29 como
-deuda de plan, fuera de sus sprints, y se cerraron las dos ese mismo día y el
-siguiente: los filtros en `417941f`, y la auditoría por sus dos mitades —el
-motivo en el contrato (`795bae1`) y el tooltip en la tarjeta (`4191bda`).
+### `GET /emails` — la bandeja de triage · **nuevo, ya en la rama**
 
-Queda como recordatorio de por qué ninguna casilla se marca sin mirar el código.
+Lo que le faltaba a `useTriageEmails`. Devuelve **el arreglo sin envoltorio**
+(como `POST /tasks`), del correo más reciente al más antiguo:
+
+```json
+[
+  {
+    "id": "cmrzm8nhx0001bgaendpebue5",
+    "subject": "Pendientes proyecto Torre Citrotarte",
+    "from": "Astrid Robles <astrid@example.test>",
+    "date": "2026-07-25T00:13:24.584Z",
+    "category": "PROJECT_MANAGEMENT",
+    "taskCount": 3,
+    "isConverted": true,
+    "threadId": "auditoria-thread-001",
+    "labels": ["INBOX", "UNREAD"],
+    "snippet": "Después de la junta de ayer quedaron tres pendientes...",
+    "gmailMessageId": "auditoria-msg-001"
+  }
+]
+```
+
+`id` es el `Email.id` que exigen `classify` y `to-task` — **ya no hace falta
+pegar cuids a mano**, y no es lo mismo que `gmailMessageId`. `date` va en ISO
+para que la formatees tú. `subject` nunca llega vacío: si el correo no lo trae,
+se sustituye por `(sin asunto)` para que no aparezca una fila muda. `snippet`
+llega como cadena vacía cuando falta, no como `null`. `category` sí puede ser
+`null` (correo aún sin clasificar).
+
+`isConverted` sale de **tener tareas**, no de `processedAt`: el worker marca
+como procesado incluso lo que no generó ninguna tarea, así que esa marca no te
+sirve para saber si `to-task` va a darte 409. Es exactamente la condición que
+dispara ese 409, así que con este campo sabes de antemano cuándo hace falta
+`force: true`.
+
+Filtros, todos opcionales: `?actionable=true|false`, `?converted=true|false`,
+`?skip=` y `?take=` (por defecto 50, tope 200). Un valor que no sea `true` ni
+`false` da **400**, no se interpreta por su cuenta. Sin cookie, **401**.
+
+**Ojo, esto cambió a mitad de la tarde del 2026-07-28.** Antes los 13 correos
+accionables estaban todos convertidos y la barra iba a salir entera en modo
+*Reprocesar*. Ya no: **el tablero se vació**. Alguien borró las 26 tarjetas
+desde la interfaz —28 `task.deleted` en el log de la API, una por tarjeta, más
+las 2 de mi prueba— así que ahora mismo **ningún correo tiene tareas**:
+`isConverted` es `false` en los 26 y `?converted=false` los devuelve todos.
+
+Para ti es mejor noticia que la anterior: el camino limpio (**201 sin `force`**)
+ya funciona con cualquier correo accionable, que es el flujo natural que hay que
+enseñar. El de *Reprocesar* solo volverá a aparecer cuando algo vuelva a
+convertir un correo.
+
+### `PATCH /emails/:id/status` — el motor del Inbox Zero · **nuevo**
+
+Lo que le falta a tus botones. Cuerpo obligatorio con un solo campo:
+
+```json
+{ "status": "COMPLETED" }
+```
+
+Vocabulario: `PENDING` · `IN_PROGRESS` · `COMPLETED` · `DISMISSED`. Devuelve
+**200 con el correo ya actualizado, en la misma forma que una fila de
+`GET /emails`**, así que puedes sustituir la fila en tu estado con lo que
+responde en vez de recargar la lista.
+
+- **400** si el estado no está en el vocabulario **o si el cuerpo va vacío**.
+  Mover un correo es una decisión explícita: un `{}` es un error del cliente,
+  no un "déjalo como está".
+- **404** si el correo no es tuyo · **401** sin cookie.
+
+Además, **cada fila del listado ya trae su `status`** y `GET /emails` acepta
+`?status=PENDING`, que es la bandeja de verdad: lo que queda por despachar. Para
+las pestañas, o filtras en el cliente por el campo o pides cada una con su
+`?status=`; las dos valen.
+
+**Descartar un correo no borra las tareas que ya generó.** Son cosas distintas:
+la tarjeta vive en el tablero por su cuenta desde que se creó.
+
+**Ya emite por socket** (antes no; queda corregido aquí). Cada cambio de estado
+sale como **`email.updated`** con el correo entero, la misma forma que una fila
+de `GET /emails`, así que puedes sustituir la tuya sin volver a pedir la lista.
+
+Va por el **mismo socket que ya tienes** —el de `useSocket`—, no por uno nuevo:
+un segundo gateway obligaría a otro handshake y rompería la supresión del eco,
+que depende de que haya un solo socket por pestaña. Basta con añadir el
+`socket.on('email.updated', …)` junto a los cuatro de tareas.
+
+El payload lleva `userId` porque es lo que encamina el evento a la sala de su
+dueño; para pintar, ignóralo igual que haces con las tareas.
+
+Manda tu `X-Socket-Id` en el `PATCH`: quien mueve el correo ya lo tiene en la
+respuesta 200 y el eco solo le haría repintar.
+
+### `GET /emails/:id` — el correo completo, para leerlo · **nuevo**
+
+Lo pidió Doc para que se pueda leer el correo antes de aprobar las tareas. Es la
+contraparte del listado: allí el `bodyText` se excluye por peso, aquí se incluye
+porque es justo lo que se va a leer.
+
+Mismos campos que una fila del listado **más** estos:
+
+| Campo | Qué es |
+|---|---|
+| `bodyText` | El texto completo. **Puede ser `null`** si el correo se guardó sin cuerpo: en ese caso cae al `snippet` en vez de pintar un panel en blanco. Ojo al tamaño: el de Escrituración son **55 688 caracteres**. |
+| `isActionable` | Lo que dijo el modelo al clasificarlo. |
+| `processedAt` | ISO, o `null` si el worker aún no lo ha despachado. |
+| `tasks[]` | Las tareas que **ya** salieron de este correo (`id`, `title`, `status`, `priority`), en el orden del tablero. Sirve para enseñar, al reprocesar, contra qué se compara la propuesta nueva. |
+
+**404** si el correo no existe o es de otra persona · **401** sin cookie.
+
+Verificado contra la app: 200 con el cuerpo completo, 404 con un id inventado,
+401 sin cookie, 200 por el proxy de Vite, y el listado sigue sin traer el cuerpo.
+
+**El panel de lectura conviene que sea desplazable y no un modal ajustado**: hay
+correos de más de 50 KB de texto.
+
+### `POST /emails/:id/classify` — la propuesta, sin crear nada
+
+**Ya existía** desde `6fd683f`; no había que programarlo. Está verificado y es
+el que alimenta tu modal.
+
+Es el que alimenta la cuarentena. Analiza el correo y devuelve lo que
+propondría **sin escribir una sola fila**: ni tareas, ni la marca de procesado
+del correo. Puedes llamarlo tantas veces como quieras (cuesta tokens, eso sí).
+
+- **200** con la propuesta. Es 200 y no 201 porque no nace ningún recurso.
+- **404** si el correo no existe o no es del usuario.
+- **409** si el correo no tiene texto que analizar.
+
+Cuerpo de la respuesta, tipado en `EmailClassification`
+(`packages/shared/src/index.ts`):
+
+```json
+{
+  "emailId": "cmrzlm1lc000hju1mu8rhe83u",
+  "category": "PROJECT_MANAGEMENT",
+  "isActionable": true,
+  "aiConfidence": 0.92,
+  "tasks": [
+    {
+      "title": "Confirmar respuesta del área contable sobre el Tipo de Cambio",
+      "description": "…",
+      "priority": "URGENT",
+      "tags": ["TC", "impuestos", "notaría"],
+      "dueDate": null
+    }
+  ]
+}
+```
+
+Las tareas propuestas **no traen `id`**: todavía no existen. La `priority` ya
+viene pasada por la capa determinista, así que es la que se guardaría de verdad
+— píntala tal cual y no la recalcules.
+
+Si `isActionable` es `false`, `tasks` viene vacío y no se fuerza nada: el modelo
+no vio trabajo ahí. Enseña ese caso en vez de inventar una tarjeta.
+
+### Corrección importante sobre las categorías
+
+En la versión anterior de este archivo te dije que el desplegable saliera de
+`EmailCategory` con los valores `cliente`, `interno`, `proveedor`,
+`administrativo` y `spam`. **Eso era falso** y venía de un enum del Sprint 0 que
+no importaba nadie y que no coincidía con lo que el backend produce. Ya está
+corregido en `packages/shared`. Los valores reales son:
+
+`PROJECT_MANAGEMENT` · `INVOICING` · `MEETING` · `INFORMATIONAL` · `OTHER`
+
+Una categoría fuera de esa lista degrada a `OTHER` en el backend, así que el
+desplegable puede asumir esos cinco y nada más. La misma corrección afecta al
+resto de `EmailClassification`: el `summary` que declaraba no lo produce el
+modelo, y la confianza es una sola por análisis (`aiConfidence`), no una por
+tarea.
+
+### `POST /emails/:id/to-task` — el paso que sí crea
+
+**Ya acepta las tareas editadas.** El botón de Confirmar puede dejar de apuntar
+a un stub. Manda en el cuerpo lo que el usuario aprobó:
+
+```json
+{
+  "category": "INVOICING",
+  "tasks": [
+    {
+      "title": "Remitir KYC con las correcciones",
+      "description": "…",
+      "priority": "HIGH",
+      "tags": ["KYC"],
+      "dueDate": "2026-08-10T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+- **201** con las tareas creadas, ya con `id`. Píntalas con lo que devuelve el
+  servidor.
+- **400** si una prioridad o una categoría no está en su vocabulario, o si una
+  tarea viene sin `title`.
+- **404** si el correo no es del usuario · **409** si ya tenía tareas
+  (`"force": true` para insistir).
+
+Detalles que te ahorran sorpresas:
+
+- Solo `title` y `priority` son obligatorios en cada tarea. `category` es
+  opcional: **mándala solo si el usuario la cambió**, porque si va, pisa la que
+  tenía el correo.
+- Un `tasks[]` **vacío no vale** como confirmación: si el usuario descarta todo,
+  no llames a este endpoint. Un arreglo vacío cae a la vía antigua y acabarías
+  creando una tarea que nadie aprobó.
+- Las tareas confirmadas se guardan con `source: MANUAL`, aunque las propusiera
+  el modelo: las aprobó una persona y así el reproceso del worker no las borra.
+- Se anexan al final de **Por hacer**, no al principio.
+- El correo queda marcado como procesado en la misma transacción.
+
+**Ya emite por socket** (antes no lo hacía; queda corregido aquí). Cada tarjeta
+creada sale como un `task.created` con la tarea completa —el mismo evento y el
+mismo formato que `POST /tasks`, así que el cliente no tiene que aprender nada
+nuevo— y las demás pestañas del usuario ven aparecer las tarjetas sin recargar.
+
+Manda tu `X-Socket-Id` en la confirmación, igual que en el resto del tablero:
+las tareas ya te llegan en la respuesta 201 y sin la cabecera las pintarías dos
+veces, una por la respuesta y otra por el eco. Recuerda que el `socket.id`
+cambia en cada reconexión, así que léelo en el momento de la petición.
+
+Verificado contra la app con dos pestañas del mismo usuario: la que confirmó
+mandando la cabecera no recibió nada y la otra vio aparecer las dos tarjetas;
+sin cabecera llegaron a las dos. Un correo ya convertido responde 409 y no
+emite nada, así que un reintento no te ensucia el tablero.
+
+Las tareas del flujo están en `TASKS.md`, dentro del Sprint 3.
+
+
+# Histórico
+
+## Sprint 2 — Inbox (entregado)
+
+Endpoints que se consumieron y siguen vigentes:
+
+### `GET /auth/me`
+- **Autenticación**: cookie `pmo_session` (la gestiona el navegador).
+- **Respuesta (200)**: `{ id, email, name, role, hasGoogleTokens }`.
+
+Esquema de sesión vigente: **dos** cookies httpOnly con `path: "/"`.
+
+| Cookie | Contenido | Vigencia |
+|---|---|---|
+| `pmo_session` | JWT de acceso (`typ: "access"`) | 15 min |
+| `pmo_refresh` | JWT de refresco (`typ: "refresh"`) | 30 días |
+
+Cuando el acceso expira la API responde 401 y el frontend renueva con
+`POST /auth/refresh`; `POST /auth/logout` borra ambas. El claim `typ` impide que
+un refresh se use como token de acceso.
+
+### `GET /gmail/inbox`
+- **Query**: `?maxResults=20` (por defecto 20).
+- **Autenticación**: cookie `pmo_session` (peticiones con `credentials: 'include'`).
+- **Contrato interno**: el `AuthGuard` deja el usuario en `req.user` como
+  `{ userId, email }` — usa `user.userId`, **no** `user.id` (ver `auth.types.ts`).
+- **Respuesta (200)**: array de `EmailSnippet`
+  (`{ id, threadId, snippet, from, subject, date }`).
+
+Entregado: `apps/web/src/features/inbox/` — `InboxPage` + hook `useInbox`, con
+agrupación por `threadId` y estados de carga / error / vacío.
+
+**Refresco de tokens centralizado**: la lógica vive solo en
+`AuthService.getAuthorizedClient(userId)`. Si hace falta llamar a otra API de
+Google, usar ese método en lugar de construir un `OAuth2Client` propio.
+
+**Nota de tipos**: `googleapis-common` ancla su propia copia de
+`google-auth-library`, así que pasar nuestro `OAuth2Client` a `google.gmail()`
+exige un cast acotado. Está documentado en `gmail.service.ts`.
 
 ---
 
-## Estado del repo
 
-> Al día a **2026-08-03**.
+# Eventos de socket — tareas
 
-- **`504 pruebas en 18 suites`, todas en verde.** El build de `@pmo/web` compila
-  (844 kB, el aviso de tamaño de Vite sigue ahí) y el type-check de la API sale
-  limpio. _Si hay un `dev:api` levantado, comprueba la API con
-  `npx tsc -p apps/api/tsconfig.spec.json` en vez de `npm run build`: los dos
-  escriben en el mismo `dist` y se pisan._
-- **`npm run lint`: 0 errores y 28 avisos.** Hasta el 2026-07-30 fallaba
-  siempre, y no por estilo: no había configuración de ESLint en ninguna parte
-  del repo, así que moría antes de abrir un archivo. Ahora hay una sola
-  (`eslint.config.mjs` en la raíz). Los avisos son `no-explicit-any`, casi todos
-  en `apps/web`: son tuyos, no urgen y no rompen nada.
-- El formato **no** se comprueba con el linter, a propósito: lo sigue poniendo
-  `prettier` por su cuenta. Así nadie te reescribe media `apps/web` en un
-  `--fix`.
-- **Remoto**: `origin` → `Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO`, **privado**,
-  rama por defecto `master`. Existe desde el 2026-07-31; antes el proyecto vivía
-  entero en un solo disco.
-- **El CI se dispara en cada push a `master`** (`.github/workflows/ci.yml`):
-  `npm ci` → lint → build → pruebas, en Node 20. Escuchaba `main` hasta
-  `eb4449d`, y como la rama de trabajo es `master` no se había disparado nunca —
-  es lo que dejó pasar un `npm run lint` roto durante todo el proyecto.
-  _Pendiente de mirar a mano en la consola de Actions que el run salga verde:
-  `gh` no está instalado en la máquina._
-- Migraciones aplicadas: `20260729140000_add_copilot_threads` (hilos del
-  copiloto y su bitácora), `20260729153000_add_time_tracking` (registro de
-  tiempos) y `20260729160000_add_priority_audit` (los tres campos de la
-  sección 7). Si tu base es anterior, `npx prisma migrate deploy` desde
-  `apps/api`. **La observabilidad no añadió ninguna**: no toca el esquema.
-- **Helmet y límite de peticiones desde el 2026-07-29**: 240 por minuto en
-  general y **20 por minuto en todo `/copilot`**, porque cada turno cuesta
-  tokens. Un `429` en el panel de chat no es un fallo del backend: es el límite.
-  Enséñalo como tal en vez de como error genérico.
-- Dependencias del backend añadidas el 2026-07-31 para la observabilidad:
-  `@nestjs/terminus`, `nestjs-pino`, `pino`, `pino-http` y `pino-pretty`. Se
-  hoistean al `node_modules` de la raíz; si tu `npm install` no las trae, vuelve
-  a instalar desde la raíz.
+> **Este bloque no se recuperó: se escribió.** `task.created`, `task.updated`,
+> `task.reordered` y `task.deleted` **no aparecen en ninguna revisión de
+> `HANDOFF.md`** — se comprobó recorriendo el historial completo del archivo.
+> Nunca estuvieron ahí, así que el borrado del 2026-08-03 no los perdió: ya
+> faltaban. Lo que sigue sale de leer `apps/api/src/modules/tasks/tasks.gateway.ts`
+> el 2026-08-03, no de otro documento.
+
+Todos van por el **mismo socket** que ya usa `useSocket`, con la sala por
+`userId` (`ws://localhost:3000`, namespace por defecto, handshake con cookie).
+
+| Evento | Cuerpo | Cuándo |
+|---|---|---|
+| `task.created` | La tarea entera | Alta manual, extracción desde correo o `POST /copilot/tasks/create` |
+| `task.updated` | La tarea entera | Cualquier edición, incluido el cambio de columna de un arrastre |
+| `task.reordered` | `{ userId, columns }` | Se renumeró el orden dentro de una o varias columnas |
+| `task.deleted` | `{ id, status, userId }` | Se borró. Llega lo justo para quitarla del tablero sin volver a pedirla |
+
+**Un arrastre emite dos eventos, y el orden importa:** primero `task.updated`
+—la tarjeta con su columna nueva— y después `task.reordered` con el orden final.
+Al revés, el reordenamiento llegaría con un id que la columna todavía no tiene.
+
+**Por qué `task.reordered` manda ids y no filas.** Mover una tarjeta renumera a
+todas las que van detrás. Con solo `task.updated` viajaba únicamente la movida,
+así que los demás clientes veían el cambio de columna pero conservaban el orden
+viejo de sus hermanas. Mandar cada fila renumerada serían N eventos por
+arrastre; se manda la lista de ids de cada columna tocada y el cliente reordena
+lo que ya tiene.
+
+**Supresión de eco — `x-socket-id`.** El cliente manda su `socket.id` en esa
+cabecera y el backend emite con `.except(socketId)`, así que quien originó el
+cambio no recibe el eco de algo que ya pintó. Vale para `POST`, `PATCH`, el
+movimiento y `DELETE` sin tocar ningún DTO. **El `socket.id` cambia en cada
+reconexión**: hay que leerlo en el momento de la petición, no guardarlo al
+montar.
+
+Los mismos eventos de correos y tiempos —`email.updated`, `time.started`,
+`time.stopped`, `time.deleted`— salen por el mismo camino y respetan la misma
+cabecera.
+
+> Detalle de implementación, por si algún día cuadra un comportamiento raro: si
+> el payload llega sin `userId`, el gateway **difunde a todos los clientes** y
+> deja un aviso en el log. Es un cinturón, no el camino normal.
 
 ---
 
@@ -988,54 +1210,88 @@ parámetro de URL, dilo, porque la lista de los que se tapan es explícita
 
 ---
 
-# Terreno preparado para el despliegue
-
-> Para cuando Doc abra el frente de **CI/CD y Cloud Run**. No es un encargo y no
-> es tuyo; se anota aquí para que quien lo abra no vuelva a investigarlo.
-
-Lo que ya está hecho y no habrá que rehacer:
-
-- **Sondas** `/health/live` y `/health/ready` separadas, que es lo que Cloud Run
-  pide para *startup*, *liveness* y *readiness*.
-- **Cierre ordenado**: `enableShutdownHooks()` en `main.ts`, sin el cual el
-  `SIGTERM` de Cloud Run mataba el proceso con las conexiones de Prisma abiertas.
-- **Logs en formato de Cloud Logging** por la salida estándar, que es
-  exactamente como los recoge Cloud Run: sin agente, sin SDK y sin credencial de
-  telemetría. Las excepciones las recoge **Error Reporting** de ahí, con la marca
-  `@type` y el `serviceContext` de la revisión.
-- `K_SERVICE` y `K_REVISION` ya se leen para identificar el servicio y la
-  versión; las inyecta la propia plataforma.
-
-Lo que **falta** y hay que acordarse de poner:
-
-- **`GOOGLE_CLOUD_PROJECT` en el despliegue.** Cloud Run **no** la inyecta, y sin
-  ella la correlación por traza se apaga: los logs salen y parecen correctos,
-  pero las líneas de una misma petición no se agrupan. La API lo avisa al
-  arrancar, así que se verá en el primer log de la primera revisión.
-- Los secretos (`JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`, credenciales de Google y de
-  los modelos) tienen que salir del `.env` y pasar a Secret Manager.
-- Postgres y Redis gestionados: hoy son dos contenedores de `docker-compose`.
-- `WEB_URL` deja de ser `localhost:5173`, y el CORS va acotado a esa variable
-  desde el Sprint 1.
-
----
-
-# Histórico
-
-## Sprint 4 — cerrado el 2026-07-29
-
-Etiquetas del usuario (`Tag` + `TagManagerModal`), cuarentena de IA con edición
-completa, máquina de estados de correos (Inbox Zero) y tarjetas que pintan las
-etiquetas de la persona junto a las que extrae el modelo.
-
-Contratos que siguen vigentes y no se repiten aquí: `GET /emails`,
-`GET /emails/:id`, `PATCH /emails/:id/status`, `POST /emails/:id/classify`,
-`POST /emails/:id/to-task`, `GET`/`POST /tags`, `GET /auth/me` y
-`GET /gmail/inbox`. Están en el histórico de este archivo en git
-(`git show 7232c17:HANDOFF.md`) y en `TASKS.md`, sprint por sprint.
+# Esquema de sesión (vigente desde el Sprint 1)
 
 **Esquema de sesión** (vigente desde el Sprint 1): dos cookies httpOnly con
 `path: "/"` — `pmo_session` (JWT de acceso, 15 min) y `pmo_refresh` (JWT de
 refresco, 30 días). Ante un 401 el frontend renueva con `POST /auth/refresh`;
 `POST /auth/logout` borra las dos. El claim `typ` impide que un refresco se use
 como token de acceso, y el socket exige `typ: access` en su handshake.
+
+---
+
+# Provisión de la nube — candidato a encargo, sin activar
+
+> Puesto el **2026-08-03**, después del reparto nuevo de `AI_ROLES.md` que te
+> hace **Operador DevOps**: la ejecución de comandos `gcloud`, los despliegues y
+> la configuración de variables y secretos en la nube pasan a ser tuyas.
+>
+> **No está activado.** Lo activa Doc con el campo Estado de la cabecera. Se
+> anota aquí para que, cuando toque, no haya que investigarlo otra vez.
+
+## Lo que ya está escrito y no tienes que hacer
+
+`ebd06cc` dejó puesta toda la parte de archivos, que por el mismo reparto es de
+Claude Code:
+
+- `apps/api/Dockerfile` — tres etapas, dependencias de producción acotadas a
+  `@pmo/api` y `@pmo/shared`, usuario sin privilegios. **Construido y arrancado
+  de verdad** contra Postgres y Redis: sondas en 200 y `docker stop` saliendo
+  con código 0, o sea que el cierre ordenado funciona.
+- `.github/workflows/deploy.yml` — encadenado al CI con `workflow_run`, así que
+  no se despliega nada que no haya pasado lint, build y pruebas.
+- `.dockerignore` y la documentación de `GOOGLE_CLOUD_PROJECT` en `.env.example`.
+
+## Lo que falta, que es ejecución en la nube
+
+El workflow referencia por nombre cosas que todavía no existen. **Los nombres no
+son decorativos**: cambiar uno obliga a cambiar el workflow.
+
+| Qué | Nombre exacto que espera el workflow |
+|---|---|
+| Variables del repo | `GCP_PROJECT_ID`, `GCP_REGION`, `GAR_REPOSITORY`, `CLOUD_RUN_SERVICE`, `WEB_URL` |
+| Secretos del repo | `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` |
+| Secret Manager | `pmo-database-url`, `pmo-redis-url`, `pmo-jwt-secret`, `pmo-token-encryption-key`, `pmo-google-client-id`, `pmo-google-client-secret`, `pmo-anthropic-api-key`, `pmo-gemini-api-key` |
+
+Los comandos completos —APIs a habilitar, Artifact Registry, cuenta de servicio,
+federación de identidades y los ocho secretos— **están redactados y se te pasan
+aparte**; no se copian aquí para no duplicarlos en dos sitios que luego se
+separan.
+
+## Tres cosas que te van a morder si no las sabes
+
+1. **`iam.serviceAccountUser` se olvida siempre.** Sin ese rol, `gcloud run
+   deploy` falla **al final**, después de haber construido y subido la imagen, y
+   el mensaje no menciona el rol que falta.
+2. **El `attribute-condition` de la federación no es opcional.** Sin él,
+   cualquier repositorio de GitHub puede pedir un token para esa cuenta de
+   servicio. Es la diferencia entre federación y una puerta abierta.
+3. **`TOKEN_ENCRYPTION_KEY` son 32 bytes en hex**, no base64. Generado como el
+   `JWT_SECRET`, la API arranca bien y revienta al descifrar el primer token de
+   Gmail — un fallo que aparece lejos de su causa.
+
+## Y una decisión que sigue abierta
+
+**Las migraciones no las corre el workflow.** El CLI de Prisma se dejó dentro de
+la imagen para poder ejecutarlas, pero el paso no se escribió porque depende de
+cómo se provisione Postgres, que no está decidido. Con Cloud SQL, lo que encaja
+es un Job de Cloud Run con la misma imagen: **el runner de GitHub no llega a
+Cloud SQL sin el Auth Proxy**, y un Job vive dentro y usa la misma conexión que
+el servicio.
+
+---
+
+# Nota sobre este archivo
+
+Reensamblado el **2026-08-03**. La versión anterior pasó de 1041 líneas a 10 en
+una reescritura, y con ella se fueron todos los contratos de la API. Se
+recuperaron de `git show HEAD:HANDOFF.md` y de `git show 7232c17:HANDOFF.md`,
+palabra por palabra.
+
+Dos cosas que conviene saber de la reconstrucción:
+
+- **Los eventos de socket de tareas nunca estuvieron aquí.** Se comprobó
+  recorriendo todas las revisiones del archivo. Esa sección está escrita desde
+  `tasks.gateway.ts`, no recuperada, y lo dice en su cabecera.
+- **La regla del linter cambió** y es lo único de «Convenciones» que no dice lo
+  mismo que la versión vieja: los avisos ya cortan el CI.
