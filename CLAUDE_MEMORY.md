@@ -138,6 +138,17 @@ declarar «no hay error en los logs»:
   desde `vars.GOOGLE_REDIRECT_URI`, y el despliegue **se para con un mensaje** si
   la variable no está. No es un secreto: es la URL de vuelta del login, y tiene
   que coincidir carácter a carácter con una URI autorizada del cliente OAuth.
+
+  **La ruta es `/auth/google/callback` y nada más.** `main.ts` no llama a
+  `setGlobalPrefix` ni usa versionado, así que no hay `/api` ni `/v1` por
+  ninguna parte: el controlador es `@Controller("auth")` con
+  `@Get("google/callback")` y esa es la única ruta que existe. El valor que se
+  puso en la variable el 2026-08-05 —`https://<DOMAIN>/api/v1/auth/google/callback`—
+  fallaba por partida doble, y ninguno de los dos fallos se ve al arrancar: la
+  aplicación levanta igual y es Google quien rechaza el login después con
+  `redirect_uri_mismatch`, un error que parece del cliente OAuth y no del
+  despliegue. Por eso el guardarraíl comprueba la ruta completa y los
+  marcadores sin sustituir, no solo que la variable esté puesta.
 - ⚠️ **Los tres `CLAUDE_MODEL_*` no llegaban a Cloud Run.** Estaban en
   `.env.example` y `AiService` los exigía con `getOrThrow`, pero el
   `--set-secrets` de `deploy.yml` no los inyectaba: el primer despliegue con la

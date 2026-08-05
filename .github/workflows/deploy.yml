@@ -174,11 +174,43 @@ jobs:
           # Sin URI de vuelta el contenedor no arranca (ver el bloque de
           # arriba), así que se para aquí, con el motivo escrito, en vez de
           # desplegar una revisión condenada a un timeout que no explica nada.
+          #
+          # **No basta con que esté puesta.** Una URI presente pero equivocada
+          # arranca igual y rompe el login más tarde, con Google devolviendo
+          # `redirect_uri_mismatch` desde su propia pantalla: un error que
+          # parece del cliente OAuth y no de este despliegue. Las tres
+          # comprobaciones de abajo son las tres formas en que ya se escribió
+          # mal — un marcador `<DOMAIN>` sin sustituir, un esquema que no es
+          # https, y una ruta inventada.
+          #
+          # La ruta es fija y se puede comprobar: el controlador es
+          # `@Controller("auth")` con `@Get("google/callback")` y `main.ts` **no
+          # pone prefijo global**, así que la única ruta que existe es
+          # `/auth/google/callback`. Nada de `/api`, nada de `/v1`.
           REDIRECT_URI="${{ vars.GOOGLE_REDIRECT_URI }}"
+          MOTIVO=""
           if [ -z "${REDIRECT_URI}" ]; then
-            echo "::error::Falta la variable de repositorio GOOGLE_REDIRECT_URI." \
-                 "Ponla como https://<url-de-cloud-run>/auth/google/callback y" \
-                 "añádela a las URIs autorizadas del cliente OAuth en Google Cloud."
+            MOTIVO="no está definida"
+          elif [[ "${REDIRECT_URI}" == *"<"* || "${REDIRECT_URI}" == *">"* ]]; then
+            MOTIVO="conserva un marcador de posición sin sustituir: ${REDIRECT_URI}"
+          elif [[ "${REDIRECT_URI}" != https://* ]]; then
+            MOTIVO="no empieza por https://: ${REDIRECT_URI}"
+          else
+            # La ruta completa, no el final: `.../api/v1/auth/google/callback`
+            # también *termina* en `/auth/google/callback` y sería igual de
+            # inválida. Se recorta el esquema, luego el host, y lo que queda
+            # tiene que ser exactamente la ruta del controlador.
+            SIN_ESQUEMA="${REDIRECT_URI#https://}"
+            RUTA="/${SIN_ESQUEMA#*/}"
+            if [[ "${RUTA}" != "/auth/google/callback" ]]; then
+              MOTIVO="apunta a ${RUTA} y la única ruta que existe es /auth/google/callback (sin prefijo global)"
+            fi
+          fi
+
+          if [ -n "${MOTIVO}" ]; then
+            echo "::error::La variable de repositorio GOOGLE_REDIRECT_URI ${MOTIVO}." \
+                 "Tiene que ser https://<url-de-cloud-run>/auth/google/callback," \
+                 "y esa misma URI debe estar autorizada en el cliente OAuth de Google Cloud."
             exit 1
           fi
 
