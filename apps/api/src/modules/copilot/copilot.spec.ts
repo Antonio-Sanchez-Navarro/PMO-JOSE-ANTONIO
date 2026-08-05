@@ -155,6 +155,37 @@ describe('Mapa de niveles', () => {
       .toBe('claude-opus-5');
   });
 
+  it('a falta de la del copiloto, manda la compartida con el resto de la API', () => {
+    // Es la que existe en Secret Manager: si no se consultara, configurar el
+    // despliegue no cambiaría el modelo del copiloto y nadie lo notaría.
+    expect(
+      tierConfig(LlmProvider.ANTHROPIC, LlmTier.PRO, { CLAUDE_MODEL_REASONING: 'claude-opus-4-8' })
+        .model,
+    ).toBe('claude-opus-4-8');
+
+    expect(
+      tierConfig(LlmProvider.ANTHROPIC, LlmTier.LIGHT, { CLAUDE_MODEL_CHEAP: 'claude-haiku-4-5' })
+        .model,
+    ).toBe('claude-haiku-4-5');
+  });
+
+  it('la del copiloto gana a la compartida: para probar un modelo solo aquí', () => {
+    const config = tierConfig(LlmProvider.ANTHROPIC, LlmTier.PRO, {
+      CLAUDE_MODEL_REASONING: 'claude-opus-4-8',
+      COPILOT_ANTHROPIC_MODEL_PRO: 'claude-sonnet-5',
+    });
+
+    expect(config.model).toBe('claude-sonnet-5');
+  });
+
+  it('google no hereda de CLAUDE_MODEL_*: sus ids son de otra familia', () => {
+    const config = tierConfig(LlmProvider.GOOGLE, LlmTier.PRO, {
+      CLAUDE_MODEL_REASONING: 'claude-opus-5',
+    });
+
+    expect(config.model).toBe('gemini-3.6-flash');
+  });
+
   it('google: light es el rápido y pro el capaz, con ids vigentes', () => {
     expect(tierConfig(LlmProvider.GOOGLE, LlmTier.LIGHT, {}).model).toBe('gemini-3.5-flash-lite');
     expect(tierConfig(LlmProvider.GOOGLE, LlmTier.PRO, {}).model).toBe('gemini-3.6-flash');

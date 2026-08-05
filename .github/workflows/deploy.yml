@@ -138,15 +138,29 @@ jobs:
       # La API lo avisa al arrancar (`avisoDeConfiguracion`), así que si algún
       # día falta, el aviso está en la primera línea de log de la revisión.
       # ─────────────────────────────────────────────────────────────────────
+      #
+      # ─────────────────────────────────────────────────────────────────────
+      # CLAUDE_MODEL_* — por qué están aquí y por qué como secretos
+      #
+      # No son credenciales: son ids de modelo. Van por `--set-secrets` porque
+      # es donde el usuario los administra hoy (Secret Manager), y porque así
+      # cambiar de modelo es una versión nueva del secreto y un redespliegue,
+      # sin tocar este archivo ni las variables del repositorio.
+      #
+      # **Si un secreto de esta lista no existe, el despliegue falla en el
+      # propio `gcloud run deploy`**, antes de arrancar nada. Es ruidoso, pero
+      # es el fallo bueno: la alternativa era arrancar sin el id de modelo.
+      # ─────────────────────────────────────────────────────────────────────
       - name: Desplegar en Cloud Run
         run: |
+          FRONTEND_URL="${{ vars.WEB_URL }}"
           gcloud run deploy "${SERVICE}" \
             --image "${IMAGE}:${SHA}" \
             --region "${REGION}" \
             --platform managed \
             --port 8080 \
-            --set-env-vars "NODE_ENV=production,LOG_FORMAT=gcp,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},WEB_URL=${{ vars.WEB_URL }},SERVICE_VERSION=${SHA}" \
-            --set-secrets "DATABASE_URL=pmo-database-url:latest,REDIS_URL=pmo-redis-url:latest,JWT_SECRET=pmo-jwt-secret:latest,TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest,GOOGLE_CLIENT_ID=pmo-google-client-id:latest,GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest,ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest,GEMINI_API_KEY=pmo-gemini-api-key:latest" \
+            --set-env-vars "NODE_ENV=production,LOG_FORMAT=gcp,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},WEB_URL=${FRONTEND_URL:-https://pmo-frontend.placeholder.com},SERVICE_VERSION=${SHA}" \
+            --set-secrets "DATABASE_URL=pmo-database-url:latest,REDIS_URL=pmo-redis-url:latest,JWT_SECRET=pmo-jwt-secret:latest,TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest,GOOGLE_CLIENT_ID=pmo-google-client-id:latest,GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest,ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest,GEMINI_API_KEY=pmo-gemini-api-key:latest,CLAUDE_MODEL_CLASSIFY=pmo-claude-model-classify:latest,CLAUDE_MODEL_REASONING=pmo-claude-model-reasoning:latest,CLAUDE_MODEL_CHEAP=pmo-claude-model-cheap:latest" \
             --quiet
 
       # Comprobación de verdad: que la revisión conteste, no que el comando de

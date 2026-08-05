@@ -2,6 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { TaskPriority } from '@prisma/client';
+import {
+  convieneEsperar,
+  crearClienteAnthropic,
+  describirFallo,
+  esperaSugeridaMs,
+} from '../../common/anthropic/anthropic-client';
 
 export interface ExtractedTask {
   title: string;
@@ -136,6 +142,22 @@ límite, devuelve null: no inventes ninguna.
 
 Usa la herramienta ${TOOL_NAME} para devolver el resultado.`;
 
+/**
+ * Con qué se clasifica si `CLAUDE_MODEL_CLASSIFY` no llega.
+ *
+ * **Aquí sí hay respaldo y con la clave no lo había, y la diferencia importa.**
+ * Una credencial inventada no existe: falla en la primera llamada disfrazada de
+ * 401. Un id de modelo, en cambio, lo sabemos escribir bien desde aquí, así que
+ * el respaldo funciona de verdad. Y lo que evita no es poco: el servicio se
+ * construye al arrancar, de modo que un `getOrThrow` sin la variable puesta no
+ * dejaba sin clasificación al tablero — dejaba **la API entera sin arrancar**,
+ * tablero y sesiones incluidos, por un nombre de modelo que falta.
+ *
+ * Se avisa fuerte en el log porque el entorno manda: si producción quiere otro
+ * modelo y la variable no llegó, esto lo está ignorando en silencio.
+ */
+const MODELO_DE_CLASIFICACION_POR_DEFECTO = 'claude-sonnet-5';
+
 @Injectable()
 export class AiService {
   private readonly anthropic: Anthropic;
@@ -152,8 +174,18 @@ export class AiService {
       );
     }
 
-    this.model = this.config.getOrThrow<string>('CLAUDE_MODEL_CLASSIFY');
-    this.anthropic = new Anthropic({ apiKey });
+    const configurado = this.config.get<string>('CLAUDE_MODEL_CLASSIFY')?.trim();
+    if (!configurado) {
+      this.logger.warn(
+        `CLAUDE_MODEL_CLASSIFY no está configurada: se clasifica con ${MODELO_DE_CLASIFICACION_POR_DEFECTO}. ` +
+          'En Cloud Run llega desde Secret Manager (ver el paso de despliegue).',
+      );
+    }
+
+    this.model = configurado || MODELO_DE_CLASIFICACION_POR_DEFECTO;
+    this.anthropic = crearClienteAnthropic(apiKey, this.config, {
+      contexto: 'clasificación de correo',
+    });
     this.logger.log(`Modelo de clasificación: ${this.model}`);
   }
 
@@ -168,19 +200,36 @@ export class AiService {
   ): Promise<EmailAnalysisResult> {
     const fecha = receivedAt.toISOString().slice(0, 10);
 
-    const response = await this.anthropic.messages.create({
-      model: this.model,
-      max_tokens: 2000,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: `Fecha de recepción: ${fecha}\nSubject: ${subject}\n\nBody:\n${bodyText}`,
-        },
-      ],
-      tools: [EXTRACTION_TOOL],
-      tool_choice: { type: 'tool', name: TOOL_NAME },
-    });
+    let response: Anthropic.Message;
+    try {
+      response = await this.anthropic.messages.create({
+        model: this.model,
+        max_tokens: 2000,
+        system: SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: `Fecha de recepción: ${fecha}\nSubject: ${subject}\n\nBody:\n${bodyText}`,
+          },
+        ],
+        tools: [EXTRACTION_TOOL],
+        tool_choice: { type: 'tool', name: TOOL_NAME },
+      });
+    } catch (error) {
+      // Llegar aquí con un 429 significa que el cliente ya reintentó y esperó
+      // lo que pedía la API, y aun así sigue cerrado. Se anota con la espera
+      // que sugiere la respuesta y se propaga: quien decide qué hacer con la
+      // saturación es el worker, que puede frenar la cola entera (ver
+      // `ai.processor.ts`). Frenar aquí solo dormiría a este correo.
+      if (convieneEsperar(error)) {
+        const espera = esperaSugeridaMs(error);
+        this.logger.warn(
+          `Anthropic no atendió tras agotar los reintentos: ${describirFallo(error)}` +
+            (espera ? ` · sugiere esperar ${Math.round(espera / 1000)} s` : ''),
+        );
+      }
+      throw error;
+    }
 
     if (response.stop_reason === 'refusal') {
       throw new Error('Claude rechazó analizar el correo (stop_reason: refusal)');

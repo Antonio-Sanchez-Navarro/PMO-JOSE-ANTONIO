@@ -121,6 +121,48 @@ declarar «no hay error en los logs»:
   agruparse**, con los logs saliendo y pareciendo correctos. Ya va en el
   `--set-env-vars` de `deploy.yml`.
 - `LOG_LEVEL`, `SERVICE_VERSION` y `OVERDUE_CRON` tienen valor por defecto.
+- ⚠️ **Los tres `CLAUDE_MODEL_*` no llegaban a Cloud Run.** Estaban en
+  `.env.example` y `AiService` los exigía con `getOrThrow`, pero el
+  `--set-secrets` de `deploy.yml` no los inyectaba: el primer despliegue con la
+  nube provisionada habría tumbado **la API entera** —tablero y sesiones
+  incluidos— al construir el módulo de IA. Arreglado el 2026-08-05 por los dos
+  lados: van en el `--set-secrets` (`pmo-claude-model-classify`,
+  `pmo-claude-model-reasoning`, `pmo-claude-model-cheap`) y `AiService` degrada
+  a un modelo por defecto con aviso en vez de impedir el arranque.
+- **`CLAUDE_MODEL_REASONING` y `CLAUDE_MODEL_CHEAP` no las leía nadie.** El
+  copiloto usaba solo `COPILOT_ANTHROPIC_MODEL_*`, así que configurarlas en la
+  nube no cambiaba nada. Desde el 2026-08-05 `tierConfig` encadena
+  `COPILOT_ANTHROPIC_MODEL_*` → `CLAUDE_MODEL_*` → tabla: la específica sigue
+  sirviendo para probar un modelo solo en el copiloto, y la compartida gobierna
+  el despliegue.
+- `ANTHROPIC_MAX_RETRIES` (4) y `ANTHROPIC_TIMEOUT_MS` (120 s en clasificación,
+  10 min en copiloto) ajustan la política de reintentos sin tocar código. Un
+  valor no numérico se ignora y se queda el de por defecto.
+
+## Límite de tasa de Anthropic (2026-08-05)
+
+`common/anthropic/anthropic-client.ts` es el único sitio donde se construye el
+cliente, y lo comparten la clasificación y el copiloto.
+
+- **Los reintentos los pone el SDK, no un bucle nuestro**: repite 408/409/429 y
+  5xx con espera exponencial respetando `retry-after`, y no toca los 4xx que se
+  repetirían igual de mal. Solo se sube el tope de 2 a 4.
+- **La detección de fallos mira `error.status`, no `instanceof APIError`.** En
+  `ai.service.spec.ts` el módulo del SDK está sustituido por un doble y sus
+  clases de error **no existen**: un `instanceof` reventaría al comprobar el
+  error en vez de al provocarlo.
+- **El worker de clasificación es el único que frena.** Va con `concurrency: 2`
+  y `limiter: { max: 20, duration: 60_000 }` —ventana compartida entre
+  instancias porque el contador vive en Redis—, y ante un 429 que sobrevive a
+  los reintentos llama a `worker.rateLimit(espera)` y lanza
+  `Worker.RateLimitError()`: la cola se pausa lo que pida la cabecera y el job
+  vuelve **sin gastar un intento**. Con un error normal, una tanda de correos
+  buenos acabaría en la cola de fallidos por una saturación pasajera.
+  Ojo: `worker.rateLimit` está marcado `@deprecated` para BullMQ 6, donde pasa
+  a `queue.rateLimit`. En la 5 que usamos es el camino bueno.
+- El copiloto **no** frena: al otro lado hay alguien esperando y un error a los
+  veinte segundos es mejor que un cursor parpadeando tres minutos. Traduce el
+  429 a un mensaje que el chat puede enseñar tal cual.
 
 ## Imagen y despliegue (`ebd06cc`)
 

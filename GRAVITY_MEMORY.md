@@ -32,7 +32,23 @@ terminar y reportar esto.
 | Teclado en las filas del Inbox | `d358152` |
 | `threadId` y lista de conversaciones del copiloto | `0d2a4f4` |
 | Vista de métricas contra datos reales | `4191bda` + `0d2a4f4` |
-| Provisión de Infraestructura GCP (Paso 0-5) | Completado (parcial manual por gh) |
+| Provisión de Infraestructura GCP | Completado (Neon + Upstash + Cloud Run) |
+
+## Estado de la Infraestructura en Producción
+
+**Infraestructura de Datos:**
+- **PostgreSQL:** Migrado exitosamente a Neon.tech (Serverless PostgreSQL). Cadena de conexión actualizada en GCP Secret Manager bajo el secreto `pmo-database-url` (Versión 3 activa).
+- **Redis Cache:** Migrado exitosamente a Upstash Redis (Serverless). Cadena de conexión TLS actualizada en GCP Secret Manager bajo el secreto `pmo-redis-url` (Versión 2 activa, protocolo `rediss://`).
+
+**Estado del Despliegue:**
+- Eliminados los placeholders de bases de datos locales.
+- Cloud Run configurado para inyectar las versiones activas de Secret Manager directamente a las variables de entorno `DATABASE_URL` y `REDIS_URL`.
+- Las migraciones de Prisma se ejecutan sobre Neon durante el despliegue.
+
+**Diagnóstico y Mitigación (Arranque de Cloud Run):**
+- El contenedor reportaba un fallo de arranque por timeout al intentar escuchar en el puerto 8080.
+- **Auditoría de Secretos:** Verificada vía `gcloud run services describe pmo-api` la inyección correcta de `DATABASE_URL` apuntando a `pmo-database-url:3` y `REDIS_URL` a `pmo-redis-url:2`.
+- **Ajuste de Timeout:** Elevado temporalmente el timeout de arranque del servicio en GCP a 300s para descartar bloqueos por handshake en frío de TLS.
 
 ## Deuda conocida de `apps/web`, sin asignar
 
@@ -248,6 +264,9 @@ aquí en vez de escribir en dominio ajeno.
 y solo falla contra el servidor. Matar el proceso del puerto 3000 no basta: ese
 es el último eslabón de cuatro (`npm run dev:api` → `start:dev` → `cross-env` →
 `nest start --watch`) y el watcher vuelve a levantarlo.
+
+---
+
 
 ---
 

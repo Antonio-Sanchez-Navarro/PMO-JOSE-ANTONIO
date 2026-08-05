@@ -1,11 +1,36 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, Worker } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { EmailClassificationService } from './email-classification.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import {
+  convieneEsperar,
+  describirFallo,
+  esperaSugeridaMs,
+} from '../../common/anthropic/anthropic-client';
 import type { ClassifyEmailJob, ClassifyEmailResult } from './classify-email.job';
 
-@Processor('classify-email')
+/**
+ * Cuántas clasificaciones van a la vez y cuántas por minuto.
+ *
+ * El límite de tasa de Anthropic es de la organización entera, no de este
+ * worker: el copiloto consume de la misma cuota y responde a alguien que está
+ * esperando. Por eso la cola se queda deliberadamente por debajo de lo que
+ * podría — una sincronización de Gmail encola decenas de correos de golpe y sin
+ * freno se los comería todos en unos segundos, dejando 429 al copiloto.
+ *
+ * `duration` es una ventana móvil de BullMQ, compartida por todos los procesos
+ * que atienden la cola porque el contador vive en Redis: escalar la API a tres
+ * instancias no triplica el ritmo contra la API de Claude.
+ *
+ * Los números son conservadores a propósito y no una medición: se ajustan
+ * cuando haya cuota real que medir. Quedarse corto retrasa correos; pasarse
+ * rompe el chat.
+ */
+const CONCURRENCIA = 2;
+const LIMITE_POR_VENTANA = { max: 20, duration: 60_000 };
+
+@Processor('classify-email', { concurrency: CONCURRENCIA, limiter: LIMITE_POR_VENTANA })
 export class AiProcessor extends WorkerHost {
   private readonly logger = new Logger(AiProcessor.name);
 
@@ -67,8 +92,40 @@ export class AiProcessor extends WorkerHost {
           (result.tasks.length ? `, ${result.tasks.length} tareas creadas` : ''),
       );
     } catch (error) {
+      // Saturación de la API: no es un job malo, es que no hay cuota ahora.
+      if (convieneEsperar(error)) {
+        return this.frenarLaCola(emailId, error);
+      }
+
       this.logger.error(`Falló la clasificación del email ${emailId}`, error);
       throw error; // Para que BullMQ lo reintente si hay redelivery configurado
     }
+  }
+
+  /**
+   * Detiene la cola el tiempo que pida la propia API y devuelve el job a la
+   * espera **sin gastarle un intento**.
+   *
+   * Las dos mitades son necesarias y hacen cosas distintas: `rateLimit()` pausa
+   * el worker entero —los demás correos de la tanda ni se intentan, que es el
+   * punto: si la cuota está agotada, los siguientes iban a chocar igual— y
+   * `Worker.RateLimitError()` es la señal convenida de BullMQ para que el job
+   * vuelva a la cola como si no se hubiera ejecutado. Lanzar un error normal
+   * aquí consumiría reintentos hasta mandar a la cola de fallidos un correo que
+   * no tiene nada de malo.
+   *
+   * Si la respuesta no dice cuánto esperar se usa la ventana del limitador, que
+   * es el orden de magnitud en el que se rellenan estos cubos.
+   */
+  private async frenarLaCola(emailId: string, error: unknown): Promise<never> {
+    const espera = esperaSugeridaMs(error) ?? LIMITE_POR_VENTANA.duration;
+
+    this.logger.warn(
+      `Cola de clasificación en pausa ${Math.round(espera / 1000)} s por saturación de Anthropic ` +
+        `(email ${emailId}): ${describirFallo(error)}`,
+    );
+
+    await this.worker.rateLimit(espera);
+    throw Worker.RateLimitError();
   }
 }

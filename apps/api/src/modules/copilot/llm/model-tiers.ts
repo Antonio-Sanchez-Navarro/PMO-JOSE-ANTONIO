@@ -14,6 +14,21 @@ import { LlmProvider, LlmTier } from './llm.types';
 export interface TierConfig {
   /** Variable de entorno que lo pisa, para probar un modelo sin tocar código. */
   readonly envVar: string;
+  /**
+   * La variable **compartida con el resto de la API**, que es la que existe en
+   * Secret Manager (`CLAUDE_MODEL_*`). Se consulta si la específica del
+   * copiloto no está puesta.
+   *
+   * Las dos existen porque responden a preguntas distintas: la compartida dice
+   * "qué modelo usa este despliegue" y se administra desde la nube; la
+   * específica permite probar un modelo **solo en el copiloto** sin mover el de
+   * la clasificación. Sin esta cadena, poner `CLAUDE_MODEL_REASONING` en
+   * producción no cambiaba nada aquí y el copiloto seguía con el valor escrito
+   * en esta tabla — una configuración que parece aplicada y no lo está.
+   *
+   * Google no la tiene: sus ids no comparten familia con los de Claude.
+   */
+  readonly envVarCompartida?: string;
   readonly model: string;
   /**
    * Profundidad de razonamiento. Solo la aceptan los modelos que la declaran;
@@ -49,10 +64,12 @@ const TIERS: Record<LlmProvider, Record<LlmTier, TierConfig>> = {
   [LlmProvider.ANTHROPIC]: {
     [LlmTier.LIGHT]: {
       envVar: 'COPILOT_ANTHROPIC_MODEL_LIGHT',
+      envVarCompartida: 'CLAUDE_MODEL_CHEAP',
       model: 'claude-haiku-4-5',
     },
     [LlmTier.PRO]: {
       envVar: 'COPILOT_ANTHROPIC_MODEL_PRO',
+      envVarCompartida: 'CLAUDE_MODEL_REASONING',
       model: 'claude-opus-5',
     },
   },
@@ -69,8 +86,13 @@ const TIERS: Record<LlmProvider, Record<LlmTier, TierConfig>> = {
 };
 
 /**
- * La configuración de ese nivel, con la variable de entorno pisando al valor
- * por defecto si está puesta.
+ * La configuración de ese nivel, con el entorno pisando al valor por defecto.
+ *
+ * El orden es de lo más específico a lo más general: primero la variable del
+ * copiloto, después la compartida con el resto de la API, y si no hay ninguna
+ * el modelo escrito en la tabla. Así una prueba puntual en el copiloto no
+ * obliga a mover la configuración del despliegue, y la configuración del
+ * despliegue no queda ignorada cuando no hay prueba puntual.
  *
  * `env` se recibe en vez de leer `process.env` aquí para poder probarlo sin
  * ensuciar el entorno del proceso de pruebas.
@@ -81,7 +103,9 @@ export function tierConfig(
   env: Record<string, string | undefined> = process.env,
 ): TierConfig {
   const base = TIERS[provider][tier];
-  const override = env[base.envVar]?.trim();
+  const override =
+    env[base.envVar]?.trim() ||
+    (base.envVarCompartida ? env[base.envVarCompartida]?.trim() : undefined);
 
   return override ? { ...base, model: override } : base;
 }

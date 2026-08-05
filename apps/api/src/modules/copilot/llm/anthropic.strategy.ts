@@ -4,6 +4,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import { LlmChatRequest, LlmChunk, LlmProvider, LlmStrategy, LlmTier } from './llm.types';
 import { tierConfig } from './model-tiers';
 import { COPILOT_TOOLS, esEjecutable, parseToolArgs } from './tools';
+import {
+  convieneEsperar,
+  crearClienteAnthropic,
+  describirFallo,
+} from '../../../common/anthropic/anthropic-client';
 
 /**
  * Tope de salida por respuesta.
@@ -24,6 +29,15 @@ const MAX_TOKENS = 64_000;
  * cuota, y el usuario solo vería que la respuesta no llega nunca.
  */
 const MAX_VUELTAS = 4;
+
+/**
+ * Plazo por petición, muy por encima del de la clasificación.
+ *
+ * Un turno del copiloto va en streaming y puede encadenar hasta `MAX_VUELTAS`
+ * llamadas con ejecución de herramientas entre medias; el plazo tiene que
+ * cubrir la más lenta de ellas, no la conversación entera.
+ */
+const TIMEOUT_MS = 10 * 60_000;
 
 /** El catálogo compartido, traducido al vocabulario de Anthropic. */
 const TOOLS: Anthropic.Tool[] = COPILOT_TOOLS.map((tool) => ({
@@ -52,7 +66,16 @@ export class AnthropicStrategy implements LlmStrategy {
     // La misma credencial que ya usa la tubería de clasificación: no se
     // introduce una segunda forma de autenticarse contra el mismo proveedor.
     const apiKey = this.config.get<string>('ANTHROPIC_API_KEY');
-    this.client = apiKey ? new Anthropic({ apiKey }) : null;
+    // Misma política de reintentos que la tubería de clasificación: el SDK
+    // reintenta 429 y 5xx respetando `retry-after`. Aquí no se frena nada por
+    // encima de eso — al otro lado hay una persona esperando, y un error a los
+    // veinte segundos es mejor que un cursor parpadeando tres minutos.
+    this.client = apiKey
+      ? crearClienteAnthropic(apiKey, this.config, {
+          contexto: 'copiloto',
+          timeoutPorDefectoMs: TIMEOUT_MS,
+        })
+      : null;
 
     if (!this.client) {
       this.logger.warn('Sin ANTHROPIC_API_KEY: el copiloto no podrá usar Claude.');
@@ -104,15 +127,33 @@ export class AnthropicStrategy implements LlmStrategy {
         { signal: request.signal },
       );
 
-      for await (const event of stream) {
-        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-          yield { type: 'text', text: event.delta.text };
+      let final: Anthropic.Message;
+      try {
+        for await (const event of stream) {
+          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+            yield { type: 'text', text: event.delta.text };
+          }
         }
+
+        // Después del bucle: el mensaje ya está completo y trae los contadores
+        // reales de la llamada, que es lo que interesa registrar.
+        final = await stream.finalMessage();
+      } catch (error) {
+        // Los reintentos del SDK ya pasaron y siguen sin atendernos. Se traduce
+        // a un mensaje que el chat pueda enseñar tal cual: el genérico del SDK
+        // habla de códigos HTTP a quien solo ve que su pregunta no responde.
+        // El resto de fallos —incluida la cancelación cuando el usuario cierra
+        // la pestaña— se propagan intactos.
+        if (convieneEsperar(error)) {
+          this.logger.warn(`Copiloto sin atender por saturación: ${describirFallo(error)}`);
+          throw new Error(
+            'El servicio de IA está saturado ahora mismo. Vuelve a intentarlo en unos minutos.',
+            { cause: error },
+          );
+        }
+        throw error;
       }
 
-      // Después del bucle: el mensaje ya está completo y trae los contadores
-      // reales de la llamada, que es lo que interesa registrar.
-      const final = await stream.finalMessage();
       entrada += final.usage.input_tokens;
       salida += final.usage.output_tokens;
 
