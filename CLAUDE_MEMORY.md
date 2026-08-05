@@ -9,6 +9,13 @@
 
 ---
 
+## Estado a 2026-08-05
+
+- **525 pruebas en 20 suites**, todas en verde (`73ade8a`). Las 15 nuevas cubren
+  la cadena `COPILOT_ANTHROPIC_MODEL_*` → `CLAUDE_MODEL_*` → tabla y el cálculo
+  de espera ante un 429.
+- `npx tsc -p apps/api/tsconfig.spec.json` y ESLint, limpios.
+
 ## Estado a 2026-08-03
 
 - **510 pruebas en 19 suites**, todas en verde.
@@ -149,6 +156,30 @@ declarar «no hay error en los logs»:
   10 min en copiloto) ajustan la política de reintentos sin tocar código. Un
   valor no numérico se ignora y se queda el de por defecto.
 
+## Qué puede impedir el arranque (regla, no lista)
+
+Los proveedores de Nest se construyen **al arrancar**, así que un constructor
+que lanza no deja sin servicio a su módulo: deja **la API entera** sin escuchar
+en el puerto. Y el síntoma que se ve arriba, en Cloud Run, es *timeout de
+arranque* — sin nombrar la variable, sin traza y sin pista de que el problema
+sea de configuración. Ya pasó dos veces el 2026-08-05 (`GOOGLE_REDIRECT_URI` y
+`CLAUDE_MODEL_CLASSIFY`), las dos con la misma cara.
+
+La regla con la que se decide, al añadir una variable nueva:
+
+- **Credencial que falta → no arrancar.** Una clave inventada no existe; el
+  respaldo solo difiere el fallo hasta la primera llamada y lo disfraza de 401.
+  `ANTHROPIC_API_KEY` y `TOKEN_ENCRYPTION_KEY` siguen así, a propósito.
+- **Configuración cuyo valor bueno sabemos escribir → respaldo con aviso.** Un
+  id de modelo lo sabemos poner desde el código. Impedir el arranque por él
+  cambia "la clasificación usa otro modelo del previsto" por "no hay tablero".
+  El aviso en el log es obligatorio: el entorno manda, y si no llegó, esto lo
+  está ignorando en silencio.
+- **Lo que no tiene valor bueno posible → pararlo antes de desplegar.** La URI
+  de vuelta del login no se puede adivinar y una equivocada rompe el login de
+  forma más confusa que no arrancar. Por eso la comprobación vive en
+  `deploy.yml` y no en el código: falla en el runner, con el motivo escrito.
+
 ## Límite de tasa de Anthropic (2026-08-05)
 
 `common/anthropic/anthropic-client.ts` es el único sitio donde se construye el
@@ -161,6 +192,15 @@ cliente, y lo comparten la clasificación y el copiloto.
   `ai.service.spec.ts` el módulo del SDK está sustituido por un doble y sus
   clases de error **no existen**: un `instanceof` reventaría al comprobar el
   error en vez de al provocarlo.
+- **`AiService` anota y propaga; no espera.** Un 429 que llega hasta él ya pasó
+  por los reintentos del SDK, así que registra el fallo con la espera que sugiere
+  la respuesta (`retry-after`, o el `*-reset` más lejano si no viene) y lo deja
+  subir. Dormir ahí solo retrasaría **ese** correo mientras los siguientes de la
+  tanda van a chocar igual; quien puede frenar de verdad es el worker, que
+  gobierna la cola entera.
+- **La espera se acota entre 1 s y 5 min.** Sin techo, una cabecera con fecha
+  rara o un reloj desajustado dejaría la cola dormida horas — un fallo que se
+  leería como "la IA dejó de clasificar" sin ningún error a la vista.
 - **El worker de clasificación es el único que frena.** Va con `concurrency: 2`
   y `limiter: { max: 20, duration: 60_000 }` —ventana compartida entre
   instancias porque el contador vive en Redis—, y ante un 429 que sobrevive a
