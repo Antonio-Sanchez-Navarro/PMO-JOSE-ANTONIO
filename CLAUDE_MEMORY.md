@@ -121,6 +121,16 @@ declarar «no hay error en los logs»:
   agruparse**, con los logs saliendo y pareciendo correctos. Ya va en el
   `--set-env-vars` de `deploy.yml`.
 - `LOG_LEVEL`, `SERVICE_VERSION` y `OVERDUE_CRON` tienen valor por defecto.
+- ⚠️ **`GOOGLE_REDIRECT_URI` tumbaba el contenedor y tampoco iba en el
+  despliegue.** `AuthService` la pide con `getOrThrow` **en su constructor**, y
+  los proveedores de Nest se construyen al arrancar: sin ella la aplicación
+  revienta antes de escuchar en el 8080 y Cloud Run lo informa como **timeout de
+  arranque**, sin nombrar ninguna variable. Es exactamente el síntoma que
+  Gravity anotó el 2026-08-05 y por el que subió el timeout del servicio a 300 s:
+  no es que tarde, es que no llega. Desde el 2026-08-05 va en `--set-env-vars`
+  desde `vars.GOOGLE_REDIRECT_URI`, y el despliegue **se para con un mensaje** si
+  la variable no está. No es un secreto: es la URL de vuelta del login, y tiene
+  que coincidir carácter a carácter con una URI autorizada del cliente OAuth.
 - ⚠️ **Los tres `CLAUDE_MODEL_*` no llegaban a Cloud Run.** Estaban en
   `.env.example` y `AiService` los exigía con `getOrThrow`, pero el
   `--set-secrets` de `deploy.yml` no los inyectaba: el primer despliegue con la

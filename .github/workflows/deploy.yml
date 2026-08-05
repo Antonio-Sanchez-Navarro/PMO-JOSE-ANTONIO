@@ -140,6 +140,22 @@ jobs:
       # ─────────────────────────────────────────────────────────────────────
       #
       # ─────────────────────────────────────────────────────────────────────
+      # GOOGLE_REDIRECT_URI — sin ella el contenedor NO ARRANCA
+      #
+      # `AuthService` la pide con `getOrThrow` en su constructor, y los
+      # proveedores de Nest se construyen al arrancar: si falta, la aplicación
+      # revienta antes de escuchar en el 8080 y Cloud Run informa de **timeout
+      # de arranque**, sin mencionar ninguna variable. Subir el timeout del
+      # servicio no ayuda: no es que tarde, es que no llega.
+      #
+      # Va por `vars` y no por Secret Manager porque no es un secreto — es la
+      # URL de vuelta del login, pública por definición. Tiene que coincidir
+      # **carácter a carácter** con una de las URIs autorizadas del cliente
+      # OAuth en la consola de Google: la forma es
+      # `https://<url-de-cloud-run>/auth/google/callback`.
+      # ─────────────────────────────────────────────────────────────────────
+      #
+      # ─────────────────────────────────────────────────────────────────────
       # CLAUDE_MODEL_* — por qué están aquí y por qué como secretos
       #
       # No son credenciales: son ids de modelo. Van por `--set-secrets` porque
@@ -154,12 +170,24 @@ jobs:
       - name: Desplegar en Cloud Run
         run: |
           FRONTEND_URL="${{ vars.WEB_URL }}"
+
+          # Sin URI de vuelta el contenedor no arranca (ver el bloque de
+          # arriba), así que se para aquí, con el motivo escrito, en vez de
+          # desplegar una revisión condenada a un timeout que no explica nada.
+          REDIRECT_URI="${{ vars.GOOGLE_REDIRECT_URI }}"
+          if [ -z "${REDIRECT_URI}" ]; then
+            echo "::error::Falta la variable de repositorio GOOGLE_REDIRECT_URI." \
+                 "Ponla como https://<url-de-cloud-run>/auth/google/callback y" \
+                 "añádela a las URIs autorizadas del cliente OAuth en Google Cloud."
+            exit 1
+          fi
+
           gcloud run deploy "${SERVICE}" \
             --image "${IMAGE}:${SHA}" \
             --region "${REGION}" \
             --platform managed \
             --port 8080 \
-            --set-env-vars "NODE_ENV=production,LOG_FORMAT=gcp,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},WEB_URL=${FRONTEND_URL:-https://pmo-frontend.placeholder.com},SERVICE_VERSION=${SHA}" \
+            --set-env-vars "NODE_ENV=production,LOG_FORMAT=gcp,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},WEB_URL=${FRONTEND_URL:-https://pmo-frontend.placeholder.com},GOOGLE_REDIRECT_URI=${REDIRECT_URI},SERVICE_VERSION=${SHA}" \
             --set-secrets "DATABASE_URL=pmo-database-url:latest,REDIS_URL=pmo-redis-url:latest,JWT_SECRET=pmo-jwt-secret:latest,TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest,GOOGLE_CLIENT_ID=pmo-google-client-id:latest,GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest,ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest,GEMINI_API_KEY=pmo-gemini-api-key:latest,CLAUDE_MODEL_CLASSIFY=pmo-claude-model-classify:latest,CLAUDE_MODEL_REASONING=pmo-claude-model-reasoning:latest,CLAUDE_MODEL_CHEAP=pmo-claude-model-cheap:latest" \
             --quiet
 
