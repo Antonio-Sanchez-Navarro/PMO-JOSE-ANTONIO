@@ -154,9 +154,16 @@ declarar «no hay error en los logs»:
   `--set-secrets` de `deploy.yml` no los inyectaba: el primer despliegue con la
   nube provisionada habría tumbado **la API entera** —tablero y sesiones
   incluidos— al construir el módulo de IA. Arreglado el 2026-08-05 por los dos
-  lados: van en el `--set-secrets` (`pmo-claude-model-classify`,
-  `pmo-claude-model-reasoning`, `pmo-claude-model-cheap`) y `AiService` degrada
-  a un modelo por defecto con aviso en vez de impedir el arranque.
+  lados: `AiService` degrada a un modelo por defecto con aviso en vez de impedir
+  el arranque, y el despliegue las inyecta.
+
+  **Van por `vars` del repositorio, no por Secret Manager.** Se intentaron
+  primero como secretos y el despliegue lo desmintió: `Secret
+  projects/614812477499/secrets/pmo-claude-model-classify/versions/latest was
+  not found` — los tres. No son credenciales, son ids de modelo públicos. Y se
+  añaden **solo si están puestas**: como el código trae un valor bueno y lo
+  anuncia en el log, una variable que falta cambia el modelo, no tumba el
+  despliegue.
 - **`CLAUDE_MODEL_REASONING` y `CLAUDE_MODEL_CHEAP` no las leía nadie.** El
   copiloto usaba solo `COPILOT_ANTHROPIC_MODEL_*`, así que configurarlas en la
   nube no cambiaba nada. Desde el 2026-08-05 `tierConfig` encadena
