@@ -20,22 +20,23 @@
   ante un `CLAUDE_MODEL_CLASSIFY` ausente, la política de reintentos compartida
   con freno en la cola, y las comprobaciones de `deploy.yml` que paran el
   despliegue antes de publicar una revisión condenada.
-- ⏳ **Falta la validación viva.** Todo lo anterior está probado en local y en
-  CI, pero **ningún contenedor ha llegado todavía a arrancar en Cloud Run**: la
-  última revisión que lo intentó murió antes de escuchar en el 8080. Lo que
-  cierra este capítulo no es una prueba más, es un `200` de `/health/ready` en
-  una revisión desplegada. Gravity dispara el redespliegue con `WEB_URL`
-  inyectada y los secretos ya creados; hasta que conteste, esto está **a la
-  espera**, no terminado.
+- ✅ **Validación viva conseguida el 2026-08-05.** El despliegue manual de
+  Gravity levantó el contenedor: escucha en el 8080 y `/health/ready` devuelve
+  **200** contra Neon y Upstash. Es lo que faltaba — hasta ese momento ninguna
+  revisión había llegado a arrancar, y ninguna prueba de las nuestras podía
+  demostrarlo. La degradación segura del arranque hizo su papel.
+- **Los `CLAUDE_MODEL_*` se consumen definitivamente de GCP Secret Manager**
+  (`pmo-claude-model-classify`, `-reasoning`, `-cheap`), decidido el 2026-08-05
+  ahora que Gravity los aprovisionó con su IAM. Vuelven al `--set-secrets`, y el
+  rodeo por `vars` queda solo como nota histórica: se hizo cuando el propio
+  `gcloud` demostró que los secretos no existían todavía.
 
-  ⚠️ **Ojo con los `pmo-claude-model-*` recién creados: hoy el despliegue no los
-  lee.** `f75cfb2` los movió a `vars` del repositorio después de que el propio
-  `gcloud` demostrara que no existían. Ahora existen, pero el `--set-secrets` ya
-  no los nombra, así que salvo que estén también como `vars` la API arrancará
-  con sus modelos por defecto — y lo dirá en el log de arranque, que es donde
-  hay que mirarlo. No rompe nada; simplemente la configuración de la nube no
-  manda. Volver a `--set-secrets` es una línea, en cuanto se decida cuál de las
-  dos vías es la buena.
+  **La fuente de verdad es la nube; el respaldo del código sigue siendo la
+  segunda línea.** `ai.service.ts` y `model-tiers.ts` conservan su valor por
+  defecto y su aviso en el log. Las dos capas fallan distinto y a propósito: un
+  secreto que falta tumba el `gcloud run deploy` **sin publicar revisión**, y si
+  aun así llegara una revisión sin la variable, la API arranca y lo dice en la
+  primera línea del log en vez de dejar el tablero sin servicio.
 
 ## Estado a 2026-08-03
 
