@@ -15,6 +15,27 @@
   la cadena `COPILOT_ANTHROPIC_MODEL_*` → `CLAUDE_MODEL_*` → tabla y el cálculo
   de espera ante un 429.
 - `npx tsc -p apps/api/tsconfig.spec.json` y ESLint, limpios.
+- **En `master` (`73ade8a` → `f75cfb2`): la protección del arranque y la
+  fortificación de variables.** Es decir, la degradación segura de `AiService`
+  ante un `CLAUDE_MODEL_CLASSIFY` ausente, la política de reintentos compartida
+  con freno en la cola, y las comprobaciones de `deploy.yml` que paran el
+  despliegue antes de publicar una revisión condenada.
+- ⏳ **Falta la validación viva.** Todo lo anterior está probado en local y en
+  CI, pero **ningún contenedor ha llegado todavía a arrancar en Cloud Run**: la
+  última revisión que lo intentó murió antes de escuchar en el 8080. Lo que
+  cierra este capítulo no es una prueba más, es un `200` de `/health/ready` en
+  una revisión desplegada. Gravity dispara el redespliegue con `WEB_URL`
+  inyectada y los secretos ya creados; hasta que conteste, esto está **a la
+  espera**, no terminado.
+
+  ⚠️ **Ojo con los `pmo-claude-model-*` recién creados: hoy el despliegue no los
+  lee.** `f75cfb2` los movió a `vars` del repositorio después de que el propio
+  `gcloud` demostrara que no existían. Ahora existen, pero el `--set-secrets` ya
+  no los nombra, así que salvo que estén también como `vars` la API arrancará
+  con sus modelos por defecto — y lo dirá en el log de arranque, que es donde
+  hay que mirarlo. No rompe nada; simplemente la configuración de la nube no
+  manda. Volver a `--set-secrets` es una línea, en cuanto se decida cuál de las
+  dos vías es la buena.
 
 ## Estado a 2026-08-03
 
