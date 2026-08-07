@@ -121,6 +121,60 @@ jobs:
           docker push "${IMAGE}:latest"
 
       # ─────────────────────────────────────────────────────────────────────
+      # Migraciones — un Job de Cloud Run, y ANTES de publicar la revisión
+      #
+      # **El orden no es negociable.** Si la revisión nueva sale primero, su
+      # código pide columnas que todavía no existen y los 500 empiezan antes de
+      # que la migración corra. Al revés, la ventana de riesgo es la contraria y
+      # se puede controlar: entre migrar y desplegar, quien está sirviendo es la
+      # revisión **vieja** contra el esquema **nuevo**.
+      #
+      # De ahí la única regla que hay que respetar al escribir una migración:
+      # **tiene que ser compatible con el código que ya está arriba**. Añadir
+      # columnas y tablas lo es; renombrar o borrar no. Lo que se borra se hace
+      # en dos despliegues (primero deja de usarse, después se elimina).
+      #
+      # **Por qué un Job y no un paso del runner.** El motivo que se escribió en
+      # su día —«el runner de GitHub no llega a Cloud SQL sin el Auth Proxy»— ya
+      # no aplica: Neon es Postgres público y el runner llegaría de sobra. El
+      # motivo que sí sigue en pie es otro: así **`DATABASE_URL` no sale nunca de
+      # Google Cloud**. El Job la recibe de Secret Manager igual que el servicio;
+      # traerla al runner la pondría en el entorno de un proceso de GitHub para
+      # no ganar nada.
+      #
+      # `jobs deploy` es crear-o-actualizar, así que este paso vale igual la
+      # primera vez que la enésima y **el Job siempre corre la imagen de este
+      # commit**, no la del anterior. Con `jobs create` habría que acordarse de
+      # actualizarlo a mano, y el día que alguien lo olvidara migraría con un
+      # esquema viejo sin que nada lo dijera.
+      #
+      # ⚠️ **`prisma migrate deploy` sobre una base que ya tiene tablas pero no
+      # `_prisma_migrations` falla con `P3005`.** No es un fallo del comando: es
+      # que no puede saber qué se aplicó ya. Si sale, se marcan como aplicadas
+      # las que correspondan (`prisma migrate resolve --applied <nombre>`) y se
+      # vuelve a lanzar. Falla **antes** de desplegar, así que la revisión que
+      # está sirviendo no se toca.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Migrar la base de datos
+        run: |
+          gcloud run jobs deploy "${SERVICE}-migrate" \
+            --image "${IMAGE}:${SHA}" \
+            --region "${REGION}" \
+            --set-secrets "DATABASE_URL=pmo-database-url:latest" \
+            --max-retries 0 \
+            --task-timeout 10m \
+            --command npm \
+            --args "--workspace,@pmo/api,exec,--,prisma,migrate,deploy" \
+            --quiet
+
+          # `--wait` es lo que convierte esto en una puerta: sin él el comando
+          # vuelve en cuanto encola la ejecución y el despliegue seguiría
+          # adelante sin saber si la migración cuajó.
+          gcloud run jobs execute "${SERVICE}-migrate" \
+            --region "${REGION}" \
+            --wait
+
+      # ─────────────────────────────────────────────────────────────────────
       # GOOGLE_CLOUD_PROJECT — leer esto antes de tocar la lista de variables
       #
       # **Cloud Run NO la inyecta.** Inyecta `K_SERVICE` y `K_REVISION`, que la

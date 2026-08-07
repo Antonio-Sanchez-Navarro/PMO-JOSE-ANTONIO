@@ -3,11 +3,44 @@ name: CI
 # La rama de trabajo de este proyecto es `master`. Hasta el 2026-07-30 esto
 # escuchaba `main`, que no existe: el CI no se disparó nunca y por eso un
 # `npm run lint` roto sobrevivió al proyecto entero sin que nadie lo notara.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# paths-ignore — y por qué el filtro vive AQUÍ y no en `deploy.yml`
+#
+# `deploy.yml` se dispara por `workflow_run` encadenado a este archivo, y
+# **`workflow_run` no admite `paths` ni `paths-ignore`**: GitHub los ignora en
+# silencio, sin error de sintaxis y sin aviso. Escribirlos allí daría una
+# protección que no existe, que es peor que no tenerla.
+#
+# Filtrando aquí sale gratis: si este workflow no corre, no hay `workflow_run`
+# que concluya, así que el despliegue tampoco se dispara. Un commit de solo
+# bitácora deja de costar un build de Docker y una revisión nueva en producción.
+#
+# **Solo se salta si TODOS los archivos del push encajan en la lista.** Un
+# commit que toque `CLAUDE_MEMORY.md` y un `.ts` corre entero, que es lo que
+# hay que querer: lo que decide es el código que va dentro, no la proporción
+# de documentación.
+#
+# `README.md` y `docs/` entran; `.github/**` **no**, a propósito: un cambio en
+# estos workflows tiene que probarse a sí mismo.
+# ─────────────────────────────────────────────────────────────────────────
 on:
   push:
     branches: [ "master" ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - '.editorconfig'
+      - 'LICENSE'
   pull_request:
     branches: [ "master" ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - '.editorconfig'
+      - 'LICENSE'
 
 jobs:
   build-and-lint:

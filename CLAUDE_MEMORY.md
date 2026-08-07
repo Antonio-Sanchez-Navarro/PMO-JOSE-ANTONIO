@@ -27,6 +27,21 @@ mano en otro sitio**, y ninguno de los dos lo puede adivinar el despliegue:
   inventado que pasa el guardarraíl porque la **ruta** sí es correcta.
 - `WEB_URL` — hoy `https://pmo-frontend.vercel.app`, que responde 200.
 
+- **El CI se salta los commits de solo documentación** (encargo de Doc,
+  2026-08-07). `paths-ignore` con `**/*.md`, `docs/`, `.gitignore`,
+  `.editorconfig` y `LICENSE`.
+
+  **El filtro va en `ci.yml` y no en `deploy.yml`, y esto es lo que hay que
+  recordar**: `deploy.yml` se dispara por `workflow_run`, y **`workflow_run` no
+  admite `paths` ni `paths-ignore`** — GitHub los ignora en silencio, sin error
+  de sintaxis y sin aviso, así que escribirlos allí daría una protección
+  inexistente. Filtrando en el CI sale gratis: sin run de CI no hay
+  `workflow_run` que concluya, y el despliegue tampoco se dispara.
+
+  Se salta **solo si todos** los archivos del push encajan; un commit mixto
+  corre entero. `.github/**` queda fuera de la lista a propósito: un cambio en
+  los workflows tiene que probarse a sí mismo.
+
 - ✅ **Primer despliegue en verde por la pipeline en la historia del proyecto**
   (`472a6ba`, run `31201583614`). Comprobado contra la URL pública, sin
   credenciales de por medio:
@@ -90,6 +105,58 @@ mano en otro sitio**, y ninguno de los dos lo puede adivinar el despliegue:
   es lo que cualquiera espera de una API; conviene repetir el porqué al pedirlo:
   `main.ts` **no llama a `setGlobalPrefix`**, así que la única ruta que existe
   es `/auth/google/callback`.
+
+### Migraciones en producción (2026-08-07, encargo de Doc)
+
+**Nunca se han ejecutado por ningún job.** `gcloud run jobs list` devolvía cero
+elementos, así que la línea de `GRAVITY_MEMORY.md` que dice «las migraciones de
+Prisma se ejecutan sobre Neon durante el despliegue» describe algo que no
+existía: ni había Job, ni había paso en el workflow.
+
+Desde este encargo, `deploy.yml` trae un paso **`Migrar la base de datos`**
+entre publicar la imagen y desplegar la revisión, con un Job de Cloud Run
+(`pmo-api-migrate`) que corre `prisma migrate deploy`.
+
+- **El orden importa y es el que es.** Migrar después de desplegar significa
+  que la revisión nueva pide columnas que aún no existen. Migrando antes, la
+  ventana de riesgo es la contraria y sí se puede controlar: entre migrar y
+  desplegar sirve la revisión **vieja** contra el esquema **nuevo**. De ahí la
+  regla al escribir migraciones: **compatibles con el código que ya está
+  arriba**. Añadir es compatible; renombrar y borrar no, y van en dos
+  despliegues.
+- **Un Job y no un paso del runner.** El motivo escrito en su día —«el runner
+  no llega a Cloud SQL sin el Auth Proxy»— **caducó con la mudanza a Neon**,
+  que es Postgres público. El motivo que sigue en pie es que así `DATABASE_URL`
+  **no sale de Google Cloud**.
+- **`jobs deploy` (crear-o-actualizar), no `jobs create`.** El Job apunta
+  siempre a la imagen de este commit. Con `create`, actualizarlo quedaría en
+  manos de que alguien se acuerde, y el día que se olvidara migraría con un
+  esquema viejo sin decirlo.
+- `--max-retries 0`: una migración que falla se mira, no se reintenta sola.
+- ✅ **El comando del Job está verificado dentro de la imagen real**, construida
+  en local, antes de mandarlo a producción. Las tres cosas que había que
+  comprobar y no se podían suponer:
+
+  | Duda | Resultado |
+  |---|---|
+  | ¿Sobrevive la CLI de Prisma al `--omit=dev`? | Sí — `Prisma CLI Version : 5.22.0`. Es dependencia **de producción**, no de desarrollo |
+  | ¿Encuentra el esquema? | Sí — `Prisma schema loaded from prisma/schema.prisma`; `npm --workspace` sitúa el cwd en `apps/api` |
+  | ¿Falla por otra cosa? | No. El único error es `DATABASE_URL` ausente, que es justo lo que inyecta Secret Manager |
+
+  La identidad también: el Job corre como `614812477499-compute@developer…`,
+  la **misma** del servicio, que tiene `roles/secretmanager.secretAccessor` a
+  nivel de proyecto. Por eso el Job no lleva `--service-account`: heredarla es
+  lo correcto, y fijarla a mano sería otra cosa que mantener sincronizada.
+
+  _De paso, sobre el peso de la imagen_: **Docker 29 reporta el tamaño
+  comprimido** (153 MB) en `docker images`. El real sigue siendo ~882 MB
+  —`node_modules` son 440 MB y `googleapis` 204 MB de ellos—, así que la cifra
+  documentada y la propuesta de pasar a `@googleapis/gmail` siguen vigentes.
+- ⚠️ **Riesgo real en la primera ejecución: `P3005`.** Si Neon ya tiene tablas
+  pero no la tabla `_prisma_migrations`, `migrate deploy` se planta porque no
+  puede saber qué se aplicó. Se resuelve marcando lo ya aplicado
+  (`prisma migrate resolve --applied <nombre>`). **Falla antes de desplegar**,
+  así que la revisión que sirve no se toca. Hay 9 migraciones en el repo.
 
 ### Cloud Run nace privado, y eso no se ve en ningún log de la aplicación
 
