@@ -58,6 +58,17 @@ mano en otro sitio**, y ninguno de los dos lo puede adivinar el despliegue:
   en la variable y en el cliente OAuth. **Un pipeline en verde no significa que
   el login funcione**: la sonda solo mira `/health/ready`, que no toca OAuth.
 
+  **El `/api/v1` se ha escrito dos veces, y la segunda ya con el host bueno.**
+  El 2026-08-07 la variable pasó a
+  `https://pmo-api-mlpuuasqka-uc.a.run.app/api/v1/auth/google/callback`: host
+  correcto, ruta inventada. **El guardarraíl lo paró en el runner**, con el
+  motivo escrito, antes de publicar revisión — que es justo para lo que se
+  añadió la comprobación de la ruta completa y no del sufijo. Que reincida
+  siendo el error mejor documentado del proyecto dice que el prefijo `/api/v1`
+  es lo que cualquiera espera de una API; conviene repetir el porqué al pedirlo:
+  `main.ts` **no llama a `setGlobalPrefix`**, así que la única ruta que existe
+  es `/auth/google/callback`.
+
 ### Cloud Run nace privado, y eso no se ve en ningún log de la aplicación
 
 El segundo obstáculo del 2026-08-07, y el más engañoso de los dos. Con los ids
