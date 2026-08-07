@@ -155,16 +155,22 @@ jobs:
       # vuelve a lanzar. Falla **antes** de desplegar, así que la revisión que
       # está sirviendo no se toca.
       # ─────────────────────────────────────────────────────────────────────
+      # ⚠️ **`--args=` con el igual, no separado por espacio.** El primer
+      # elemento de la lista es `--workspace`, y con `--args "…"` el parser de
+      # gcloud ve algo que empieza por `--`, lo toma por la bandera siguiente y
+      # muere con `argument --args: expected one argument`. Pegado con `=`, el
+      # valor se lee entero. Comprobado con las dos formas: sin el igual falla
+      # al parsear, con él llega hasta la llamada a la API.
       - name: Migrar la base de datos
         run: |
           gcloud run jobs deploy "${SERVICE}-migrate" \
-            --image "${IMAGE}:${SHA}" \
-            --region "${REGION}" \
-            --set-secrets "DATABASE_URL=pmo-database-url:latest" \
-            --max-retries 0 \
-            --task-timeout 10m \
-            --command npm \
-            --args "--workspace,@pmo/api,exec,--,prisma,migrate,deploy" \
+            --image="${IMAGE}:${SHA}" \
+            --region="${REGION}" \
+            --set-secrets="DATABASE_URL=pmo-database-url:latest" \
+            --max-retries=0 \
+            --task-timeout=10m \
+            --command=npm \
+            --args="--workspace,@pmo/api,exec,--,prisma,migrate,deploy" \
             --quiet
 
           # `--wait` es lo que convierte esto en una puerta: sin él el comando
