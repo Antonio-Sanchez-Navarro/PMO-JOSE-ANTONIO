@@ -27,10 +27,29 @@ mano en otro sitio**, y ninguno de los dos lo puede adivinar el despliegue:
   inventado que pasa el guardarraíl porque la **ruta** sí es correcta.
 - `WEB_URL` — hoy `https://pmo-frontend.vercel.app`, que responde 200.
 
-- **El despliegue por pipeline quedó resuelto**, tras dos obstáculos que se
-  descubrieron uno detrás del otro. Ninguno de los dos era del código de la
-  API: la aplicación llevaba días lista y lo que fallaba era cómo se le
-  entregaba la configuración.
+- ✅ **Primer despliegue en verde por la pipeline en la historia del proyecto**
+  (`472a6ba`, run `31201583614`). Comprobado contra la URL pública, sin
+  credenciales de por medio:
+
+  | Sonda | Respuesta |
+  |---|---|
+  | `GET /health/ready` | **200** · `database up` (66 ms) · `redis up` (34 ms) |
+  | `GET /health/live` | **200** |
+  | `GET /auth/me` sin cookie | **401** |
+  | `GET /auth/google` | **302** hacia Google |
+
+  Las dos últimas son las que confirman que **abrir el servicio no lo dejó
+  desprotegido**: la puerta de Cloud Run deja pasar a cualquiera y es el
+  `AuthGuard` el que corta, que es exactamente el reparto que se diseñó. Y el
+  200 de `ready` es la primera prueba viva de que **Neon y Upstash responden
+  desde la revisión desplegada por la pipeline**, no desde una manual.
+
+- **Costó tres obstáculos encadenados, y ninguno era del código de la API.** La
+  aplicación llevaba días lista; lo que fallaba era cómo se le entregaba la
+  configuración. Los tres se parecen en algo que conviene no olvidar: **los tres
+  se veían desde fuera del proceso y ninguno desde dentro**. Un secreto que no
+  existe, una puerta que rechaza antes del contenedor y una variable con la ruta
+  equivocada no dejan ni una línea en el log de la aplicación.
 - ⚠️ **Ningún despliegue había llegado nunca a verde por la pipeline.** Los
   siete runs del 2026-08-05 fallaron, y el servicio quedó **sin URL y sin
   revisión lista**. Lo que hay en las bitácoras dando el despliegue por
@@ -50,13 +69,16 @@ mano en otro sitio**, y ninguno de los dos lo puede adivinar el despliegue:
   inofensiva por fallar pronto; en Cloud Run, la revisión rota se lleva por
   delante a la buena. Comprobar antes de cablear (`gcloud secrets list`) cuesta
   un comando.
-- ⚠️ **`GOOGLE_REDIRECT_URI` apunta a un host inventado**:
-  `https://pmo-api-dummy-url.run.app/auth/google/callback`. Pasa el guardarraíl
-  porque la **ruta** es la correcta, que es lo único que el workflow puede
-  comprobar —el host real no existe hasta que hay revisión lista—, y el login
-  fallará con `redirect_uri_mismatch` hasta que Gravity ponga la URL de verdad
-  en la variable y en el cliente OAuth. **Un pipeline en verde no significa que
-  el login funcione**: la sonda solo mira `/health/ready`, que no toca OAuth.
+- ⚠️ **El login todavía no está probado, y el verde no lo prueba.** La variable
+  `GOOGLE_REDIRECT_URI` ya vale
+  `https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback` (puesta el
+  2026-08-07), pero **falta la otra mitad**: autorizar esa misma cadena en el
+  cliente OAuth de la consola de Google. Hasta que eso ocurra, Google devuelve
+  `redirect_uri_mismatch` desde su propia pantalla — un error que parece del
+  cliente OAuth y no del despliegue. **Un pipeline en verde no significa que el
+  login funcione**: la sonda solo mira `/health/ready`, que no toca OAuth, y el
+  302 de `/auth/google` demuestra que salimos hacia Google, no que Google nos
+  acepte de vuelta.
 
   **El `/api/v1` se ha escrito dos veces, y la segunda ya con el host bueno.**
   El 2026-08-07 la variable pasó a
