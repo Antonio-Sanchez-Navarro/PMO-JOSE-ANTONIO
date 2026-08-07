@@ -43,7 +43,20 @@ export class AuthController {
     @InjectQueue("gmail-sync") private readonly gmailQueue: Queue,
   ) {}
 
-  /** Inicia el login: genera `state` anti-CSRF y redirige al consentimiento de Google. */
+  /**
+   * Inicia el login: genera `state` anti-CSRF y redirige al consentimiento de Google.
+   *
+   * **Esta cookie se queda en `lax` a propósito, y no es un olvido al pasar las
+   * de sesión a `none`.** Las dos puntas de su viaje son navegaciones de primer
+   * nivel —el frontend entra con un `<a href>` y Google devuelve al navegador
+   * con otro redirect—, y `Lax` **sí** se manda en una navegación GET de primer
+   * nivel aunque venga de otro sitio. O sea que funciona.
+   *
+   * Y `lax` es además lo correcto: esta cookie **es** la defensa anti-CSRF del
+   * login. Aflojarla a `none` la haría viajar también en peticiones cross-site
+   * que no son navegaciones, que es justo lo que se quiere impedir. Se afloja
+   * lo que estorba, no lo que está al lado.
+   */
   @Get("google")
   googleLogin(@Res() res: Response) {
     const state = randomBytes(16).toString("hex");

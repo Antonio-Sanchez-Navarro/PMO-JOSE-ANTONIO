@@ -31,13 +31,37 @@ export class SessionService {
    *
    * `path: "/"` es intencional: en desarrollo el frontend llega a la API por el
    * proxy de Vite (`/api/...`), así que una cookie limitada a `/auth` no se
-   * enviaría. `sameSite: lax` permite recibirla en el redirect del callback de Google.
+   * enviaría.
+   *
+   * **`sameSite` cambia con el entorno, y no por gusto: en producción el
+   * frontend y la API son sitios distintos.** La SPA vive en Vercel y la API en
+   * Cloud Run, así que cada `fetch` del tablero es una petición *cross-site* y
+   * el navegador **no adjunta** una cookie `Lax` — la descarta en silencio, sin
+   * error de red ni aviso en consola. El síntoma es un 401 en todas las rutas
+   * justo después de un login que pareció ir bien.
+   *
+   * `None` obliga a `secure`: el navegador **rechaza** un `SameSite=None` sin
+   * `Secure`, así que las dos van juntas o no van. Cloud Run sirve por HTTPS,
+   * de modo que en producción se cumple sola.
+   *
+   * En desarrollo se queda en `lax`, que es lo correcto **y** lo único que
+   * funciona: el frontend llega por el proxy de Vite —mismo origen, no hace
+   * falta `None`— y `secure` sobre `http://localhost` dejaría la cookie sin
+   * guardar en la mitad de los navegadores.
+   *
+   * ⚠️ Esto depende de que el navegador acepte cookies de terceros. Con el
+   * bloqueo de terceros activado, `SameSite=None` tampoco viaja. La solución
+   * de fondo no es una bandera sino un **dominio propio** que ponga API y
+   * frontend en el mismo sitio (`api.ejemplo.com` y `app.ejemplo.com`), y
+   * entonces esto vuelve a `lax`.
    */
   private cookieOptions(maxAgeSec: number): CookieOptions {
+    const enProduccion = this.config.get("NODE_ENV") === "production";
+
     return {
       httpOnly: true,
-      sameSite: "lax",
-      secure: this.config.get("NODE_ENV") === "production",
+      sameSite: enProduccion ? "none" : "lax",
+      secure: enProduccion,
       path: "/",
       maxAge: maxAgeSec * 1000,
     };

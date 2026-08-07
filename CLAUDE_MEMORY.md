@@ -22,9 +22,10 @@ Servicio `pmo-api`, región `us-central1`, proyecto `pmo-dashboard-503418`
 mano en otro sitio**, y ninguno de los dos lo puede adivinar el despliegue:
 
 - `GOOGLE_REDIRECT_URI` = `https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback`
-  — en las variables del repositorio **y** en las URIs autorizadas del cliente
-  OAuth. Hoy la variable vale `https://pmo-api-dummy-url.run.app/...`, un host
-  inventado que pasa el guardarraíl porque la **ruta** sí es correcta.
+  — hace falta en **dos sitios**: las variables del repositorio (✅ puesta el
+  2026-08-07) y las URIs autorizadas del cliente OAuth (⏳ pendiente, es de
+  Gravity y no se hace desde aquí). Mientras falte la segunda, el login muere
+  con `redirect_uri_mismatch` aunque el despliegue esté en verde.
 - `WEB_URL` — hoy `https://pmo-frontend.vercel.app`, que responde 200.
 
 - **El CI se salta los commits de solo documentación** (encargo de Doc,
@@ -105,6 +106,66 @@ mano en otro sitio**, y ninguno de los dos lo puede adivinar el despliegue:
   es lo que cualquiera espera de una API; conviene repetir el porqué al pedirlo:
   `main.ts` **no llama a `setGlobalPrefix`**, así que la única ruta que existe
   es `/auth/google/callback`.
+
+### 🔴 La base de producción estaba VACÍA (hallazgo del 2026-08-07)
+
+La primera ejecución del Job lo destapó: aplicó **las nueve migraciones desde
+cero**, empezando por `20260724000000_init`. Que corra la migración inicial
+significa que Neon **no tenía ni una sola tabla**.
+
+**Y nada lo delataba.** `/health/ready` llevaba días devolviendo
+`database: up`, y era cierto: la sonda comprueba **conectividad**, no esquema —
+un `SELECT 1` funciona igual de bien contra una base vacía. Así que la API
+figuraba sana en todos los tableros, con la revisión lista, la sonda en verde y
+los logs impecables, mientras **cualquier petición que tocara una tabla habría
+muerto** con `relation does not exist`. Nunca fue funcional en producción; solo
+lo parecía.
+
+Es el mismo patrón que los otros fallos de la jornada: **visible desde fuera del
+proceso, invisible desde dentro**. Y es la cuarta afirmación de
+`GRAVITY_MEMORY.md` que los hechos desmienten — no es que faltara el Job, es que
+no había esquema.
+
+_Por qué no salió `P3005`_: ese error necesita una base **con** tablas y **sin**
+registro de migraciones. Esta no tenía nada, así que el camino limpio era el
+único posible.
+
+**Lo que deja como deuda**: la sonda de preparación miente por omisión. Una
+comprobación que tocara una tabla real —o `prisma migrate status`— distinguiría
+«conecta» de «sirve». Sin asignar.
+
+### Cookies entre sitios distintos (2026-08-07, encargo de Doc)
+
+En producción el frontend (Vercel) y la API (Cloud Run) son **sitios distintos**,
+así que cada `fetch` del tablero es una petición *cross-site*.
+
+- `SameSite` depende del entorno: **`none` en producción**, `lax` en desarrollo.
+  Con `lax` en producción el navegador **descarta la cookie sin avisar** —sin
+  error de red, sin nada en consola— y el síntoma es un 401 en todas las rutas
+  justo después de un login que pareció ir bien. Del lado del servidor no hay
+  nada que mirar: la petición llega, llega sin cookie.
+- **`none` obliga a `secure`**: el navegador rechaza un `SameSite=None` sin
+  `Secure`. Van juntas o no van. En Cloud Run se cumple sola porque sirve HTTPS.
+- En desarrollo se queda `lax` **y sin `secure`**, que además de correcto es lo
+  único que funciona: por el proxy de Vite el frontend es mismo origen, y
+  `secure` sobre `http://localhost` dejaría la cookie sin guardar.
+- `clear()` borra con **las mismas señas** con las que puso. Un `clearCookie`
+  con otro `sameSite`/`secure`/`path` no identifica la misma cookie y el logout
+  no borraría nada. Hay prueba.
+- ⚠️ **La cookie de `state` del OAuth se queda en `lax`, y no es un olvido.**
+  Sus dos puntas son navegaciones de primer nivel (un `<a href>` y el redirect
+  de Google), y `Lax` **sí** viaja en una navegación GET de primer nivel aunque
+  venga de otro sitio. Además es la defensa anti-CSRF del login: aflojarla a
+  `none` la haría viajar en peticiones cross-site que no son navegaciones, que
+  es justo lo que debe impedir. Se afloja lo que estorba, no lo que está al lado.
+- El CORS ya traía `credentials: true` desde el Sprint 1, en `main.ts` y en el
+  gateway de sockets. No hizo falta tocarlo.
+
+⚠️ **Esto depende de que el navegador acepte cookies de terceros.** Con el
+bloqueo de terceros activado, `SameSite=None` tampoco viaja. La solución de
+fondo no es una bandera sino un **dominio propio** que ponga API y frontend en
+el mismo sitio (`api.ejemplo.com` + `app.ejemplo.com`); entonces esto vuelve a
+`lax` y el problema desaparece de raíz.
 
 ### Migraciones en producción (2026-08-07, encargo de Doc)
 
