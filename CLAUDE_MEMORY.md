@@ -9,6 +9,34 @@
 
 ---
 
+## Estado a 2026-08-07
+
+- ⚠️ **Ningún despliegue ha llegado nunca a verde por la pipeline.** Los siete
+  runs de `Deploy API to Cloud Run` del 2026-08-05 fallaron, y el servicio
+  quedó **sin URL y sin revisión lista**. Lo que hay en las bitácoras dando el
+  despliegue por validado describe el **despliegue manual** de Gravity
+  (revisión `pmo-api-00008-mqz`, lista a las 16:39), no la pipeline.
+- **Los `CLAUDE_MODEL_*` vuelven a `vars` opcionales** (orden de Doc, 2026-08-07)
+  y con eso se deshace `d3547fc`. Ver abajo la sección de variables: es la
+  segunda vez que se intentan por Secret Manager y la segunda que `gcloud` lo
+  desmiente.
+
+  **Lo que hay que recordar de esto no es la variable, es cómo se rompió.** Se
+  movieron a `--set-secrets` sobre un reporte de que los secretos ya estaban
+  aprovisionados. No lo estaban —`gcloud secrets list` devuelve ocho y ninguno
+  es de modelos—, así que `gcloud run deploy` rechazó la revisión y el servicio
+  **perdió la ruta que ya tenía**: la 00009 condenada retiró a la 00008, que
+  estaba sirviendo. Una configuración que falla en el despliegue no es
+  inofensiva por fallar pronto; en Cloud Run, la revisión rota se lleva por
+  delante a la buena. Comprobar antes de cablear (`gcloud secrets list`) cuesta
+  un comando.
+- ⚠️ **`GOOGLE_REDIRECT_URI` apunta a un host inventado**:
+  `https://pmo-api-dummy-url.run.app/auth/google/callback`. Pasa el guardarraíl
+  porque la **ruta** es la correcta, que es lo único que el workflow puede
+  comprobar —el host real no existe hasta que hay revisión lista—, y el login
+  fallará con `redirect_uri_mismatch` hasta que Gravity ponga la URL de verdad
+  en la variable y en el cliente OAuth.
+
 ## Estado a 2026-08-05
 
 - **525 pruebas en 20 suites**, todas en verde (`73ade8a`). Las 15 nuevas cubren
@@ -24,19 +52,8 @@
   Gravity levantó el contenedor: escucha en el 8080 y `/health/ready` devuelve
   **200** contra Neon y Upstash. Es lo que faltaba — hasta ese momento ninguna
   revisión había llegado a arrancar, y ninguna prueba de las nuestras podía
-  demostrarlo. La degradación segura del arranque hizo su papel.
-- **Los `CLAUDE_MODEL_*` se consumen definitivamente de GCP Secret Manager**
-  (`pmo-claude-model-classify`, `-reasoning`, `-cheap`), decidido el 2026-08-05
-  ahora que Gravity los aprovisionó con su IAM. Vuelven al `--set-secrets`, y el
-  rodeo por `vars` queda solo como nota histórica: se hizo cuando el propio
-  `gcloud` demostró que los secretos no existían todavía.
-
-  **La fuente de verdad es la nube; el respaldo del código sigue siendo la
-  segunda línea.** `ai.service.ts` y `model-tiers.ts` conservan su valor por
-  defecto y su aviso en el log. Las dos capas fallan distinto y a propósito: un
-  secreto que falta tumba el `gcloud run deploy` **sin publicar revisión**, y si
-  aun así llegara una revisión sin la variable, la API arranca y lo dice en la
-  primera línea del log en vez de dejar el tablero sin servicio.
+  demostrarlo. La degradación segura del arranque hizo su papel. _La 00009 la
+  retiró unos minutos después; ver el estado del 2026-08-07._
 
 ## Estado a 2026-08-03
 
@@ -179,13 +196,26 @@ declarar «no hay error en los logs»:
   lados: `AiService` degrada a un modelo por defecto con aviso en vez de impedir
   el arranque, y el despliegue las inyecta.
 
-  **Van por `vars` del repositorio, no por Secret Manager.** Se intentaron
-  primero como secretos y el despliegue lo desmintió: `Secret
+  **Van por `vars` del repositorio, no por Secret Manager** — y esto se decidió
+  **dos veces**, porque en medio se deshizo. Se intentaron como secretos y el
+  despliegue lo desmintió: `Secret
   projects/614812477499/secrets/pmo-claude-model-classify/versions/latest was
-  not found` — los tres. No son credenciales, son ids de modelo públicos. Y se
-  añaden **solo si están puestas**: como el código trae un valor bueno y lo
-  anuncia en el log, una variable que falta cambia el modelo, no tumba el
-  despliegue.
+  not found` — los tres. `f75cfb2` los pasó a `vars`; `d3547fc` los devolvió a
+  `--set-secrets` sobre un reporte de que ya estaban aprovisionados, y volvió a
+  fallar con el mismo mensaje literal. `gcloud secrets list` sigue devolviendo
+  ocho secretos, ninguno de modelos. Restaurado el 2026-08-07 por orden de Doc.
+
+  No son credenciales, son ids de modelo públicos. Y se añaden **solo si están
+  puestas**: como el código trae un valor bueno y lo anuncia en el log, una
+  variable que falta cambia el modelo, no tumba el despliegue. Hoy **no está
+  puesta ninguna de las tres**, así que la API arrancará con sus modelos por
+  defecto y lo dirá en el log; el workflow además emite un `::notice::` por cada
+  una que falta, para que no sea un silencio.
+
+  ⚠️ **Y la lección que costó el servicio caído**: una revisión que Cloud Run
+  rechaza **retira a la que estaba sirviendo**. Fallar en el `gcloud run deploy`
+  no es el fallo barato que parecía cuando se escribió que era «ruidoso pero
+  bueno».
 - **`CLAUDE_MODEL_REASONING` y `CLAUDE_MODEL_CHEAP` no las leía nadie.** El
   copiloto usaba solo `COPILOT_ANTHROPIC_MODEL_*`, así que configurarlas en la
   nube no cambiaba nada. Desde el 2026-08-05 `tierConfig` encadena

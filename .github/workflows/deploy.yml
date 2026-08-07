@@ -156,26 +156,31 @@ jobs:
       # ─────────────────────────────────────────────────────────────────────
       #
       # ─────────────────────────────────────────────────────────────────────
-      # CLAUDE_MODEL_* — Secret Manager es la fuente de verdad
+      # CLAUDE_MODEL_* — variables de repositorio, y opcionales
       #
-      # Decidido el 2026-08-05: los tres ids de modelo se consumen de Secret
-      # Manager (`pmo-claude-model-classify`, `-reasoning`, `-cheap`), que es
-      # donde se aprovisionan y donde tienen concedido el IAM. Cambiar de modelo
-      # es publicar una versión nueva del secreto y redesplegar, sin tocar este
-      # archivo ni las variables del repositorio.
+      # **Los tres secretos no existen.** Se intentaron por Secret Manager dos
+      # veces y las dos lo desmintió el propio `gcloud`:
+      # `Secret projects/614812477499/secrets/pmo-claude-model-classify/versions/latest
+      # was not found`. La segunda vez (`d3547fc`, 2026-08-05) se volvieron a
+      # poner sobre un reporte de que ya estaban aprovisionados; no lo estaban,
+      # y `gcloud secrets list` sigue mostrando ocho secretos sin estos tres.
+      # El coste no fue solo un despliegue rojo: la revisión condenada
+      # (`pmo-api-00009-pxt`) dejó al servicio **sin ruta y sin URL**, tumbando
+      # la 00008, que sí estaba lista.
       #
-      # Hubo un rodeo por `vars` que duró una tarde: cuando se añadieron aquí,
-      # los secretos todavía no existían y `gcloud` tumbó el despliegue con
-      # `Secret .../pmo-claude-model-classify/versions/latest was not found`.
-      # Ya existen. Queda escrito porque el mensaje se repetirá tal cual si
-      # alguien despliega contra un proyecto donde falten.
+      # No son credenciales —son ids de modelo, públicos— así que viven en
+      # `vars` del repositorio, donde cambiarlos no obliga a crear una versión
+      # de secreto.
       #
-      # **Que estén aquí no vuelve a hacerlos obligatorios en el código.**
-      # `ai.service.ts` y `model-tiers.ts` conservan su valor por defecto y su
-      # aviso en el log: son la segunda línea, la que evitó que un id de modelo
-      # ausente dejara la API entera sin arrancar. Esta lista falla antes y más
-      # fuerte —en el propio `gcloud run deploy`, sin publicar revisión—, que es
-      # justo lo que se quiere de una configuración que sí existe.
+      # **Opcionales a propósito.** El código trae un valor bueno para los tres
+      # (`ai.service.ts` y `model-tiers.ts`) y avisa en el log cuando usa el
+      # suyo, así que una variable que falta cambia el modelo, no tumba el
+      # despliegue. Es lo contrario de `GOOGLE_REDIRECT_URI`, que no se puede
+      # adivinar y por eso sí para el despliegue.
+      #
+      # Si algún día se prefieren en Secret Manager, se crean los tres secretos
+      # —comprobando que existen, no dando por buena la palabra de que existen—
+      # y se mueven a `--set-secrets`; el código no se entera.
       # ─────────────────────────────────────────────────────────────────────
       - name: Desplegar en Cloud Run
         run: |
@@ -224,13 +229,32 @@ jobs:
             exit 1
           fi
 
+          # Los ids de modelo se añaden **solo si están puestos**: pasarlos
+          # vacíos escribiría `CLAUDE_MODEL_CLASSIFY=` en la revisión, que el
+          # código trata como ausente pero que en la consola de Cloud Run se lee
+          # como una variable configurada a nada. Mejor que no aparezca.
+          ENV_VARS="NODE_ENV=production,LOG_FORMAT=gcp,GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
+          ENV_VARS="${ENV_VARS},WEB_URL=${FRONTEND_URL:-https://pmo-frontend.placeholder.com}"
+          ENV_VARS="${ENV_VARS},GOOGLE_REDIRECT_URI=${REDIRECT_URI},SERVICE_VERSION=${SHA}"
+
+          for VARIABLE in \
+            "CLAUDE_MODEL_CLASSIFY=${{ vars.CLAUDE_MODEL_CLASSIFY }}" \
+            "CLAUDE_MODEL_REASONING=${{ vars.CLAUDE_MODEL_REASONING }}" \
+            "CLAUDE_MODEL_CHEAP=${{ vars.CLAUDE_MODEL_CHEAP }}"; do
+            if [ -n "${VARIABLE#*=}" ]; then
+              ENV_VARS="${ENV_VARS},${VARIABLE}"
+            else
+              echo "::notice::${VARIABLE%%=*} no está definida; la API usará su modelo por defecto y lo dirá en el log de arranque."
+            fi
+          done
+
           gcloud run deploy "${SERVICE}" \
             --image "${IMAGE}:${SHA}" \
             --region "${REGION}" \
             --platform managed \
             --port 8080 \
-            --set-env-vars "NODE_ENV=production,LOG_FORMAT=gcp,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},WEB_URL=${FRONTEND_URL:-https://pmo-frontend.placeholder.com},GOOGLE_REDIRECT_URI=${REDIRECT_URI},SERVICE_VERSION=${SHA}" \
-            --set-secrets "DATABASE_URL=pmo-database-url:latest,REDIS_URL=pmo-redis-url:latest,JWT_SECRET=pmo-jwt-secret:latest,TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest,GOOGLE_CLIENT_ID=pmo-google-client-id:latest,GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest,ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest,GEMINI_API_KEY=pmo-gemini-api-key:latest,CLAUDE_MODEL_CLASSIFY=pmo-claude-model-classify:latest,CLAUDE_MODEL_REASONING=pmo-claude-model-reasoning:latest,CLAUDE_MODEL_CHEAP=pmo-claude-model-cheap:latest" \
+            --set-env-vars "${ENV_VARS}" \
+            --set-secrets "DATABASE_URL=pmo-database-url:latest,REDIS_URL=pmo-redis-url:latest,JWT_SECRET=pmo-jwt-secret:latest,TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest,GOOGLE_CLIENT_ID=pmo-google-client-id:latest,GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest,ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest,GEMINI_API_KEY=pmo-gemini-api-key:latest" \
             --quiet
 
       # Comprobación de verdad: que la revisión conteste, no que el comando de
