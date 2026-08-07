@@ -11,11 +11,31 @@
 
 ## Estado a 2026-08-07
 
-- ⚠️ **Ningún despliegue ha llegado nunca a verde por la pipeline.** Los siete
-  runs de `Deploy API to Cloud Run` del 2026-08-05 fallaron, y el servicio
-  quedó **sin URL y sin revisión lista**. Lo que hay en las bitácoras dando el
-  despliegue por validado describe el **despliegue manual** de Gravity
-  (revisión `pmo-api-00008-mqz`, lista a las 16:39), no la pipeline.
+### 🌐 La URL pública de la API
+
+```
+https://pmo-api-mlpuuasqka-uc.a.run.app
+```
+
+Servicio `pmo-api`, región `us-central1`, proyecto `pmo-dashboard-503418`
+(número 614812477499). **De aquí salen dos valores que hay que escribir a
+mano en otro sitio**, y ninguno de los dos lo puede adivinar el despliegue:
+
+- `GOOGLE_REDIRECT_URI` = `https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback`
+  — en las variables del repositorio **y** en las URIs autorizadas del cliente
+  OAuth. Hoy la variable vale `https://pmo-api-dummy-url.run.app/...`, un host
+  inventado que pasa el guardarraíl porque la **ruta** sí es correcta.
+- `WEB_URL` — hoy `https://pmo-frontend.vercel.app`, que responde 200.
+
+- **El despliegue por pipeline quedó resuelto**, tras dos obstáculos que se
+  descubrieron uno detrás del otro. Ninguno de los dos era del código de la
+  API: la aplicación llevaba días lista y lo que fallaba era cómo se le
+  entregaba la configuración.
+- ⚠️ **Ningún despliegue había llegado nunca a verde por la pipeline.** Los
+  siete runs del 2026-08-05 fallaron, y el servicio quedó **sin URL y sin
+  revisión lista**. Lo que hay en las bitácoras dando el despliegue por
+  validado describe el **despliegue manual** de Gravity (revisión
+  `pmo-api-00008-mqz`), no la pipeline.
 - **Los `CLAUDE_MODEL_*` vuelven a `vars` opcionales** (orden de Doc, 2026-08-07)
   y con eso se deshace `d3547fc`. Ver abajo la sección de variables: es la
   segunda vez que se intentan por Secret Manager y la segunda que `gcloud` lo
@@ -35,7 +55,37 @@
   porque la **ruta** es la correcta, que es lo único que el workflow puede
   comprobar —el host real no existe hasta que hay revisión lista—, y el login
   fallará con `redirect_uri_mismatch` hasta que Gravity ponga la URL de verdad
-  en la variable y en el cliente OAuth.
+  en la variable y en el cliente OAuth. **Un pipeline en verde no significa que
+  el login funcione**: la sonda solo mira `/health/ready`, que no toca OAuth.
+
+### Cloud Run nace privado, y eso no se ve en ningún log de la aplicación
+
+El segundo obstáculo del 2026-08-07, y el más engañoso de los dos. Con los ids
+de modelo arreglados, `gcloud run deploy` **salió con 0**, la revisión
+`pmo-api-00011-r2l` quedó lista y sirviendo el 100% del tráfico, y el
+despliegue siguió en rojo: la sonda se comió cinco **403** seguidos.
+
+**El 403 no era nuestro.** Lo devuelve la puerta de entrada de Cloud Run
+*antes* de tocar el contenedor, porque un servicio nuevo no admite invocación
+anónima. En los logs de la revisión se ve el arranque impecable —`Nest
+application successfully started`, `PMO API escuchando en el puerto 8080`,
+sonda TCP a la primera, las rutas mapeadas y el barrido de vencidas programado,
+que de paso confirma que Upstash responde— y **al lado**, las líneas de la
+puerta: `The request was not authenticated. Either allow unauthenticated
+invocations or set the proper Authorization header.` Buscar la causa dentro de
+la aplicación no habría dado nada nunca.
+
+Resuelto con `--allow-unauthenticated` en el despliegue (aprobado el
+2026-08-07). Los tres que llaman a esta API son anónimos por naturaleza y
+ninguno puede presentar un token de Google: el SPA desde el navegador, el
+callback de OAuth que abre Google en ese mismo navegador, y el empuje de
+Pub/Sub. **Abierto no es desprotegido**: los datos los guarda la capa de
+aplicación del Sprint 8 —`AuthGuard`, límite por IP, CORS acotado a `WEB_URL` y
+la firma OIDC del webhook—, y lo que queda público es lo que tiene que serlo.
+
+_Nota menor pendiente_: el aviso de `ai.service.ts` sigue diciendo «En Cloud Run
+llega desde Secret Manager», y ya no es cierto. Es texto de un log, no cambia
+comportamiento.
 
 ## Estado a 2026-08-05
 

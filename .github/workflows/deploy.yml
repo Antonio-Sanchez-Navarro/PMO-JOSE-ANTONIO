@@ -248,11 +248,34 @@ jobs:
             fi
           done
 
+          # ───────────────────────────────────────────────────────────────
+          # --allow-unauthenticated — quién llama a esta API
+          #
+          # Cloud Run nace **privado**: sin esta bandera, su puerta de entrada
+          # devuelve **403 a toda petición anónima antes de tocar el
+          # contenedor**, así que la API arranca perfectamente, la revisión
+          # queda lista y sirviendo, y aun así no la alcanza nadie. Es lo que
+          # tumbó el despliegue del 2026-08-07: el `gcloud run deploy` salió
+          # con 0 y fue la sonda de aquí abajo la que se comió cinco 403.
+          #
+          # Los tres que llaman son anónimos por naturaleza y ninguno puede
+          # presentar un token de Google: el SPA de Vercel llama desde el
+          # navegador del usuario, el callback de OAuth lo abre Google en ese
+          # mismo navegador, y Pub/Sub empuja al webhook.
+          #
+          # **Abierto no es desprotegido.** Lo que guarda los datos es la capa
+          # de la aplicación, entregada en el Sprint 8: `AuthGuard` con la
+          # cookie de sesión, el límite por IP en tres tramos, el CORS acotado
+          # a `WEB_URL` y el `PubSubAuthGuard`, que verifica la firma OIDC del
+          # webhook. Lo que queda público a propósito es lo que tiene que
+          # serlo: `/health/*` y el callback de OAuth.
+          # ───────────────────────────────────────────────────────────────
           gcloud run deploy "${SERVICE}" \
             --image "${IMAGE}:${SHA}" \
             --region "${REGION}" \
             --platform managed \
             --port 8080 \
+            --allow-unauthenticated \
             --set-env-vars "${ENV_VARS}" \
             --set-secrets "DATABASE_URL=pmo-database-url:latest,REDIS_URL=pmo-redis-url:latest,JWT_SECRET=pmo-jwt-secret:latest,TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest,GOOGLE_CLIENT_ID=pmo-google-client-id:latest,GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest,ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest,GEMINI_API_KEY=pmo-gemini-api-key:latest" \
             --quiet
