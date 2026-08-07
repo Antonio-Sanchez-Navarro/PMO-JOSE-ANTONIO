@@ -130,9 +130,24 @@ _Por qué no salió `P3005`_: ese error necesita una base **con** tablas y **sin
 registro de migraciones. Esta no tenía nada, así que el camino limpio era el
 único posible.
 
-**Lo que deja como deuda**: la sonda de preparación miente por omisión. Una
-comprobación que tocara una tabla real —o `prisma migrate status`— distinguiría
-«conecta» de «sirve». Sin asignar.
+**Saldado el mismo día.** `/health/ready` tiene ahora una tercera entrada,
+`schema`, que cuenta las filas de `_prisma_migrations`. Se pregunta por esa
+tabla y no por una del dominio porque responde a la pregunta correcta: no
+«existe esta tabla» —que la crea cualquiera a mano y da un falso verde— sino
+«se llegó a migrar».
+
+`database` y `schema` van **separadas a propósito**: son dos fallos que piden
+dos reacciones distintas. «No contesta» se espera; «no está migrada» se corre el
+Job. Fundidas en un solo `up`/`down` habría que entrar en los logs para saber
+cuál de las dos es.
+
+⚠️ **Solo falla si no hay esquema en absoluto, y esa acotación es la parte
+delicada.** Una migración a medias es lo **normal** durante unos segundos de
+cada despliegue, porque el Job migra mientras la revisión vieja sirve: si
+tumbara la sonda, cada despliegue sacaría del balanceador a **toda** la flota y
+el arreglo sería peor que el fallo. Lo mismo con una revertida, que necesita una
+persona y no un 503. Las dos se cuentan y se enseñan en el detalle —para
+diagnosticar, no para tumbar—. Hay una prueba por cada caso.
 
 ### Cookies entre sitios distintos (2026-08-07, encargo de Doc)
 

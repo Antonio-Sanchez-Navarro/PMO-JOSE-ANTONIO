@@ -74,18 +74,30 @@ export class HealthController {
   }
 
   /**
-   * Readiness: Postgres y Redis, los dos que hacen falta para atender.
+   * Readiness: Postgres, **su esquema** y Redis.
    *
    * Terminus devuelve **200** si todo responde y **503** con el detalle de cuál
    * falló si no. Redis entra porque sin él no hay ingesta de correo ni
    * clasificación: la API contestaría el tablero y se tragaría en silencio todo
    * lo que debía encolarse.
+   *
+   * **`database` y `schema` son dos entradas y no una, a propósito.** Son dos
+   * fallos distintos que piden dos reacciones distintas: "la base no contesta"
+   * se espera a que vuelva, "la base no está migrada" se corre el Job de
+   * migraciones. Fundirlas en un solo `up`/`down` obligaría a entrar en los
+   * logs para saber cuál de las dos es — y es exactamente lo que pasó el
+   * 2026-08-07, cuando `database: up` convivió durante días con una base sin
+   * una sola tabla.
+   *
+   * Cuesta una consulta más por sonda, sobre una tabla de nueve filas. Es
+   * barato para lo que evita.
    */
   @Get('ready')
   @HealthCheck()
   ready() {
     return this.health.check([
       () => this.prisma.pingCheck('database'),
+      () => this.prisma.schemaCheck('schema'),
       () => this.redis.pingCheck('redis'),
     ]);
   }

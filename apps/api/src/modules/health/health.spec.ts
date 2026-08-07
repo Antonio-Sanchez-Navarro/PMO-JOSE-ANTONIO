@@ -62,6 +62,92 @@ describe('Sondas de salud', () => {
     const construir = (queryRaw: jest.Mock) =>
       new PrismaHealthIndicator({ $queryRaw: queryRaw } as unknown as PrismaService);
 
+    /**
+     * El esquema, que es la mitad que faltaba.
+     *
+     * El 2026-08-07 la base de producción estuvo **vacía** con la sonda en
+     * verde: `SELECT 1` responde igual de bien sin una sola tabla. Estas
+     * pruebas fijan la diferencia entre "conecta" y "puede servir".
+     */
+    describe('schemaCheck', () => {
+      const conRecuento = (fila: Record<string, number>) =>
+        construir(jest.fn().mockResolvedValue([fila]));
+
+      it('con las migraciones aplicadas, marca up y dice cuántas son', async () => {
+        const indicador = conRecuento({ aplicadas: 9, aMedias: 0, revertidas: 0 });
+
+        const resultado = await indicador.schemaCheck('schema');
+
+        expect(resultado.schema.status).toBe('up');
+        expect(resultado.schema.aplicadas).toBe(9);
+      });
+
+      /** La regresión del caso real: base sin `_prisma_migrations`. */
+      it('sin la tabla de migraciones falla, y lo dice en castellano', async () => {
+        const indicador = construir(
+          jest
+            .fn()
+            .mockRejectedValue(
+              new Error('relation "_prisma_migrations" does not exist (42P01)'),
+            ),
+        );
+
+        await indicador.schemaCheck('schema').catch((error: HealthCheckError) => {
+          expect(error.causes.schema.status).toBe('down');
+          // El mensaje en crudo se lee como un fallo del código; traducido dice
+          // lo que de verdad pasa, que es que nadie migró esta base.
+          expect(error.causes.schema.reason).toContain('no se ha migrado nunca');
+        });
+
+        expect.hasAssertions();
+      });
+
+      it('con la tabla vacía también falla: existir no es estar migrada', async () => {
+        const indicador = conRecuento({ aplicadas: 0, aMedias: 0, revertidas: 0 });
+
+        await expect(indicador.schemaCheck('schema')).rejects.toBeInstanceOf(
+          HealthCheckError,
+        );
+      });
+
+      /**
+       * **La acotación que evita convertir el arreglo en una caída.** El Job
+       * migra mientras la revisión vieja sirve, así que una migración a medias
+       * es lo normal durante unos segundos de cada despliegue. Si esto tumbara
+       * la sonda, cada despliegue sacaría del balanceador a toda la flota.
+       */
+      it('una migración a medias se cuenta pero NO tumba la sonda', async () => {
+        const indicador = conRecuento({ aplicadas: 9, aMedias: 1, revertidas: 0 });
+
+        const resultado = await indicador.schemaCheck('schema');
+
+        expect(resultado.schema.status).toBe('up');
+        expect(resultado.schema.aMedias).toBe(1);
+      });
+
+      it('una migración revertida tampoco: pide una persona, no un 503', async () => {
+        const indicador = conRecuento({ aplicadas: 8, aMedias: 0, revertidas: 1 });
+
+        const resultado = await indicador.schemaCheck('schema');
+
+        expect(resultado.schema.status).toBe('up');
+        expect(resultado.schema.revertidas).toBe(1);
+      });
+
+      it('si la base no contesta, corta por su cuenta', async () => {
+        jest.useFakeTimers();
+        const indicador = construir(jest.fn().mockReturnValue(new Promise(() => {})));
+
+        const comprobacion = indicador.schemaCheck('schema');
+        const esperado = expect(comprobacion).rejects.toBeInstanceOf(HealthCheckError);
+
+        jest.advanceTimersByTime(3_000);
+        await esperado;
+
+        jest.useRealTimers();
+      });
+    });
+
     it('con la base respondiendo, marca `up`', async () => {
       const indicador = construir(jest.fn().mockResolvedValue([{ '?column?': 1 }]));
 
