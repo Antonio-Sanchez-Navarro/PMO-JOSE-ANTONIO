@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { LoginPage } from "./features/auth/LoginPage";
 import { useSession, type SessionUser } from "./features/auth/useSession";
 import { KanbanBoard } from "./features/kanban/components/KanbanBoard";
+import { API_BASE } from "./lib/api";
 
 type Health = {
   status: string;
@@ -54,7 +55,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
 
   useEffect(() => {
     // Vía el proxy de Vite: /api -> http://localhost:3000
-    fetch("/api/health")
+    fetch(`${API_BASE}/health`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then(setHealth)
       .catch((e) => setError(String(e)));

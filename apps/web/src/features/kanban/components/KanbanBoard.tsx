@@ -17,7 +17,6 @@ import {
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus } from '../types';
-import { MOCK_TASKS } from './mockTasks';
 import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters, updateEmailStatus } from '../api/tasks.api';
 import { startTimer, stopTimer, getActiveTimeEntry } from '../api/time.api';
 import { TaskModal } from './TaskModal';
@@ -31,6 +30,7 @@ import { TaskPriority } from '@pmo/shared';
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isTagModalOpen, setIsTagModalOpen] = useState(false);
@@ -44,6 +44,7 @@ export const KanbanBoard: React.FC = () => {
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const filters: FetchTasksFilters = {};
       if (searchFilter) filters.search = searchFilter;
@@ -69,8 +70,10 @@ export const KanbanBoard: React.FC = () => {
 
       setTasks(fetchedTasks);
     } catch (error) {
-      console.error("Error al cargar tareas, usando mock de respaldo:", error);
-      setTasks(MOCK_TASKS);
+      console.error("Error al cargar tareas:", error);
+      setError('Error al cargar las tareas. Por favor, reintente.');
+      toast.error('Error de conexión con el servidor');
+      setTasks([]);
     } finally {
       setLoading(false);
     }
@@ -100,8 +103,8 @@ export const KanbanBoard: React.FC = () => {
           const tasksInCol = updatedTasks.filter((t) => col.taskIds.includes(t.id));
           updatedTasks = updatedTasks.filter((t) => !col.taskIds.includes(t.id));
           tasksInCol.sort((a, b) => col.taskIds.indexOf(a.id) - col.taskIds.indexOf(b.id));
-          tasksInCol.forEach((t) => (t.status = col.status));
-          updatedTasks.push(...tasksInCol);
+          const mappedTasks = tasksInCol.map((t) => ({ ...t, status: col.status as TaskStatus }));
+          updatedTasks.push(...mappedTasks);
         }
         return updatedTasks;
       });
@@ -249,9 +252,9 @@ export const KanbanBoard: React.FC = () => {
                 updatedTasks = updatedTasks.filter((t) => !col.taskIds.includes(t.id));
                 
                 tasksInCol.sort((a, b) => col.taskIds.indexOf(a.id) - col.taskIds.indexOf(b.id));
-                tasksInCol.forEach((t) => (t.status = col.status));
+                const mappedTasks = tasksInCol.map((t) => ({ ...t, status: col.status as TaskStatus }));
                 
-                updatedTasks.push(...tasksInCol);
+                updatedTasks.push(...mappedTasks);
               }
               return updatedTasks;
             });
@@ -269,6 +272,22 @@ export const KanbanBoard: React.FC = () => {
 
   if (loading) {
     return <div className="p-6 text-slate-500">Cargando tablero...</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="p-6 flex flex-col items-center justify-center h-full">
+        <div className="text-red-500 mb-4 bg-red-50 p-4 rounded-md border border-red-200">
+          <p className="font-medium text-lg">{error}</p>
+        </div>
+        <button 
+          onClick={loadTasks} 
+          className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
   }
 
   const tasksByStatus = {

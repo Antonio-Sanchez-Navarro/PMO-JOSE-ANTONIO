@@ -1,8 +1,9 @@
 import { Task, TaskStatus, TaskPriority } from '../types';
 import { getSocketId } from '../hooks/useSocket';
 import { EmailClassification } from '@pmo/shared';
+import { API_BASE } from '../../../lib/api';
 
-const API_BASE = '/api/tasks'; // Usamos el proxy configurado en vite.config.ts
+const TASKS_API_BASE = `${API_BASE}/tasks`;
 
 export interface FetchTasksFilters {
   search?: string;
@@ -18,7 +19,7 @@ export const fetchTasks = async (filters?: FetchTasksFilters): Promise<Task[]> =
 
   const queryString = params.toString() ? `?${params.toString()}` : '';
 
-  const response = await fetch(`${API_BASE}${queryString}`, {
+  const response = await fetch(`${TASKS_API_BASE}${queryString}`, {
     credentials: 'include'
   });
   
@@ -32,7 +33,7 @@ export const fetchTasks = async (filters?: FetchTasksFilters): Promise<Task[]> =
 
 export const updateTaskStatus = async (id: string, newStatus: TaskStatus): Promise<Task> => {
   const socketId = getSocketId();
-  const response = await fetch(`${API_BASE}/${id}`, {
+  const response = await fetch(`${TASKS_API_BASE}/${id}`, {
     method: 'PATCH',
     headers: { 
       'Content-Type': 'application/json',
@@ -58,7 +59,7 @@ export interface MoveTaskResponse {
 
 export const moveTask = async (id: string, status: TaskStatus, position: number): Promise<MoveTaskResponse> => {
   const socketId = getSocketId();
-  const response = await fetch(`${API_BASE}/${id}/move`, {
+  const response = await fetch(`${TASKS_API_BASE}/${id}/move`, {
     method: 'PATCH',
     headers: { 
       'Content-Type': 'application/json',
@@ -78,7 +79,7 @@ export const moveTask = async (id: string, status: TaskStatus, position: number)
 
 export const createTask = async (data: Partial<Task>): Promise<Task> => {
   const socketId = getSocketId();
-  const response = await fetch(API_BASE, {
+  const response = await fetch(TASKS_API_BASE, {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
@@ -98,7 +99,7 @@ export const createTask = async (data: Partial<Task>): Promise<Task> => {
 
 export const deleteTask = async (id: string): Promise<void> => {
   const socketId = getSocketId();
-  const response = await fetch(`${API_BASE}/${id}`, {
+  const response = await fetch(`${TASKS_API_BASE}/${id}`, {
     method: 'DELETE',
     headers: {
       ...(socketId ? { 'x-socket-id': socketId } : {})
@@ -112,7 +113,7 @@ export const deleteTask = async (id: string): Promise<void> => {
 };
 
 export const classifyEmail = async (emailId: string): Promise<EmailClassification> => {
-  const response = await fetch(`/api/emails/${emailId}/classify`, {
+  const response = await fetch(`${API_BASE}/emails/${emailId}/classify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -141,7 +142,7 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
   // Agregar force al payload si viene true
   const finalPayload = force ? { ...payload, force } : payload;
 
-  const response = await fetch(`/api/emails/${emailId}/to-task`, {
+  const response = await fetch(`${API_BASE}/emails/${emailId}/to-task`, {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
@@ -173,7 +174,7 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
 export const updateEmailStatus = async (emailId: string, status: string, force?: boolean): Promise<unknown> => {
   const socketId = getSocketId();
 
-  const response = await fetch(`/api/emails/${emailId}/status`, {
+  const response = await fetch(`${API_BASE}/emails/${emailId}/status`, {
     method: 'PATCH',
     headers: { 
       'Content-Type': 'application/json',

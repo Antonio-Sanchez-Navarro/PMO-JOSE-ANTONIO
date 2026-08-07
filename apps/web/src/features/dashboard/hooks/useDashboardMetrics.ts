@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { DashboardMetrics } from '../types';
+import { API_BASE } from '../../../lib/api';
 
 export function useDashboardMetrics() {
   const [data, setData] = useState<DashboardMetrics | null>(null);
@@ -11,7 +12,7 @@ export function useDashboardMetrics() {
       try {
         setIsLoading(true);
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const response = await fetch(`/api/dashboard/metrics?tz=${tz}`);
+        const response = await fetch(`${API_BASE}/dashboard/metrics?tz=${tz}`);
         
         if (!response.ok) {
           throw new Error('Failed to fetch metrics');

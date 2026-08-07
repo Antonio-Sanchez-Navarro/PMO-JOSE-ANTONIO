@@ -1,4 +1,5 @@
-const API_BASE = '/api/tags'; // Usamos el proxy configurado en vite.config.ts
+import { API_BASE as GLOBAL_API_BASE } from '../../../lib/api';
+const API_BASE = `${GLOBAL_API_BASE}/tags`;
 
 export interface Tag {
   id: string;

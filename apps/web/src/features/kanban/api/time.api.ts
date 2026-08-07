@@ -1,7 +1,8 @@
 import { getSocketId } from '../hooks/useSocket';
 import { TimeEntry } from '@pmo/shared';
 
-const API_BASE = '/api/time';
+import { API_BASE as GLOBAL_API_BASE } from '../../../lib/api';
+const API_BASE = `${GLOBAL_API_BASE}/time`;
 
 export const getActiveTimeEntry = async (): Promise<TimeEntry | null> => {
   const response = await fetch(`${API_BASE}/active`, {
@@ -90,6 +91,7 @@ export interface TimeReportResult {
   from: string | null;
   to: string | null;
   totalSec: number;
+  tz?: string;
   rows: { key: string; label: string; seconds: number }[];
 }
 

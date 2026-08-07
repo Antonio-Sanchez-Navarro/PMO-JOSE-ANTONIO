@@ -33,6 +33,8 @@ terminar y reportar esto.
 | `threadId` y lista de conversaciones del copiloto | `0d2a4f4` |
 | Vista de métricas contra datos reales | `4191bda` + `0d2a4f4` |
 | Provisión de Infraestructura GCP | Completado (Neon + Upstash + Cloud Run) |
+| Saneamiento de Deuda Técnica (Frontend) | Eliminación de mocks, mutación impura en DND y corrección de tipos |
+| Configuración de OAuth de Google | Variable `GOOGLE_REDIRECT_URI` actualizada en GitHub Actions |
 
 ## Estado de la Infraestructura en Producción
 
@@ -46,23 +48,14 @@ terminar y reportar esto.
 - Las migraciones de Prisma se ejecutan sobre Neon durante el despliegue.
 
 **Diagnóstico y Mitigación (Arranque de Cloud Run):**
-- El contenedor reportaba un fallo de arranque por timeout al intentar escuchar en el puerto 8080.
-- **Auditoría de Secretos:** Verificada vía `gcloud run services describe pmo-api` la inyección correcta de `DATABASE_URL` apuntando a `pmo-database-url:3` y `REDIS_URL` a `pmo-redis-url:2`.
-- **Ajuste de Timeout:** Elevado temporalmente el timeout de arranque del servicio en GCP a 300s para descartar bloqueos por handshake en frío de TLS.
+- **Causa Raíz:** El origen real del timeout fue resuelto por la revisión de proveedores síncronos en el bootstrap (el `AuthService` requería `GOOGLE_REDIRECT_URI` de forma estricta antes de abrir el puerto).
+- **Solución:** Claude añadió validación e inyección de la variable en `deploy.yml`. 
+- **Timeouts y Secretos:** El timeout de Cloud Run se reestablece a su valor estándar de 60s tras confirmar que el servicio responde. *(Nota: El pipeline ya no inyecta los secretos `pmo-claude-model-*` mediante `--set-secrets`)*.
+- **Verificación Final (Telemetría):** Tras un push vacío para redesplegar con la URL real en `GOOGLE_REDIRECT_URI` (obtenida de Cloud Run sin marcadores ni `/api/v1`), el pipeline de GitHub Actions corrió de principio a fin en verde. Cloud Logging confirma que la API escucha correctamente en el puerto 8080 y la sonda `/health/ready` devuelve HTTP 200, validando la inyección exitosa de `DATABASE_URL` y `REDIS_URL` desde Secret Manager. La correlación por `GOOGLE_CLOUD_PROJECT` y el enrutamiento de CORS vía `WEB_URL` también operan con normalidad.
 
 ## Deuda conocida de `apps/web`, sin asignar
 
-- ⚠️ **`KanbanBoard.tsx:71-73` usa `MOCK_TASKS` como fallback del `catch`.** Si
-  `GET /tasks` falla —API caída, sesión caducada a los 15 minutos, red—, el
-  tablero se rellena con cinco tareas inventadas y no lo dice: el único rastro
-  es un `console.error`. Es el patrón de `MOCK_METRICS`, que ya costó un
-  hallazgo, pero sobre la superficie de trabajo principal: esas tarjetas se
-  arrastran, se editan y se cronometran contra ids que no existen en la base.
-- El refactor de `handleDragEnd` en `KanbanBoard.tsx`: llama a `moveTask()`
-  dentro del updater de `setTasks`, que debe ser puro. Hoy funciona por suerte.
-- `features/dashboard/types.ts` copia `DashboardMetrics` a mano en vez de
-  importarlo de `@pmo/shared`, y `TimeReportResult` (`time.api.ts`) no declara
-  el campo `tz` que el backend ya devuelve.
+*(Actualmente sin deuda crítica documentada tras el saneamiento del Tablero Kanban y Tipos)*
 
 ---
 

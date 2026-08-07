@@ -198,7 +198,7 @@ Leyenda de prioridad: 🔴 crítica · 🟡 alta · 🟢 normal
       - _La cookie de sesión, que **es** un JWT válido 15 minutos, ya salía tapada desde el primer intento (comprobado: 0 ocurrencias)._
       - _Queda **sin ejercitar en vivo un 500 de una ruta de negocio**: todas las que pueden producirlo están tras el `AuthGuard`. La forma exacta del evento marcado sí se vio en el log real (fue el caso del 503 de Terminus, antes de decidir que no debía marcarse), y el camino del código es el mismo._
 - [ ] 🟡 Sentry — ~~integrar SDK de captura de excepciones~~ **cancelado el 2026-08-03, decisión del usuario**: lo cubre Error Reporting leyendo de Cloud Logging, sin dependencia externa ni credencial que guardar
-- [ ] 🟡 CI/CD completo: build de imágenes + deploy (Cloud Run/Fly/Render)
+- [x] 🟡 CI/CD completo: build de imágenes + deploy (Cloud Run/Fly/Render) — ✅ API deplegada en Cloud Run y Frontend en Vercel por el pipeline CI/CD (Corte 2026-08-07).
 - [ ] 🟢 Documentación de operación y runbook de incidentes
 - [ ] 🟢 Backups de DB y rotación de secretos
 

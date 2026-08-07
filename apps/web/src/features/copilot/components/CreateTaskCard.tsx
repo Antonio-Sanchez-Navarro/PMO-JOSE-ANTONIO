@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TaskPriority } from '../../kanban/types';
 import { getSocketId } from '../../kanban/hooks/useSocket';
+import { API_BASE } from '../../../lib/api';
 
 export interface CreateTaskData {
   title: string;
@@ -32,7 +33,7 @@ export const CreateTaskCard: React.FC<CreateTaskCardProps> = ({ task }) => {
         headers['x-socket-id'] = socketId;
       }
 
-      const res = await fetch('/api/copilot/tasks/create', {
+      const res = await fetch(`${API_BASE}/copilot/tasks/create`, {
         method: 'POST',
         headers,
         credentials: 'include',

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_BASE } from '../../../lib/api';
 
 export interface DraftEmailData {
   id: string;
@@ -22,7 +23,7 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
     setStatus('sending');
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/copilot/emails/send', {
+      const res = await fetch(`${API_BASE}/copilot/emails/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
