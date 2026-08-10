@@ -1,8 +1,10 @@
 # ALANA — cuaderno de la terminal de observación
 
 > **Uso exclusivo de Alana.** Este archivo no es un encargo para nadie, no
-> reparte trabajo y no sustituye a `HANDOFF.md` (que es de Gravity) ni a
-> `TASKS.md` (que es el plan). Es la memoria de esta terminal.
+> reparte trabajo y no sustituye a `GRAVITY_MEMORY.md` ni a `CLAUDE_MEMORY.md`
+> (que son de ellos) ni a `TASKS.md` (que es el plan). Es la memoria de esta
+> terminal. **Desde el 2026-08-03 vive en git** —se lo llevó `3578f8d` sin
+> mencionarlo—, así que lo que se escriba aquí viaja a GitHub.
 
 ---
 
@@ -15,20 +17,35 @@ Reglas fijadas por el usuario el **2026-07-29**:
 | **Nombre** | Esta terminal se llama **Alana**. La otra terminal de Claude Code se llama **Claude** y ya tiene sus roles (`AI_ROLES.md`). |
 | **Activación** | Alana **solo** despierta con la instrucción literal **«despierta alana»**. Nunca por iniciativa propia, nunca por inferencia. |
 | **Qué hace al despertar** | 1) Revisa contextos · 2) Revisa cambios (git, archivos, docs) · 3) Actualiza **este** archivo · 4) **Para**. |
-| **Alcance de escritura** | Alana **solo escribe en `ALANA.md`**. No toca código, no toca `TASKS.md`, no toca `HANDOFF.md`, no commitea, no arranca servidores. |
+| **Alcance de escritura** | Alana **solo escribe en `ALANA.md`**. No toca código, no toca `TASKS.md`, no toca las memorias de los otros agentes, no commitea, no arranca servidores. |
 | **Fuera de activación** | Sin la orden, Alana no trabaja. |
 
 **Chequeo estándar de despertar** (lo que hay que mirar, en orden):
 
 ```
-git log --oneline -15          # qué se commiteó desde el último corte
+git log --oneline -20          # qué se commiteó desde el último corte
 git status --short             # qué hay sin commitear (y de quién es)
 git diff --stat                # tamaño y forma de lo pendiente
 TASKS.md                       # casillas que cambiaron de estado
-HANDOFF.md → cabecera Estado   # TRABAJAR / EN PAUSA / CERRADO, y a quién
+DOC.md                         # estado de alto nivel y pendientes de decisión
+GRAVITY_MEMORY.md → Estado     # el encargo vivo de Gravity
+CLAUDE_MEMORY.md               # lo último del backend, variables y trampas
 AI_ROLES.md → Excepciones      # si se acordó alguna nueva
 docs/SESSION-*.md              # si hay registro de sesión nuevo
+gh run list                    # NUEVO el 2026-08-07: `gh` ya está instalado y
+                               # autenticado, así que el CI y el despliegue por
+                               # fin se miran desde aquí en vez de suponerlos
+curl <URL>/health/ready        # y la API desplegada se sonda sin credenciales
 ```
+
+> **Excepción puntual del 2026-08-07**, por orden expresa del usuario: Alana
+> escribió un bloque de hallazgos al final de `GRAVITY_MEMORY.md`. Va **añadido**,
+> sin tocar una línea de las suyas (141 inserciones, 0 borrados), firmado, y
+> declarando que **no es un encargo y que el campo `Estado` sigue siendo de
+> Doc**. La regla de fondo no cambia: sin una orden así, Alana solo escribe aquí.
+
+**`HANDOFF.md` ya no existe** (2026-08-03, `a1e9554`): se partió en dos y el
+reparto de documentos es otro. Ver §1 y §3.
 
 ---
 
@@ -47,9 +64,25 @@ Cinco piezas funcionales:
 4. **Registro de tiempos** — cronómetro por tarea + informes con gráficas.
 5. **Copiloto** — chat en panel lateral que redacta y envía correos.
 
-Documentos de referencia: `ARCHITECTURE.md` (diseño, v1.0 del 2026-07-24),
-`TASKS.md` (plan por sprints), `HANDOFF.md` (encargos a Gravity),
-`AI_ROLES.md` (quién toca qué), `GCP_SETUP.md`, `README.md`.
+Documentos de referencia, **con el reparto nuevo del 2026-08-03** (`a1e9554`,
+`79636b7`), que sustituye al `HANDOFF.md` único:
+
+| Archivo | Qué es | Quién escribe |
+|---|---|---|
+| `API_CONTRACTS.md` (1093 líneas) | **Territorio neutral**: rutas, sockets, sondas, sesión. Sin instrucciones dentro | nadie, salvo cambio acordado |
+| `CLAUDE_MEMORY.md` (465) | Cerebro del backend: estado de `@pmo/api`, variables, trampas | Doc reparte · Claude anota |
+| `GRAVITY_MEMORY.md` (265) | Cerebro de frontend y DevOps: encargo con su `Estado`, entregado, deuda | Doc reparte · Gravity anota |
+| `DOC.md` (80) | Memoria de alto nivel del PM: hitos, reglas y **pendientes de decisión** | Doc |
+
+Y siguen: `TASKS.md` (plan por sprints), `AI_ROLES.md` (quién toca qué),
+`ARCHITECTURE.md`, `GCP_SETUP.md`, `README.md`.
+
+**Cómo se hizo la partición, que conviene no perder:** `HANDOFF.md` no se
+renombró entero. Sus líneas 211–1281 (contratos) fueron a `API_CONTRACTS.md` y
+las 1–210 (la misión de DevOps viva, con su `Estado: TRABAJAR`) a
+`GRAVITY_MEMORY.md`. Renombrarlo entero habría metido instrucciones dentro del
+archivo que el estándar declara libre de ellas. `git log --follow
+API_CONTRACTS.md` sigue llevando al historial completo.
 
 ---
 
@@ -68,6 +101,13 @@ docs/         registros de sesión
 
 **Scripts de la raíz:** `dev:api`, `dev:web`, `build` (compila los tres),
 `lint`, `test`, `infra:up` / `infra:down` (docker compose: Postgres + Redis).
+
+**Dónde vive esto en producción, desde el 2026-08-07:** la API en **Cloud Run**
+(`pmo-api`, `us-central1`, proyecto `pmo-dashboard-503418`), Postgres en **Neon**
+y Redis en **Upstash** —los dos gestionados; el `docker compose` se queda en
+local—, la imagen en **Artifact Registry** y el frontend en **Vercel**
+(`pmo-frontend.vercel.app`). El despliegue de la API va por GitHub Actions con
+federación de identidades; **el del frontend no está en este repo** (§5).
 
 **IA en el backend:**
 - `@anthropic-ai/sdk` ^0.115.0 — clasificación de correos y copiloto.
@@ -99,9 +139,14 @@ Google: `light`→gemini-3.5-flash-lite, `pro`→gemini-3.6-flash.
 | **Claude Code** | Terminal | Backend | workers/colas, Prisma, tubería de IA, `.spec.ts`, lógica de dominio |
 | **Alana** | Esta terminal | Observación | solo `ALANA.md` |
 
-**Canal único con Gravity: `HANDOFF.md`.** Todos sus encargos van escritos ahí.
-A Gravity solo se le dice «lee tu md». La cabecera lleva un campo **Estado**
-(`TRABAJAR` / `EN PAUSA` / `CERRADO`) que **solo Doc** cambia.
+**Canal único con Gravity: `GRAVITY_MEMORY.md`** (antes `HANDOFF.md`). Todos
+sus encargos van escritos ahí y a Gravity solo se le dice «lee tu md». El campo
+**Estado** (`TRABAJAR` / `EN PAUSA` / `CERRADO`) lo cambia **solo Doc**. El
+backend tiene su espejo en `CLAUDE_MEMORY.md`.
+
+✅ **Cerrado el pendiente nº 1 de `DOC.md`**: `AI_ROLES.md` ya no nombra
+`HANDOFF.md` como canal (`79636b7`, el mismo día del cambio). _Este cuaderno no
+aparece en `AI_ROLES.md`; Alana sigue viviendo solo en la regla del usuario._
 
 ### Excepciones vigentes al reparto (acordadas)
 - `KanbanBoard.tsx` — arreglo de colisión del drag, commiteado por Claude Code
@@ -119,7 +164,7 @@ A Gravity solo se le dice «lee tu md». La cabecera lleva un campo **Estado**
 
 ---
 
-## 4. Estado por sprints (corte del 2026-08-03)
+## 4. Estado por sprints (corte del 2026-08-07)
 
 | Sprint | Tema | Estado |
 |---|---|---|
@@ -132,9 +177,80 @@ A Gravity solo se le dice «lee tu md». La cabecera lleva un campo **Estado**
 | 5 | Registro de tiempos | ✅ cerrado el 2026-07-29 |
 | **6** | **Copiloto de IA** | ✅ **completo en el código el 2026-07-30**: backend cerrado el 29 y las dos piezas de interfaz commiteadas hoy en `0d2a4f4`. Falta que Doc lo declare cerrado |
 | 7 | WhatsApp | ⬜ sin empezar (bloqueado: alta en Meta Business / Twilio) |
-| **8** | **Métricas, hardening, despliegue** | 🚧 **abierto el 2026-07-29**: seguridad ✅, métricas ✅, **observabilidad ✅ el 2026-08-03**. Queda CI/CD, runbook y backups |
+| **8** | **Métricas, hardening, despliegue** | 🚧 **abierto el 2026-07-29**: seguridad ✅, métricas ✅, observabilidad ✅ el 08-03, **CI/CD y despliegue ✅ el 2026-08-07 — la API está en producción y verificada en vivo**. Queda runbook, backups y **enchufar el frontend a la API** (ver §5) |
 
-### Sprint 8 — lo que entró (actualizado en el corte del 2026-08-03)
+### Sprint 8 — el despliegue (lo nuevo, y es casi todo este corte)
+
+**La API está en producción.** `https://pmo-api-mlpuuasqka-uc.a.run.app`,
+servicio `pmo-api`, región `us-central1`, proyecto `pmo-dashboard-503418`.
+Postgres es **Neon** y Redis es **Upstash**, los dos gestionados: el
+`docker-compose` se queda en local. Sondado por mí hoy, sin credenciales:
+
+| Sonda | Respuesta |
+|---|---|
+| `GET /health/ready` | **200** · `database up` (53 ms) · `redis up` (24 ms) |
+| `GET /health/live` | **200** |
+| `GET /auth/me` sin cookie | **401** |
+| `GET /auth/google` | **302** hacia Google |
+
+Las dos últimas son las que dicen que **abrir el servicio no lo dejó
+desprotegido**: la puerta de Cloud Run deja pasar y es el `AuthGuard` el que
+corta.
+
+**El pipeline entero: `ci.yml` → `deploy.yml` encadenados por `workflow_run`.**
+No por `on: push`, para que no exista la puerta de desplegar con el CI en rojo.
+Cuatro condiciones en el `if` del job y ninguna sobra: CI en verde, rama
+`master`, origen `push`, y `vars.GCP_PROJECT_ID != ''` —que se comprueba sobre
+`vars` y no sobre `secrets` porque **el contexto `secrets` no existe en el `if`
+de un job**: escribirlo ahí no deja el job en espera, GitHub rechaza el archivo
+entero al parsearlo y el workflow deja de existir—. Autenticación por
+federación de identidades (WIF), sin clave JSON. La imagen se etiqueta con el
+SHA además de `latest`. `concurrency` con `cancel-in-progress`.
+
+**Los tres obstáculos del 2026-08-07, y lo que tienen en común.** Ninguno era
+del código de la API —la aplicación llevaba días lista— y **los tres se veían
+desde fuera del proceso y ninguno desde dentro**: no dejan una sola línea en el
+log de la aplicación.
+
+1. **Los secretos `pmo-claude-model-*` no existían.** Se cablearon por
+   `--set-secrets` dos veces, la segunda (`d3547fc`) **sobre un reporte de que
+   ya estaban aprovisionados**. `gcloud secrets list` devuelve ocho y ninguno es
+   de modelos. Y el coste no fue un rojo y ya: **la revisión condenada retiró a
+   la 00008, que sí estaba sirviendo** — en Cloud Run, la revisión rota se lleva
+   por delante a la buena. Ahora van por `vars` y son **opcionales**, porque son
+   ids públicos y el código trae valor por defecto: una variable que falta
+   cambia el modelo, no tumba el despliegue.
+2. **Cloud Run nace privado.** Con todo lo demás arreglado, `gcloud run deploy`
+   salió con 0, la revisión quedó lista sirviendo el 100% del tráfico… y la
+   sonda se comió **cinco 403 seguidos**. El 403 lo devuelve la puerta de
+   entrada *antes* de tocar el contenedor. En el log de la revisión se ve el
+   arranque impecable y **al lado** las líneas de la puerta. Resuelto con
+   `--allow-unauthenticated`: los tres que llaman —el SPA, el callback que abre
+   Google en el navegador y el empuje de Pub/Sub— son anónimos por naturaleza y
+   ninguno puede presentar un token de Google.
+3. **`--args` de `gcloud` exige el igual.** `--args "--workspace,…"`: el parser
+   ve algo que empieza por `--`, lo toma por la bandera siguiente y muere con
+   `expected one argument`. Tumbó el despliegue de las 17:41 UTC; `--args=…` lo
+   arregló y el de las 17:46 salió verde.
+
+**Las migraciones ya corren, y antes de publicar la revisión** (`c0eea91`). Un
+Job de Cloud Run (`pmo-api-migrate`) con `prisma migrate deploy`, ejecutado con
+`--wait` para que sea una puerta de verdad. El orden no es negociable: al revés,
+la revisión nueva pediría columnas que aún no existen. De ahí la regla al
+escribir migraciones — **compatibles con el código que ya está arriba**: añadir
+lo es, renombrar y borrar no, y van en dos despliegues. Es un Job y no un paso
+del runner para que **`DATABASE_URL` no salga nunca de Google Cloud**. Se temía
+un `P3005` en la primera ejecución (base con tablas y sin `_prisma_migrations`)
+y **no ocurrió**: `Execution [pmo-api-migrate-pkg6z] has successfully
+completed`, comprobado en el log del run.
+
+**El CI se salta los commits de solo documentación** (`c0eea91`): `paths-ignore`
+en `ci.yml` y **no** en `deploy.yml`, porque `workflow_run` **no admite `paths`
+ni `paths-ignore`** y GitHub los ignora en silencio. Filtrando en el CI sale
+gratis: sin run de CI no hay `workflow_run` que concluya. `.github/**` queda
+fuera de la lista a propósito.
+
+### Sprint 8 — lo que entró (tabla del corte del 2026-08-03)
 
 | Casilla | Estado |
 |---|---|
@@ -149,9 +265,10 @@ A Gravity solo se le dice «lee tu md». La cabecera lleva un campo **Estado**
 | Sentry | ❌ **cancelado el 2026-08-03** por el usuario: lo cubre Error Reporting leyendo de Cloud Logging, sin SDK ni credencial |
 | Verificación viva del corte de días contra Postgres | ✅ `4b3db45` documenta lo comprobado |
 | Linter reparado | ✅ `2ceedd2` — **no había configuración de ESLint en ninguna parte** · ✅ **y HEAD vuelve a pasarlo** (`b5995a7`, 0 errores / 28 avisos), ver §5 |
-| CI/CD completo, runbook, backups | ⬜ |
+| CI/CD completo | ✅ **2026-08-07** — pipeline encadenado, migraciones y sonda de verdad contra la revisión desplegada |
+| Runbook y backups | ⬜ |
 
-### Sprint 8 — observabilidad (nuevo en este corte)
+### Sprint 8 — observabilidad (del corte del 2026-08-03)
 
 Entró en dos tiempos y **el segundo es el que importa**: `37e634e` (07-31 18:45)
 dejó escrito en su propio mensaje que compilaba y pasaba las 426 pruebas de
@@ -282,55 +399,144 @@ en realidad eran cierre del 3 y del 4. Regla acordada: mirar el checklist de
 
 ---
 
-## 5. Árbol de trabajo (2026-08-03, rama `master`)
+## 5. Árbol de trabajo (2026-08-07, rama `master`)
 
 ```
-?? ALANA.md    (este archivo)
+ M GRAVITY_MEMORY.md
+ M apps/web/src/features/dashboard/types.ts
+ M apps/web/src/features/kanban/api/time.api.ts
+ M apps/web/src/features/kanban/components/KanbanBoard.tsx
 ```
 
-**Árbol limpio por tercera vez seguida.** HEAD es `0439a3b`, de hoy a las 11:36.
+HEAD es `b1f6bcb`, de hoy a las 12:45. `origin/master` al día (0 ahead / 0
+behind). **33 commits desde el corte anterior**, repartidos en tres días de
+trabajo: 08-03 (tarde), 08-05 y 08-07.
 
-### 🟢🟢 CERRADO EL ÚNICO HALLAZGO ROJO DEL PROYECTO: **ya hay remoto**
+**`ALANA.md` ya no sale como `??`.** Se commiteó el 2026-08-03 dentro de
+`3578f8d` («Actualización de infraestructura y variables de entorno»), un commit
+de dos archivos que se llevó este cuaderno entero —781 líneas— sin mencionarlo
+en el mensaje. Es justo lo que la regla de `DOC.md` «añadir por ruta, nunca
+`git add -A`» viene a evitar, y esa regla está escrita porque ya costó un
+disgusto. No rompe nada: lo que cambia es que estas notas viajan a GitHub.
 
-```
-origin  https://github.com/Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO.git (fetch/push)
-HEAD == origin/master     (0 ahead, 0 behind)
-```
+### 🔴 Hallazgo rojo: el frontend desplegado no puede hablar con la API desplegada
 
-Llevaba abierto desde el despertar 4 y era el que dejaba **todo el proyecto en
-un solo disco**. Ahora está publicado y al día: hay copia y el CI —que apunta a
-`master` desde `eb4449d`— tiene por fin dónde ejecutarse. **No lo hizo ningún
-commit**: el remoto se configuró fuera del historial, así que no hay rastro de
-cuándo ni de quién, solo el hecho.
+Es el hallazgo de este corte y no lo ve ningún guardarraíl del proyecto, porque
+todos miran la API. **El pipeline en verde dice que la API atiende; no dice que
+el producto funcione.** El detalle está en §12: son **tres roturas
+independientes**, no una, y ninguna deja rastro del lado del servidor.
 
-_Dos apuntes, ninguno bloqueante:_
-- `origin/main` existe y contiene **solo `da8f015 "Initial commit"`**: 132
-  commits por detrás de `master` y con un commit propio que `master` no tiene.
-  Es la rama que GitHub crea sola. El CI escucha `master` y hace bien; lo único
-  que puede confundir es que quien abra el repositorio por la web caiga en `main`
-  y vea un repositorio vacío si esa es la rama por defecto.
-- **No se puede comprobar desde aquí si el workflow llegó a correr**: `gh` no
-  está instalado en esta máquina.
-
-### Lo que se commiteó desde el corte anterior (4 commits)
-
-| Hash | Fecha | Qué |
-|---|---|---|
-| `66cf3ea` | 07-31 17:33 | **Cierre documental del ciclo**: acta del 30, dos casillas de `TASKS.md` y `HANDOFF.md` a `CERRADO` |
-| `d358152` | 07-31 18:21 | **(Gravity)** teclado y `role` en las filas del Inbox |
-| `37e634e` | 07-31 18:45 | Sondas de salud reales y logs en formato Cloud Logging (primera mitad) |
-| `0439a3b` | **08-03 11:36** | Cierra la observabilidad: 71 pruebas, verificación viva y los dos fallos que solo salieron ahí |
-
-### Verificado ejecutando, no leyendo (hoy, sobre HEAD)
+Lo comprobado en vivo, que es el síntoma:
 
 ```
-npm run lint   →  ✖ 28 problems (0 errors, 28 warnings)
-npm test       →  Test Suites: 18 passed · Tests: 497 passed
+GET https://pmo-frontend.vercel.app/           -> 200, el SPA compilado
+GET https://pmo-frontend.vercel.app/api/health -> 404  (X-Vercel-Error: NOT_FOUND)
+GET https://pmo-api-mlpuuasqka-uc.a.run.app/api/auth/me -> 404
+GET https://pmo-api-mlpuuasqka-uc.a.run.app/auth/me     -> 401  ← la ruta que sí existe
 ```
 
-Las dos cifras que dice `0439a3b` cuadran con la realidad. Los 28 avisos siguen
-siendo todos `no-explicit-any` y no bloquean: **si el CI se dispara hoy, sale en
-verde**.
+**Y detrás de las tres, la misma segunda mitad:** las cookies de sesión se
+firman con `sameSite: "lax"` (`session.service.ts:39`, `auth.controller.ts:52`).
+Apuntar el SPA al host de Cloud Run deja las peticiones como **cross-site**, y
+con `lax` el navegador no manda la cookie: 401 aunque la API esté perfecta y la
+URL sea la buena. La vía que mantiene `lax` viable es reescribir desde el propio
+origen de Vercel.
+
+_Y queda una pregunta que no me toca resolver:_ el callback de OAuth lo abre
+Google contra `GOOGLE_REDIRECT_URI`, que apunta al host de Cloud Run, así que
+**la cookie de sesión nace en el dominio de `run.app`**. Qué host sirve el
+callback decide de qué dominio es la sesión, y el guardarraíl de `deploy.yml`
+rechaza cualquier ruta que no sea exactamente `/auth/google/callback`. Es
+decisión de Doc; lo dejo anotado, no tocado.
+
+### 🟢 Lo que hay sin commitear cierra tres apuntes míos de golpe
+
+Los cuatro archivos del árbol son el saneamiento de deuda del frontend, y entre
+ellos están los tres apuntes que arrastraba desde el corte del 30:
+
+- **Fuera el `MOCK_TASKS` del `catch`** de `KanbanBoard.tsx`. Era el gemelo del
+  `MOCK_METRICS` que ya costó un hallazgo, pero sobre la superficie de trabajo
+  principal: con la API caída o la sesión caducada, el tablero se rellenaba con
+  cinco tareas inventadas que se arrastran, se editan y se cronometran contra
+  ids que no existen. Ahora hay estado de error, aviso y botón de reintento.
+- **El updater impuro de `handleDragEnd`, arreglado.** `moveTask()` ya se llama
+  **fuera** de `setTasks` (`:243` fija el estado, `:246` llama a la API), y las
+  dos mutaciones `t.status = col.status` dentro de los updaters pasan a `map`
+  con copia. Era la única deuda de arquitectura declarada del proyecto, viva
+  desde el 2026-07-27.
+- **Los dos contratos duplicados a mano, cerrados.** `features/dashboard/types.ts`
+  pasa de 37 líneas copiadas a `export type { DashboardMetrics } from '@pmo/shared'`,
+  y `TimeReportResult` ya declara el campo `tz`.
+
+_Apunte menor:_ `mockTasks.ts` **sigue en el disco** y ya no lo importa nadie —
+archivo muerto de cinco tareas de ejemplo. Y la línea que `GRAVITY_MEMORY.md`
+deja en su lugar es «*(Actualmente sin deuda crítica documentada)*», que será
+cierto cuando esto se commitee: hoy el árbol lo tiene sin commitear y **el
+hallazgo rojo de arriba no está en ninguna lista de deuda**.
+
+### Verificado ejecutando, no leyendo (hoy, sobre el árbol de trabajo)
+
+```
+npm test       ->  Test Suites: 20 passed · Tests: 525 passed   (19,9 s)
+npm run lint   ->  los tres paquetes limpios: 0 errores y 0 avisos
+```
+
+Los 28 avisos de `no-explicit-any` desaparecieron (Gravity los saldó el 08-03) y
+el CI corre con `--max-warnings 0` desde `d653b5f`, así que ya no hay margen.
+
+### Los 33 commits, por bloques
+
+| Bloque | Qué |
+|---|---|
+| `470e5f6` → `c8a5d33` (08-03 tarde) | El `prisma generate` que faltaba en el CI · Node 22 · `--max-warnings 0` · los 28 `any` de `apps/web` · **el fallo del segundo turno del copiloto** · cada sonda dejaba un temporizador colgando |
+| `ad920e7` → `79636b7` (08-03 noche) | **La partición de `HANDOFF.md`** en las cuatro memorias, `AI_ROLES.md` al día, y el primer `deploy.yml` |
+| `3578f8d` (08-03) | Se lleva `ALANA.md` a git sin decirlo |
+| `73ade8a` → `4418490` (08-05) | `CLAUDE_MODEL_*` de punta a punta y límite de tasa de Anthropic · degradación segura del arranque · **siete despliegues en rojo** |
+| `8f0040d` → `b1f6bcb` (08-07) | Los tres obstáculos del despliegue (§4) · migraciones antes de la revisión · el CI ignora la bitácora |
+
+### El fallo que más costaba encontrar: el segundo turno del copiloto (`9a45a58`)
+
+Moría **siempre**, en cualquier conversación. `saveTurn` metía pregunta y
+respuesta en el mismo `createMany` y `@default(now())` de Postgres devuelve la
+hora de **inicio de la transacción**: las dos filas quedaban selladas con el
+mismo instante al milisegundo. `history()` ordenaba solo por esa columna, el
+empate lo deshacía el motor y lo deshacía al revés, así que el hilo rehidrataba
+`ASSISTANT → USER → USER` y Anthropic —que exige que el primer mensaje sea del
+usuario— devolvía un 400. Arreglado ordenando por `[createdAt, id]` y sellando
+las dos filas a mano.
+
+**Era invisible por tres capas sumadas**, y esto es lo que hay que recordar antes
+de decir «no hay error en los logs»: `/copilot/chat` está fuera del log
+automático de peticiones; el `catch` del controlador convierte el fallo en un
+evento SSE **sobre una respuesta que ya salió con 200**, así que se clasifica
+como `info` y Error Reporting no se entera; y la línea que sí se escribía
+registraba el texto genérico que el usuario ya tenía en pantalla, no la causa.
+
+### ⚠️ `CLAUDE_MEMORY.md` se contradice a sí mismo sobre `GOOGLE_REDIRECT_URI`
+
+En la línea 26 dice que la variable «hoy vale `https://pmo-api-dummy-url.run.app/…`,
+un host inventado», y sesenta líneas más abajo, que «ya vale
+`https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback`, puesta el
+2026-08-07». **Los dos textos entraron en el mismo commit** (`5482469`). Lo
+comprobé contra GitHub: `gh variable list` da la **URL real**, actualizada hoy a
+las 17:15 UTC, así que la primera línea es la caducada. Importa porque de esa
+cadena depende que el login llegue a existir, y quien lea el documento por arriba
+se queda con la versión falsa.
+
+_De lo mismo:_ sigue pendiente **la otra mitad del login** —autorizar esa URI en
+el cliente OAuth de la consola de Google—, y **un pipeline verde no lo prueba**:
+la sonda solo mira `/health/ready`, y el 302 de `/auth/google` demuestra que
+salimos hacia Google, no que Google nos acepte de vuelta.
+
+### ⚠️ Dos variables de repositorio para lo mismo, y la que se tocó hoy no la lee nadie
+
+`gh variable list` devuelve `WEB_URL` **y** `FRONTEND_URL`, las dos con
+`https://pmo-frontend.vercel.app`. `deploy.yml` solo lee `vars.WEB_URL`
+(`FRONTEND_URL` es una variable **de shell** dentro del paso, que se llama igual
+por casualidad). `FRONTEND_URL` se actualizó hoy a las 17:37 UTC, veinte minutos
+después del primer despliegue verde, **sin efecto ninguno**. Confirmado también
+que a nivel de repositorio solo hay dos secretos —los dos de WIF—: el resto vive
+en Secret Manager, coherente con lo que dice `CLAUDE_MEMORY.md`.
 
 ### 🟢 Cerrado: la fila del Inbox recuperó el teclado
 
@@ -359,7 +565,7 @@ Consecuencias concretas:
 
 Se arregla dejando `role`/`tabIndex` en **uno solo** de los dos.
 
-### ⚠️ El handoff volvió a quedarse atrás, y esta vez al revés
+### ⚠️ El handoff volvió a quedarse atrás, y esta vez al revés (histórico: el archivo ya no existe)
 
 `66cf3ea` puso la cabecera en **`CERRADO` · asignado a nadie** y dejó en la
 sección 0 el encargo del teclado del Inbox **«a la espera de que Doc lo active,
@@ -373,14 +579,14 @@ tocado.**
 Del mismo documento, sin cerrar por cuarto corte seguido: la **§9 sigue diciendo
 «Lo que te toca a ti: manda `tz`»** (línea 629), hecho desde `2ceedd2`.
 
-### Lo que se commiteó dos cortes atrás (2 commits)
+### Lo que se commiteó el 2026-07-30 por la tarde (2 commits)
 
 | Hash | Fecha | Qué |
 |---|---|---|
 | `b5995a7` | 07-30 18:02 | Los tres `catch (err)` sin usar de `CopilotDrawer.tsx` |
 | `f9ce09b` | 07-30 18:04 | `HANDOFF.md`: reescribe la sección 0 caducada |
 
-### Lo que se commiteó tres cortes atrás (3 commits)
+### Lo que se commiteó el 2026-07-30 a mediodía (3 commits)
 
 | Hash | Fecha | Qué |
 |---|---|---|
@@ -416,19 +622,21 @@ con la tabla de dónde quedó cada uno de los cuatro frentes (§6, §7, §8 y §
 Duró desde el 30 a mediodía hasta el 31 por la tarde. Lo que queda vivo del
 documento es lo que anoto arriba: la §0 y la §9.
 
-### ⚠️ Un cambio de comportamiento viajó dentro del commit del linter (sigue vivo)
+### ✅ Cerrado — el cambio de comportamiento que viajó dentro del commit del linter
 
 `2ceedd2` se llama «chore: fix eslint config and styling» y su mensaje dice que
 los 22 errores se arreglaron **«sin cambiar comportamiento»**. Pero uno de los
 trozos no es un arreglo de lint: en `features/kanban/api/time.api.ts:102` añade
 las dos líneas que mandan `tz` en `getTimeReport`. Eso es el encargo de
 `HANDOFF.md` §9 —dominio de Gravity— hecho a medias por la terminal de backend,
-sin que el mensaje lo mencione, y **la §9 sigue pidiéndoselo a Gravity como si
-estuviera sin hacer** (línea 629, reverificado el 2026-08-03). Nota menor del
-mismo sitio: `TimeReportResult` **sigue sin declarar el campo `tz`** que el
-backend ya devuelve (`time.api.ts:88-94`, comprobado hoy).
+sin que el mensaje lo mencione. **Se cierra el 2026-08-07 por defunción del
+documento**: la §9 del handoff que seguía pidiéndolo desapareció con la partición
+de `HANDOFF.md`, y `TimeReportResult` ya declara el campo `tz` en el árbol de
+trabajo. _Lo que queda de esto es la lección, no la deuda: un mensaje de commit
+que dice «sin cambiar comportamiento» y trae uno dentro cuesta que nadie sepa
+quién entregó qué._
 
-### Lo que se commiteó cuatro cortes atrás (3 commits)
+### Lo que se commiteó el 2026-07-30 por la mañana (3 commits)
 
 | Hash | Fecha | Qué |
 |---|---|---|
@@ -436,7 +644,7 @@ backend ya devuelve (`time.api.ts:88-94`, comprobado hoy).
 | `4b3db45` | 07-30 12:06 | `TASKS.md`: la verificación viva del corte de días y el linter |
 | `0af5a28` | 07-30 12:10 | `HANDOFF.md`: cabecera nueva con los tres frentes ordenados para Gravity |
 
-### Lo que se commiteó cinco cortes atrás (7 commits)
+### Lo que se commiteó el 2026-07-29 y el 30 (7 commits)
 
 | Hash | Fecha | Qué |
 |---|---|---|
@@ -619,12 +827,21 @@ Todas están en `AI_ROLES.md`; las repito porque son las que hacen perder tiempo
 2. **Un solo `dev:api` a la vez.** Dos watchers escriben en `apps/api/dist` y se
    pisan; el `dist` se queda en una versión anterior a su fuente. Comprobar con
    `Get-CimInstance Win32_Process -Filter "Name='node.exe'"`.
+2b. **El mismo heap hace falta en `build` dentro de un contenedor**, donde Node
+   lo dimensiona según la RAM que le hayan dado: sin él, `nest build` muere con
+   `Aborted (core dumped)` y código 134, que se lee como fallo del compilador y no
+   como falta de memoria.
 3. **No ejecutar `nest build` con el watcher levantado** — el build borra `dist`
    bajo los pies del watcher y su hijo muere con `Cannot find module dist/main`.
    Para comprobar tipos con el servidor arriba:
    `npx tsc -p apps/api/tsconfig.spec.json` (lleva `noEmit`).
 4. **Matar node por puerto, no por PID** (el hijo sobrevive al padre):
    `Get-NetTCPConnection -LocalPort 3000 -State Listen | ... Stop-Process -Force`.
+   ⚠️ **Y matar el puerto tampoco basta** (añadido el 2026-08-03): ese proceso es
+   el último eslabón de cuatro —`npm run dev:api` → `start:dev` → `cross-env` →
+   `nest start --watch`— y el watcher vuelve a levantarlo. El 08-03 había **tres
+   cadenas completas** a la vez. Para reiniciar de verdad hay que filtrar por
+   línea de comando.
 5. **El cron de vencidas vive en Redis** (job repetible de BullMQ), no un `@Cron`
    en proceso — con varias instancias correría en todas.
 6. **`COPILOT_EMAIL_TRANSPORT=mock`** — sin esa línea, cada clic en «Enviar» del
@@ -655,123 +872,133 @@ local, cuadra.
 producción, `debug` fuera) y `SERVICE_VERSION`. Las tres tienen valor por
 defecto, así que en local no falta nada.
 
-⚠️ **`GOOGLE_CLOUD_PROJECT` sigue vacía y ahora tiene una consecuencia nueva.**
-Es de donde sale el `projects/<id>/traces/<hex>` del enlace de rastro, y
-`traceFieldsFrom` devuelve `{}` sin ella —decisión correcta: mejor no escribir
-el campo que escribirlo roto—, así que **hoy las líneas no correlacionan**. Lo
-que hay que recordar al desplegar: **Cloud Run no inyecta
-`GOOGLE_CLOUD_PROJECT`**; inyecta `K_SERVICE` y `K_REVISION`, que
-`service-context.ts` sí aprovecha. Si nadie la pone a mano en el despliegue, la
-correlación por traza se queda apagada **en silencio**, sin error ni aviso. Va
-al runbook, que está sin escribir.
+✅ **`GOOGLE_CLOUD_PROJECT` ya no está apagada en producción.** Era mi apunte
+del corte anterior: sin ella `traceFieldsFrom` devuelve `{}` y las líneas de una
+misma petición dejan de agruparse, **sin error y sin aviso en Cloud Logging**.
+`deploy.yml` la pone a mano en el `--set-env-vars`, que es lo que había que
+recordar porque **Cloud Run no la inyecta** (inyecta `K_SERVICE` y `K_REVISION`).
+En local sigue vacía, y ahí no molesta.
 
----
+### Lo que recibe la revisión de Cloud Run (2026-08-07)
+
+| Vía | Variables |
+|---|---|
+| `--set-env-vars` | `NODE_ENV=production`, `LOG_FORMAT=gcp`, `GOOGLE_CLOUD_PROJECT`, `WEB_URL`, `GOOGLE_REDIRECT_URI`, `SERVICE_VERSION=<sha>` y los `CLAUDE_MODEL_*` **solo si están puestos** |
+| `--set-secrets` (Secret Manager) | `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` |
+| Cloud Run | `PORT` — **manda sobre `API_PORT`**: si el contenedor no escucha ahí, la revisión no pasa la sonda de arranque y el error habla de contenedor, no de puerto |
+
+Los tres ids de modelo van **opcionales a propósito**: el código trae valor por
+defecto y lo dice en el log de arranque, así que una que falte cambia el modelo
+en vez de tumbar el despliegue. Es lo contrario de `GOOGLE_REDIRECT_URI`, que no
+se puede adivinar y por eso sí para el despliegue. Hoy los tres salen como no
+definidos en los avisos del run.
 
 ## 9. Pruebas y CI
 
-- **Ahora son `497 pruebas en 18 suites`**, ejecutadas hoy sobre HEAD (`npm test`
-  → 18 passed / 497 passed, 13,8 s). Las cuatro suites nuevas son las de
-  observabilidad: `all-exceptions.filter.spec.ts`, `gcp-logging.spec.ts`,
-  `logger.config.spec.ts` y `health.spec.ts` (`0439a3b`, 71 pruebas). Antes eran
-  426 en 14.
-  ⚠️ **`TASKS.md` línea 192 se quedó otra vez atrás:** dice «426 pruebas en 14
-  suites» —correcto hasta el viernes— y, en la misma línea, **«sigue sin poder
-  ejecutarse: no hay remoto configurado (`git remote -v` vacío)»**, que desde hoy
-  es falso. Es la misma línea que ya arrastraba la cifra vieja en el corte
-  anterior. La casilla, además, sigue como `[ ]` porque las e2e se movieron al
-  backlog.
-- ✅ **La migración que faltaba ya está** (`eb4449d`): «Estado del repo» del
-  handoff lista las tres, con `20260729160000_add_priority_audit` incluida.
-  Era el último hallazgo vivo del despertar 2. Confirmadas 9 migraciones en
-  `apps/api/prisma/migrations`.
-- ✅ **El CI apunta a `master`** (`eb4449d`, con un comentario en el propio
-  `ci.yml` explicando por qué) y ✅ **ya hay remoto** (§5): `origin` en GitHub,
-  con `HEAD == origin/master`. **Las tres piezas que faltaban están las tres
-  puestas** —rama correcta, lint en verde y sitio donde correr—, y con eso el
-  guardarraíl deja de depender de que alguien se acuerde de ejecutarlo a mano.
-  ⚠️ **Lo que no puedo confirmar desde aquí es que el workflow haya corrido**:
-  `gh` no está instalado, así que no se ve el resultado de ninguna ejecución.
-  Que *pueda* dispararse está comprobado; que *se haya* disparado, no.
-- ✅ **Y si se dispara, sale en verde:** HEAD da 0 errores y 28 avisos y las 497
-  pruebas pasan, las dos cosas ejecutadas hoy (§5).
-- **Ojo con lo que dice el handoff del linter:** «quedaron arreglados 11
-  `catch (e) {}` de tu capa de API — **sin tocar comportamiento**». En el mismo
-  commit y en los mismos archivos entró el `tz` de `getTimeReport`, que sí es
-  comportamiento (ver §5).
-- ✅ **Las dos casillas de Gravity sin marcar quedaron marcadas** en `66cf3ea`
-  —vista de métricas y motivo de prioridad en la tarjeta—, y el commit deja
-  escrito que se verificó en el código antes de cerrarlas, no por lo que dijera
-  el handoff. Estuvieron cinco días sin marcar estándolo.
-- ✅ **El hash inventado del acta del 29 está corregido** (`66cf3ea`): donde
-  decía `bb0b73f`, que no existe en el repo, ahora dice `27ef27e`.
-- Corren sin Postgres, sin Redis y sin llamar a Anthropic. Transpilan sin
-  type-check (`isolatedModules`) porque jest moría de memoria si no.
-- **No hay E2E** y ya no está previsto en el sprint: **movido al backlog el
-  2026-07-31 por decisión de Doc** para no inflar el alcance del cierre. Ni
-  Playwright ni Cypress en el repo; los flujos se han probado a mano.
-- **CI** (`.github/workflows/ci.yml`): install → lint → build → test, sobre
-  `master` (push y pull request).
+- **525 pruebas en 20 suites**, ejecutadas hoy sobre el árbol de trabajo (19,9 s).
+  Antes eran 497 en 18. Las suites nuevas cubren la cadena
+  `COPILOT_ANTHROPIC_MODEL_*` → `CLAUDE_MODEL_*` → tabla de niveles y el cálculo
+  de espera ante un 429 de Anthropic.
+- `npm run lint`: **0 errores y 0 avisos** en los tres paquetes, ejecutado hoy.
+  El CI corre con `--max-warnings 0` desde `d653b5f`, así que ya no queda margen:
+  un aviso nuevo es un rojo.
+- ✅✅ **Se acabó la suposición: `gh` está instalado y autenticado.** Era la
+  frase que arrastraba tres cortes seguidos —«que *pueda* dispararse está
+  comprobado; que *se haya* disparado, no»— y hoy los runs se miran desde aquí.
+  Lo que se ve:
 
----
+  | Run | Qué |
+  |---|---|
+  | `31201583614` | **Primer despliegue en verde de la historia del proyecto** (17:17 UTC) |
+  | `31203892703` | El de HEAD, verde con las migraciones dentro (17:46 → 17:50) |
+  | `31199020603`, `31203481234` | Los dos rojos de hoy: los 403 de Cloud Run privado y el `--args` sin igual |
+
+- **Y el verde es de verdad, no de comando que salió con 0.** El último paso
+  sonda `/health/ready` contra la revisión recién desplegada: `intento 1: 200`
+  con `database up` (53 ms) y `redis up` (24 ms). Lo repetí yo mismo contra la
+  URL pública y da lo mismo. Es la primera prueba viva de que **Neon y Upstash
+  responden desde la revisión que publicó la pipeline**, no desde una manual.
+- **La migración también corrió de verdad**: `Execution [pmo-api-migrate-pkg6z]
+  has successfully completed`. El `P3005` que se temía no apareció.
+- **Ojo con lo que aún no cubre ningún guardarraíl:** el CI y el despliegue
+  miran la API entera y **nadie mira el frontend**. `apps/web` no se construye ni
+  se despliega desde este repo —Vercel lo hace por su cuenta— y el 404 de §5
+  habría salido en la primera petición de cualquier comprobación de extremo a
+  extremo. Sigue sin haber E2E: movido al backlog el 2026-07-31 por Doc.
+- **El `prisma generate` que faltaba** (`dd99adb`) tuvo el CI tres runs en rojo:
+  el cliente de Prisma es código generado, en una máquina de desarrollo lo dejó
+  `prisma migrate` hace semanas y en un CI que parte de `npm ci` no lo ha generado
+  nadie, así que el build se caía con errores **que parecen del código**. Ahora
+  hay un `prebuild` en `@pmo/api`.
+- ⚠️ **`TASKS.md` vuelve a ir por detrás, y van cuatro cortes.** No se toca desde
+  el 08-03 a las 17:53 (`c8a5d33`). Dice **«497 pruebas en 18 suites»** (son
+  525/20), dice **«`gh` no está instalado en la máquina»** (lo está desde hoy) y
+  la casilla «CI/CD completo» sigue en `[ ]` con el pipeline desplegando a
+  producción. Es el mismo patrón de siempre: el plan se queda con la foto vieja.
+- ⚠️ **El hueco del histórico ya no es un hueco, es un cambio de costumbre.**
+  `docs/` se para en `SESSION-2026-07-31.md`: el 08-03, el 08-05 y el 08-07 no
+  tienen acta, y son los tres días del despliegue. Lo que sí hay es el relato
+  dentro de `CLAUDE_MEMORY.md`, `GRAVITY_MEMORY.md` y `DOC.md`, que desde
+  `a1e9554` hacen de bitácora viva. **No es una pérdida, pero conviene decidirlo
+  en vez de heredarlo**: si las memorias sustituyen a las actas, `docs/` sobra; si
+  no, faltan tres.
 
 ## 10. Deuda abierta
 
-**Deuda de plan** (sección propia al final de `TASKS.md`, aceptada por el
-usuario el 2026-07-29 — estuvieron marcadas como hechas en `697784b` sin
-estarlo). **Las dos se saldaron el 2026-07-29 por la tarde:**
+### 🔴 Lo único rojo de este corte
 
-- ✅ **Auditoría de prioridad** (del Sprint 3) — backend en `795bae1`,
-  pintado en la tarjeta en `4191bda`. ✅ **Y la sub-casilla «Pintarlo en la
-  tarjeta (Gravity)» ya está marcada** desde `66cf3ea`; estuvo cinco días sin
-  marcar estándolo.
-- ✅ **Filtros por etiqueta y rango de fechas en `GET /tasks`** (del Sprint 4) —
-  `417941f`. Marcada correctamente.
+**El frontend desplegado no alcanza a la API desplegada** (§5): rutas relativas
+`/api/…` que solo funcionan tras el proxy de Vite, sin `vercel.json` ni
+`import.meta.env` en el repo → **404 comprobado en vivo**. Y detrás, las cookies
+`sameSite: "lax"`, que impiden la salida fácil de apuntar el SPA al host de
+Cloud Run. **No está anotado en ninguna lista de deuda del proyecto.**
 
-**Deuda de arquitectura** (`AI_ROLES.md`): el refactor de `handleDragEnd` en
-`KanbanBoard.tsx` (updater impuro).
+### Lo que se cerró en este corte
 
-**Movido al backlog el 2026-07-29 por Doc:** plantillas de correo reutilizables.
+- ✅ **`MOCK_TASKS` como respaldo del `catch`** — el gemelo de `MOCK_METRICS`,
+  sobre la superficie de trabajo principal. En el árbol, **sin commitear**.
+- ✅ **El refactor de `handleDragEnd`** — la única deuda de arquitectura
+  declarada (`AI_ROLES.md`), viva desde el 2026-07-27. En el árbol, sin commitear.
+- ✅ **Los dos contratos duplicados a mano** (`DashboardMetrics` y el `tz` de
+  `TimeReportResult`). En el árbol, sin commitear.
+- ✅ **`GOOGLE_CLOUD_PROJECT`**, que apagaba en silencio la correlación por traza:
+  `deploy.yml` la inyecta (§8).
+- ✅ **`AI_ROLES.md` ya no nombra `HANDOFF.md`** (pendiente nº 1 de `DOC.md`).
+- ✅ **El guardarraíl entero, comprobado corriendo**: CI verde, despliegue verde,
+  sonda viva. Ya no es «debería salir en verde».
 
-**Cancelado el 2026-07-29 por Doc:** `POST /copilot/draft-email` (lo cubre la
-herramienta `draft_email` del chat).
+### Lo que sigue abierto
 
-**Otros avisos sueltos:**
-- El bundle del frontend pasó de 411 kB a 794 kB al entrar Recharts; Vite ya lo
-  comenta. Se parte con `import()` dinámico cuando moleste. Con el tablero de
-  métricas ya pintando gráficas, esto deja de ser hipotético.
-- **Dos contratos duplicados a mano en `apps/web`, los dos vivos hoy:**
-  `features/dashboard/types.ts` copia `DashboardMetrics` en vez de importarlo de
-  `@pmo/shared`, y `TimeReportResult` (`time.api.ts:88-94`) **sigue sin declarar
-  el campo `tz`** que el backend ya devuelve. Ninguno rompe nada ahora; los dos
-  pueden separarse en silencio.
-- ✅ **El acta del 30 está escrita** (`66cf3ea`, `docs/SESSION-2026-07-30.md`,
-  180 líneas). Era el agujero del histórico que anoté en el corte anterior.
-  ⚠️ **Pero el hueco se ha movido:** `docs/` llega hasta el 30 y **el 31 cerró
-  con tres commits sin acta** —entre ellos la mitad entera de la observabilidad—
-  y hoy tampoco hay registro, aunque el día sigue abierto. El patrón se repite:
-  el acta se escribe un día tarde y el día siguiente vuelve a quedarse fuera.
-- ⚠️ **`role="button"` anidado en el Inbox** (`d358152`): el envoltorio y el
-  contenido de la fila lo llevan los dos, con `tabIndex={0}` cada uno. Dos
-  paradas de tabulación por fila y la misma forma del botón dentro de un botón
-  que se vino a quitar, ahora en ARIA (§5).
-- El `forbidNonWhitelisted` global se dejó fuera **a propósito**: rechazaría los
-  campos de más en toda la API, incluidos los cuerpos que ya manda el frontend.
-  Es zona compartida, se acuerda antes de tocarlo.
-- ⚠️ **`GOOGLE_CLOUD_PROJECT` vacía apaga en silencio la correlación por traza**
-  y Cloud Run no la inyecta sola (§8). Es material de runbook, que está sin
-  escribir.
-- ✅✅ **El guardarraíl del CI está entero.** Los tres motivos por los que no
-  servía están saldados: rama (`eb4449d`), lint en verde (`b5995a7`) y **remoto,
-  que era el hallazgo rojo único y se cerró en este corte** (§5). Queda sin
-  comprobar desde aquí si alguna ejecución ha corrido de verdad.
-- **Este corte se cierra sin ningún hallazgo rojo.** Es la primera vez.
-
----
+- ⚠️ **El login no está probado y el verde no lo prueba**: falta autorizar
+  `https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback` en el cliente
+  OAuth de la consola de Google. Hasta entonces, `redirect_uri_mismatch` desde la
+  pantalla de Google —un error que parece del cliente y no del despliegue.
+- ⚠️ **`CLAUDE_MEMORY.md` se contradice** sobre esa misma variable (§5).
+- ⚠️ **`role="button"` anidado en el Inbox**, reverificado hoy: `InboxPage.tsx`
+  lo lleva en `:283` y en `:431`, los dos con `tabIndex={0}`, uno dentro del otro.
+  Dos paradas de tabulación por fila y el botón dentro del botón otra vez, ahora
+  en ARIA, donde el validador no lo ve. Se arregla dejando `role`/`tabIndex` en
+  **uno solo** de los dos.
+- ⚠️ **`TASKS.md` con la foto vieja** y **`docs/` parado el 07-31** (§9).
+- **`mockTasks.ts` se queda en el disco** sin que lo importe nadie.
+- **Peso de la imagen: ~882 MB**, de los que `googleapis` son 204 para usar solo
+  Gmail. `@googleapis/gmail` ahorraría ~190, pero toca varios archivos. _Ojo:
+  Docker 29 reporta el tamaño **comprimido** (153 MB) en `docker images`._
+- **El bundle del frontend, 794 kB** desde que entró Recharts. Vite ya lo comenta.
+- **`FRONTEND_URL`**, variable de repositorio que no lee ningún workflow (§5).
+- **Herramienta del copiloto para mover correos** — en el backlog, pendiente de
+  decisión de Doc, y con confirmación humana obligatoria: un correo es texto de un
+  desconocido y una herramienta que mueva sola es una puerta a la inyección de
+  instrucciones.
+- **Runbook y backups** — las dos casillas que le quedan al Sprint 8 además del
+  frontend.
+- El `forbidNonWhitelisted` global sigue fuera **a propósito**: es zona compartida.
 
 ## 11. Bitácora de Alana
 
 | Fecha | Qué revisó | Corte de git |
 |---|---|---|
+| 2026-08-07 | **Despertar 7. El corte del despliegue: la API está en producción — y el frontend no llega a ella.** 33 commits en tres días (08-03, 08-05, 08-07) y el mayor cambio de forma del proyecto: **`HANDOFF.md` se partió en cuatro memorias** (`API_CONTRACTS.md` neutral, `CLAUDE_MEMORY.md`, `GRAVITY_MEMORY.md`, `DOC.md`) y `AI_ROLES.md` ya lo refleja. **La API vive en `https://pmo-api-mlpuuasqka-uc.a.run.app`** sobre Cloud Run con Neon y Upstash, desplegada por pipeline encadenado al CI, con las migraciones corriendo en un Job **antes** de publicar la revisión. Sondado por mí, sin credenciales: `/health/ready` **200** con base y Redis arriba, `/health/live` 200, `/auth/me` **401** y `/auth/google` **302** —abrir el servicio no lo dejó desprotegido—. **Y por fin se acabó suponer: `gh` está instalado**, así que el verde del CI y del despliegue está visto, no deducido. Costó tres obstáculos y **ninguno era del código**: unos secretos de modelo que no existían y cuya revisión condenada **se llevó por delante a la que estaba sirviendo**, Cloud Run naciendo privado (cinco 403 de la puerta, con el contenedor arrancando impecable al lado) y un `--args` de gcloud que exige el igual. **Hallazgo rojo nuevo, y no lo ve ningún guardarraíl porque todos miran la API: el SPA de Vercel pide contra `/api/…` relativo —el proxy de Vite, que en producción no existe— y devuelve 404 comprobado en vivo; detrás, las cookies `sameSite: lax` cierran la salida fácil de apuntar al host de Cloud Run.** En el árbol sin commitear está el saneamiento de Gravity, que cierra de golpe tres apuntes míos: fuera `MOCK_TASKS` del `catch`, el updater impuro de `handleDragEnd` —única deuda de arquitectura declarada— y los dos contratos copiados a mano. Ejecutado, no leído: **525 pruebas en 20 suites y lint a 0 errores / 0 avisos**. Anotado también: `CLAUDE_MEMORY.md` se contradice a sí mismo sobre `GOOGLE_REDIRECT_URI` (comprobado contra GitHub: vale la URL real); `3578f8d` se llevó este cuaderno a git sin decirlo; `TASKS.md` sigue con la foto vieja y `docs/` se paró el 07-31. **Y después, a petición del usuario, barrido completo de la programación (§12)**, que multiplica el hallazgo rojo por tres —prefijo `/api` inexistente en `API_BASE`, llamadas relativas contra el origen de Vercel y el socket clavado en `localhost:3000`— y destapa que **la ingesta de Gmail está apagada en producción** por dos variables que nadie inyecta. El backend, en cambio, sale limpio de lo que fui a buscar: 0 `any`, SQL parametrizado, propiedad por `userId` en todas las escrituras, AES-256-GCM correcto y la carrera del cronómetro resuelta con índice único. Actualizadas las secciones 0, 1, 3, 4, 5, 8, 9, 10 y añadida la 12. **Y por orden del usuario, los hallazgos quedaron también anotados al final de `GRAVITY_MEMORY.md`**, añadidos y revalidados antes contra `0c6c238`: entre el barrido y la escritura, la otra terminal cerró dos —las llamadas con `/api` relativo y las cookies cross-site (`sameSite: none`)— y siguen vivos el prefijo `/api` de `API_BASE`, el socket clavado en `localhost:3000` y las variables de Pub/Sub ausentes. | `b1f6bcb` + 13 archivos sin commitear, y **el árbol cambiando mientras leía** |
 | 2026-08-03 | **Despertar 6. El corte sin hallazgos rojos, el primero.** Cuatro commits nuevos (tres del viernes por la tarde, uno de hoy) y árbol limpio por tercera vez seguida. **Se cerró el hallazgo rojo único: ya hay remoto** —`origin` en GitHub, `HEAD == origin/master`, 0 ahead / 0 behind—, así que el proyecto deja de vivir en un solo disco y el CI tiene por fin dónde correr; no lo hizo ningún commit, se configuró fuera del historial. **Cerrada la observabilidad del Sprint 8** en dos tiempos: `37e634e` dejó escrito que no estaba probado contra la app, y `0439a3b` lo cierra con 71 pruebas y la verificación viva, donde aparecieron los dos únicos fallos — 🔒 **el código de autorización de Google se estaba escribiendo cuatro veces en el log** (el serializador de `pino-http` guarda la petición como binding del logger hijo, así que la URL cruda salía en todas las líneas de esa petición) y el 503 de la sonda abriendo una incidencia por latido. Sentry cancelado: Error Reporting lee de Cloud Logging, sin SDK ni credencial. Ejecutado, no leído: **497 pruebas en 18 suites, 0 errores y 28 avisos de lint**. Cerrados también el acta del 30, las dos casillas de Gravity, el hash inventado del acta del 29 y la fila del Inbox sin teclado. **Hallazgos nuevos, ninguno rojo:** el `role="button"` anidado con que se arregló el Inbox (dos paradas de tabulación por fila, el botón dentro del botón otra vez pero en ARIA); el handoff al revés —la §0 dice «no arranques hasta que Doc active» y el trabajo entró 48 minutos después—; `GOOGLE_CLOUD_PROJECT` vacía apagando en silencio la correlación por traza, que Cloud Run no inyecta sola; y el hueco del histórico, que se movió del 30 al 31. `TASKS.md` vuelve a arrastrar la cifra vieja y a decir que no hay remoto. No se puede comprobar desde aquí si el CI llegó a ejecutarse: `gh` no está instalado. Actualizadas las secciones 4, 5, 6, 8, 9, 10. | `0439a3b` + árbol limpio (solo `?? ALANA.md`) |
 | 2026-07-31 | **Despertar 5.** Corte de cierre de día: dos commits nuevos, los dos de ayer a las 18:0x, **ninguno de hoy**, y el árbol limpio por segunda vez en la historia del proyecto. Los dos hallazgos que dejé abiertos anoche están cerrados: `b5995a7` quita los tres `catch (err)` y **`npm run lint` sobre HEAD da 0 errores / 28 avisos** (ejecutado, no leído del mensaje del commit); `f9ce09b` reescribe la sección 0 caducada del handoff y la sustituye por una regla útil para Gravity — lint en verde antes de cada commit. Anotado que esta vez la excepción de dominio en `apps/web` va **declarada** en el mensaje y comunicada, al contrario que el `tz` de `2ceedd2`. **Queda un solo hallazgo rojo, y es el mismo desde el despertar 4: no hay remoto** (`git remote -v` vacío) — sin CI y sin copia, el proyecto entero en un disco. Los demás hallazgos son de documentos que no siguen al código: la cabecera del HANDOFF sigue en `TRABAJAR` pidiendo cuatro cosas ya hechas, la §9 sigue pidiendo el `tz`, y **`TASKS.md` no se toca desde ayer al mediodía** (423/13 suites, CI en `main`, dos casillas de Gravity sin marcar). Y el 30 cerró con 9 commits y **sin acta**. Actualizadas las secciones 4, 5, 9, 10. | `f9ce09b` + árbol limpio (solo `?? ALANA.md`) |
 | 2026-07-30 ~13:10 | **Despertar 4.** El corte del desbloqueo: **Gravity commiteó** (`0d2a4f4`) y con ello se cierran de golpe los dos hallazgos rojos que llevaban tres despertares abiertos — el tablero de métricas ya no pinta `MOCK_METRICS` y **las dos piezas de interfaz del Sprint 6 están hechas** (`threadId` en el cuerpo del chat, recogido del evento `done`, y la lista de hilos con sus tres rutas). Verificado en el código: el indicador de escritura no cuelga del primer `token`, pasa a `streaming` con las cabeceras. También cayeron el CI apuntando a `main` (`eb4449d`) y la migración ausente del handoff. **Hallazgo nuevo, rojo: HEAD no pasa el linter** — tres `catch (err)` sin usar en `CopilotDrawer.tsx`, cuyo arreglo está en el árbol sin commitear, otra vez tocado desde la terminal de backend en dominio de Gravity. **Y el CI recuperado todavía no puede correr: no hay remoto configurado.** La sección 0 del handoff, escrita 8 segundos después del commit que pedía, nació caducada. Actualizadas las secciones 4, 5, 6, 9, 10. | `877c06c` + `CopilotDrawer.tsx` modificado sin commitear |
@@ -779,3 +1006,238 @@ herramienta `draft_email` del chat).
 | 2026-07-30 ~12:15 | **Despertar 3.** Corte corto, 15 minutos después del anterior, con 3 commits nuevos y trabajo vivo en el árbol. **Se destapó que el linter nunca funcionó en todo el proyecto**: no había configuración de ESLint en ninguna parte, y el CI —que escucha `main` mientras se trabaja en `master`— nunca lo ejecutó, así que el fallo del workflow deja de ser sospecha y pasa a tener una consecuencia comprobada. Gravity está quitando el mock del tablero de métricas ahora mismo, sin commitear: el hallazgo rojo del corte anterior se está arreglando. **Nuevo hallazgo:** el `tz` de `getTimeReport` (encargo §9, dominio de Gravity) entró dentro del commit del linter, cuyo mensaje afirma que no cambia comportamiento. Corregida mi cifra de pruebas: son 423 en 13 suites, no ~407 — las tablas `it.each` declaran varios casos por llamada. De los hallazgos anteriores, el único que sigue vivo es la migración `add_priority_audit` ausente de «Estado del repo». Actualizadas las secciones 4, 5, 9, 10. | `0af5a28` + `useDashboardMetrics.ts` modificado sin commitear |
 | 2026-07-30 ~12:00 | **Despertar 2.** Árbol limpio por primera vez: los 7 commits nuevos incluyen todo lo que estaba suelto de Gravity. Se saldó la deuda de plan entera (auditoría de prioridad y filtros) y se abrió el Sprint 8: seguridad, `GET /dashboard/metrics` con motor único de cálculo, `completedAt` encendida y los husos alineados entre métricas y `GET /time/report`. **Hallazgo principal: el tablero de métricas está enchufado en `App.tsx` pintando `MOCK_METRICS` con la llamada real comentada.** Otras discrepancias: la sub-casilla de pintar la prioridad está sin marcar y sí está hecha; falta la migración `add_priority_audit` en «Estado del repo»; el registro del 29 cita un hash que no existe (`bb0b73f`); y las dos piezas de interfaz del Sprint 6 (`threadId` y lista de hilos) siguen sin empezar. Actualizadas las secciones 4, 5, 6, 9, 10. | `3cffc21` + árbol limpio (solo `?? ALANA.md`) |
 | 2026-07-29 ~16:30 | **Despertar 1.** 5 commits nuevos: el backend del Sprint 6 quedó completo y Doc lo cerró formalmente. Se commiteó todo lo que en el corte anterior estaba en el árbol de trabajo. Entraron las cuatro herramientas, la bitácora y el bucle de tool use. `POST /copilot/draft-email` cancelado y las plantillas al backlog. Lo pendiente pasó a ser solo frontend de Gravity: mandar `threadId` y la lista de conversaciones. Actualizadas las secciones 4, 5, 6, 9, 10. | `72e1b78` + árbol con 6 archivos de `apps/web/` modificados y `CreateTaskCard.tsx` sin rastrear |
+
+---
+
+## 12. Barrido completo del código (2026-08-07, 13:15)
+
+Encargo del usuario: leer toda la programación, no solo lo que cambió.
+
+> ⚠️ **Aviso de método, y no es menor: el árbol se estaba editando mientras yo
+> leía.** A las 13:13 había **13 archivos modificados**, once de ellos de
+> `apps/web`, con marcas de tiempo entre las 13:03 y las 13:13 —otra terminal
+> está centralizando ahora mismo la capa de API—. Un archivo llegó a cambiar
+> **entre dos lecturas mías**. Todo lo que digo de `apps/web` es una foto de las
+> 13:15, no un estado estable; lo de `apps/api` sí está quieto.
+
+### Inventario
+
+| Paquete | Archivos | Líneas |
+|---|---|---|
+| `apps/api/src` | 120 (21 de ellos `.spec.ts`) | 16 656 |
+| `apps/web/src` | 38 | 4 879 |
+| `packages/shared/src` | 1 | 216 |
+
+Más 9 migraciones de Prisma y un esquema de 248 líneas.
+
+### El backend está bien construido, y esto es lo que lo sostiene
+
+No es impresión de lectura: es lo que fui a buscar expresamente y encontré en su
+sitio.
+
+- **Cero `any` fuera de las pruebas**, en los tres paquetes. Cero `@ts-ignore`,
+  cero `@ts-expect-error`, cero `TODO`/`FIXME` en `apps/api`. Un solo
+  `eslint-disable`, para un `no-control-regex` que trata caracteres de control
+  al construir MIME —justificado y comentado.
+- **El SQL crudo está parametrizado.** Los cuatro `$queryRaw` usan `Prisma.sql`
+  con interpolación de parámetros; el único `Prisma.raw` recibe un **nombre de
+  columna literal del código**, nunca entrada de usuario. La zona horaria viaja
+  como parámetro, no concatenada.
+- **La propiedad se comprueba en todas las escrituras.** Revisé una a una las que
+  escriben por `id`: las dos que a primera vista no filtran por `userId`
+  —`chatThread.update` y `email.update`— van precedidas, dentro de la misma
+  transacción o del mismo método, de una lectura que sí lo exige. No encontré
+  ningún camino en que un id ajeno bastara.
+- **El cifrado de los tokens de Google es correcto**: AES-256-GCM, IV aleatorio
+  de 96 bits por mensaje, etiqueta de autenticación verificada al descifrar, y
+  la clave se valida al arrancar (64 hex) en vez de fallar en el primer uso.
+- **La carrera del cronómetro está resuelta donde hay que resolverla**: una
+  columna centinela con índice único, y el `UNIQUE_VIOLATION` traducido a 409.
+  Dos pestañas no pueden abrir dos fichajes, y no depende de que la lectura
+  previa gane la carrera.
+- **El socket se autentica con la misma cookie que el REST** y exige
+  `typ: access`, así que un token de refresco no abre un socket. Cada cliente
+  entra en la sala de su `userId`.
+- **Los guards están donde deben**: todos los controladores llevan `AuthGuard`
+  salvo los tres públicos por diseño —`/health/*`, el arranque y el callback de
+  OAuth, y el webhook, que va con `PubSubAuthGuard` verificando firma OIDC,
+  `aud` y cuenta de servicio emisora.
+- **La separación de herramientas del copiloto se sostiene en el código**, no
+  solo en la documentación: las de solo lectura las ejecuta el backend con el
+  `userId` cerrado en el ejecutor —el modelo pide «busca X» sin saber de quién
+  son los datos— y las que actúan salen como propuesta que confirma una persona
+  contra una ruta REST. Enviar correo **no es una herramienta del modelo**, que
+  es la decisión de seguridad importante cuando lo que lee son correos ajenos.
+- **El Dockerfile es de los cuidados**: tres etapas, árbol de producción
+  resuelto desde cero en vez de podado, usuario `node` sin privilegios, y
+  `CMD ["node", ...]` sin `npm` por medio para que el `SIGTERM` de Cloud Run
+  llegue a Node y corra el cierre ordenado.
+- El cuerpo de los correos se pinta como **texto**: no hay un solo
+  `dangerouslySetInnerHTML` en `apps/web`.
+
+### 🔴 Lo que impide que el producto funcione en producción
+
+**Tres roturas independientes, las tres en `apps/web`, y ninguna visible desde la
+API.** Esto es lo que quiero dejar dicho: no es un descuido, es que `apps/web`
+**nunca se adaptó a producción**, y el guardarraíl no puede verlo porque el CI y
+el despliegue solo construyen y sondan la API.
+
+1. **`API_BASE` en producción lleva un `/api` que no existe.** `lib/api.ts`
+   resuelve `import.meta.env.VITE_API_URL || (PROD ? "https://pmo-api-…/api" : "/api")`.
+   La API **no tiene prefijo global** —`main.ts` no llama a `setGlobalPrefix`—,
+   así que las nueve archivos que pasan por `apiFetch` piden contra un 404.
+   Comprobado contra la API real: `/api/auth/me` → **404**, `/auth/me` → **401**.
+   **Es el error del prefijo `/api` por tercera vez en el proyecto**, y esta vez
+   dentro del código del frontend, donde la comprobación de `deploy.yml` —que ya
+   paró dos intentos en la variable de OAuth— no alcanza.
+2. **Los que aún llaman con `/api` relativo** —a las 13:13,
+   `useDashboardMetrics.ts`— piden contra el origen de Vercel, donde no hay API
+   ni reescritura: **404 comprobado en vivo**. Este es el grupo que la otra
+   terminal está migrando ahora mismo.
+3. **El tiempo real apunta a la máquina del usuario.** `useSocket.ts:90` hace
+   `io('http://localhost:3000')`, fijo, sin variable ni relativo. En producción
+   el navegador intenta abrir un socket contra el `localhost` de quien mire la
+   página. No hay tablero en vivo, y el fallo no aparece en ningún log del
+   servidor porque la conexión nunca sale hacia él.
+
+Y por debajo de las tres, la cookie `sameSite: "lax"` (§5), que decide cuál de
+las salidas posibles es viable.
+
+### 🟠 La ingesta de Gmail está apagada en producción, y avisa con una línea de log
+
+Es la pieza nú​mero uno del producto —correo → Pub/Sub → cola → clasificación— y
+en la revisión desplegada no puede funcionar. Comparé **todas** las variables que
+lee el código con las que inyecta `deploy.yml`:
+
+| Variable | Quién la lee | En producción | Consecuencia |
+|---|---|---|---|
+| `GMAIL_PUBSUB_TOPIC` | `gmail.service.ts:354` | **ausente** | `watchInbox` escribe `«no está configurado. Omitiendo»` y **vuelve**: no se registra la suscripción push |
+| `GMAIL_PUBSUB_AUDIENCE` | `pubsub-auth.guard.ts` | **ausente** | y si llegara un push igualmente, el guard lo rechaza con 401 «Webhook mal configurado» |
+| `GMAIL_PUBSUB_SERVICE_ACCOUNT` | mismo guard | ausente | solo se comprueba si está puesta; no bloquea |
+
+Las dos primeras **no son opcionales para que el producto haga lo que promete**,
+y su ausencia no rompe el arranque ni la sonda: la revisión sale verde, atiende,
+y no entra un solo correo. Es exactamente la forma de fallo que el proyecto ya se
+encontró con `GOOGLE_CLOUD_PROJECT` —capacidad que se apaga en silencio— y para
+la que `main.ts` tiene un `avisoDeConfiguracion` que aquí no cubre nada.
+
+### 🟡 Lo demás que encontré
+
+- **`COPILOT_EMAIL_TRANSPORT` no está puesta en producción, y el valor por
+  defecto es Gmail de verdad** (`copilot.module.ts:66`: simulado **solo** si vale
+  `mock`). Es coherente con la decisión de Doc —local simulado, real en la nube—
+  y el arranque lo deja dicho en el log. Lo anoto porque **el transporte real no
+  se ha disparado nunca** y el plan era validarlo en un staging que no existe: el
+  primer clic de «Enviar» en producción manda un correo auténtico desde el Gmail
+  del usuario.
+- **Una mina en el entorno local: `apps/web/.env`** (del 25 de julio, ignorado por
+  git, así que solo está en esta máquina) dice
+  `VITE_API_URL=http://localhost:3000/tasks`. Esa variable **gana sobre todo lo
+  demás** en `lib/api.ts`, así que en desarrollo `apiFetch('/tasks')` sale hacia
+  `http://localhost:3000/tasks/tasks`, y además salta el proxy de Vite, con lo
+  que las cookies pasan a ser cross-site. `VITE_API_URL` **no está documentada en
+  ningún `.env.example`**, así que nadie que monte el proyecto sabrá que existe
+  ni que puede estar mintiendo.
+- **Fecha de vencimiento con un día de menos en la tarjeta del copiloto.**
+  `CreateTaskCard.tsx:146`: el `<input type="date">` da `2026-07-10`,
+  `new Date('2026-07-10')` lo interpreta como **medianoche UTC** y la línea de al
+  lado lo pinta con `toLocaleDateString()`, que en México resta seis horas y
+  enseña el **9**. El propio `input` sigue mostrando el 10 porque se recalcula
+  con `split('T')[0]`: la misma tarjeta muestra dos fechas distintas. Es la misma
+  trampa que ya se arregló en el eje X del tablero —`new Date(dateStr + 'T00:00:00')`,
+  `DashboardPage.tsx:41`—, sin arreglar aquí.
+- **`role="button"` anidado en el Inbox**, reverificado: `InboxPage.tsx:283` y
+  `:431`, uno dentro del otro, los dos con `tabIndex={0}`.
+- **Dos migraciones se llaman igual**: `20260728221900_add_tags` crea la tabla y
+  `20260728221924_add_tags`, veinticuatro segundos después, le añade el
+  `createdAt` que faltaba. Prisma las distingue por carpeta, así que no rompe
+  nada; leer el historial con dos entradas del mismo nombre sí cuesta.
+- **`mockTasks.ts` sigue en el disco** sin que lo importe nadie.
+- **El `AuthGuard` es deliberadamente sin estado**: no consulta la base en cada
+  petición, así que un usuario borrado o revocado conserva sesión válida hasta
+  15 minutos. Está escrito en el propio archivo y es un intercambio razonable;
+  lo dejo anotado porque no aparece en ninguna lista.
+
+### Lo que **no** revisé línea a línea
+
+Para que nadie lea esto como «todo comprobado»: leí entero lo pequeño y
+sensible —`main.ts`, guards, cripto, sesión, ejecutor de herramientas,
+Dockerfile, workflows— y recorrí por estructura y por patrones los servicios
+grandes (`emails` 614 líneas, `time` 496, `gmail` 383, `tasks` 371, `ai` 343).
+De `apps/web` miré en detalle la capa de API, el socket, el tablero, el Inbox y
+las tarjetas del copiloto; los modales y los componentes de presentación solo
+por barrido de patrones. Las **21 suites de pruebas** no las audité: comprobé
+que pasan (525), no qué dejan fuera.
+
+---
+
+
+---
+
+## 13. El 404 del login: `WEB_URL` apunta a otra aplicación (2026-08-10)
+
+Encargo del usuario: diagnóstico quirúrgico de un
+`404 DEPLOYMENT_NOT_FOUND` al entrar con Google, con la sospecha de que el
+backend redirigía a un despliegue inexistente de Vercel.
+
+**La sospecha era razonable y es falsa. El backend no participa en ese 404.**
+
+### Lo que descarta al backend
+
+| Comprobación | Resultado |
+|---|---|
+| `git log --all -S "manejo-org"` | **cero commits**: la cadena no ha existido nunca en el repo |
+| URLs quemadas en `apps/api/src` | ninguna; el único respaldo de `WEB_URL` es `http://localhost:5173` |
+| `WEB_URL` de **las 26 revisiones** de Cloud Run | `https://pmo-frontend.vercel.app` en todas desde la 00009 (la 00008 tenía el marcador, la 1–7 ninguna) |
+| Tráfico | 100 % a `pmo-api-00026-m7w`, con esa misma `WEB_URL` |
+| El `state` | 16 bytes aleatorios (`auth.controller.ts:62`), cotejado contra su cookie. **No guarda ninguna URL de origen**, ni se lee `Origin` ni `Referer` en ninguna parte de la redirección |
+
+### Lo que sí pasa
+
+**`https://pmo-frontend.vercel.app` no es el frontend de este proyecto.** Sirve
+**otra aplicación**, y se identifica sola en su propio manifiesto:
+
+```json
+{"name":"PMO Digital","short_name":"PMO",
+ "description":"Gestão de Planos de Manejo Orgânico"}
+```
+
+Descargado el bundle que sirve hoy (`/assets/index-vq9e4Vot.js`, 827 KB) y
+contado dentro:
+
+| Cadena | Ocurrencias |
+|---|---|
+| `supabase` | **43** — el proyecto `hejewayflbuemnffrhae.supabase.co` |
+| `run.app` | **0** — no conoce nuestra API |
+| `socket.io`, `Kanban`, `Copiloto`, `Por Hacer` | **0 cada una** |
+
+Es una aplicación en portugués, con Material UI, autenticación de **Supabase** y
+botones «Entrar com Google» y Facebook. Nada que ver con este monorepo.
+
+**De ahí sale el 404 y de ahí sale el nombre**: `manejo-org-app-v2` es el
+despliegue hermano de *esa* aplicación —«manejo orgánico»—, y quien redirige
+hacia él tras el consentimiento de Google es **Supabase**, con la URL que tenga
+configurada ese otro proyecto. Ese despliegue ya no existe, y Vercel responde
+`DEPLOYMENT_NOT_FOUND`. Nuestro NestJS no interviene en ningún paso.
+
+**La causa de fondo, en una frase: el frontend de este proyecto no está
+desplegado en ninguna parte**, y `WEB_URL` se rellenó con un dominio que
+«parecía el nuestro» porque los dos proyectos se llaman PMO.
+
+### Consecuencia colateral, ya anotada en §12
+
+El bundle servido hoy es el mismo hash que el del 2026-08-07
+(`index-vq9e4Vot.js`), así que **ninguno de los arreglos de frontend de estos
+días está en producción** —ni el `API_BASE` sin `/api` ni el socket, los dos
+corregidos en `dbeb4d5`—. No podían estarlo: ese dominio nunca ha servido este
+código, y **el despliegue de `apps/web` no está en el pipeline** (no hay
+`vercel.json` ni workflow que lo construya).
+
+### El guardarraíl que falta
+
+`deploy.yml` valida `GOOGLE_REDIRECT_URI` con cuatro comprobaciones —y ya paró
+dos despliegues—, pero **no comprueba `WEB_URL` en absoluto**: se acepta
+cualquier cadena. Una comprobación de que responde y de que **es nuestra**
+(buscar un marcador propio en el HTML servido) habría cazado esto el primer día.
+Es la misma leccion del `/api/v1`: lo que no valida el pipeline, lo descubre el
+usuario.

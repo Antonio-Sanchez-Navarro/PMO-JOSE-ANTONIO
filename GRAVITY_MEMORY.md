@@ -189,7 +189,7 @@ gh variable set GCP_PROJECT_ID    --body "$PROJECT_ID"        --repo "$GH_REPO"
 gh variable set GCP_REGION        --body "$REGION"            --repo "$GH_REPO"
 gh variable set GAR_REPOSITORY    --body "$REPOSITORY"        --repo "$GH_REPO"
 gh variable set CLOUD_RUN_SERVICE --body "$SERVICE"           --repo "$GH_REPO"
-gh variable set WEB_URL           --body "https://REEMPLAZAR" --repo "$GH_REPO"
+gh variable set WEB_URL           --body "https://pmo-frontend-antoniosanchez-5466s-projects.vercel.app" --repo "$GH_REPO"
 
 gh secret set GCP_WORKLOAD_IDENTITY_PROVIDER --repo "$GH_REPO" \
   --body "projects/${PROJECT_NUM}/locations/global/workloadIdentityPools/github/providers/github-provider"
@@ -263,3 +263,144 @@ es el último eslabón de cuatro (`npm run dev:api` → `start:dev` → `cross-e
 
 ---
 
+
+---
+
+## Barrido de código de Alana — 2026-08-07
+
+> **Esto no es un encargo.** Lo escribe Alana, que solo observa: no reparte
+> trabajo, no cambia el campo `Estado` —eso es de Doc— y no ha tocado código.
+> Son hallazgos de un barrido completo pedido por el usuario, **revalidados uno
+> a uno contra `0c6c238`** después de tus tres commits de las 13:19, para no
+> dejarte apuntada ninguna cosa ya hecha. Cada uno lleva dónde mirar y cómo
+> comprobarlo.
+
+### ✅ Cerrado por ti mientras yo escaneaba
+
+- **Las llamadas con `/api` relativo ya no existen**: todo pasa por `API_BASE`
+  (`5a8e15f`). Cuando empecé el barrido quedaban cuatro archivos pidiendo contra
+  el origen de Vercel, donde no hay API.
+- **Las cookies de sesión ya viajan entre sitios distintos** (`e55d9c1`):
+  `sameSite: "none"` con `secure` en producción. Y la cookie de `state` del login
+  se queda en `lax` **a propósito**, con el motivo escrito al lado: es la defensa
+  anti-CSRF y aflojarla sería soltar justo lo que protege. Aflojar lo que estorba
+  y no lo que está al lado es lo correcto aquí.
+
+### 🔴 Sigue abierto: el prefijo `/api` que la API no sirve
+
+`apps/web/src/lib/api.ts:8`
+
+```ts
+export const API_BASE = import.meta.env.VITE_API_URL
+  || (import.meta.env.PROD ? "https://pmo-api-mlpuuasqka-uc.a.run.app/api" : "/api");
+```
+
+**La API no tiene prefijo global.** `main.ts` no llama a `setGlobalPrefix`, así
+que la única ruta que existe es `/auth/google/callback`, no `/api/...`.
+Comprobado contra la revisión desplegada, sin credenciales:
+
+```
+GET https://pmo-api-mlpuuasqka-uc.a.run.app/api/auth/me  -> 404
+GET https://pmo-api-mlpuuasqka-uc.a.run.app/auth/me      -> 401   <- la que sí existe
+GET https://pmo-api-mlpuuasqka-uc.a.run.app/api/tasks    -> 404
+```
+
+Ahora que las cookies ya viajan cross-site, **esto es lo único que separa al SPA
+de la API**: quitar `/api` del valor de producción. En desarrollo el `/api` sí
+hace falta, porque ahí es el prefijo que el proxy de Vite recorta antes de
+reenviar —son dos cosas distintas con el mismo nombre, y por eso confunde.
+
+**Es la tercera vez que el prefijo `/api` rompe algo en este proyecto.** Las dos
+anteriores fueron en `GOOGLE_REDIRECT_URI` y las paró el guardarraíl de
+`deploy.yml`; esta vive dentro del código del frontend, donde ese guardarraíl no
+llega. Conviene recordar el porqué al escribir cualquier URL de esta API: **no
+hay `/api` ni `/v1` en ninguna ruta.**
+
+### 🔴 Sigue abierto: el tiempo real apunta a la máquina del usuario
+
+`apps/web/src/features/kanban/hooks/useSocket.ts:90`
+
+```ts
+globalSocket = io('http://localhost:3000', { withCredentials: true, ... });
+```
+
+Fijo, sin variable y sin relativo. En producción el navegador intenta abrir un
+socket contra el `localhost` **de quien mire la página**, así que no hay tablero
+en vivo: ni tareas que aparecen solas, ni cronómetro que se sincroniza entre
+pestañas, ni el `email.updated` del Inbox.
+
+**Y no deja rastro en ningún log del servidor**, porque la conexión nunca sale
+hacia él: mirar los logs de Cloud Run para entender por qué no llegan eventos no
+daría nada nunca. Con las cookies ya en `none`, apuntarlo al origen de la API
+debería bastar; el `cors.origin` del gateway ya se lee de `WEB_URL`, que en
+producción vale la URL de Vercel.
+
+### 🟠 La ingesta de Gmail está apagada en producción, y avisa con una línea de log
+
+Terreno de despliegue, por eso lo dejo aquí; la decisión de qué hacer es de Doc.
+Comparé **todas** las variables que lee el backend con las que inyecta
+`deploy.yml`, y faltan las dos que sostienen la pieza número uno del producto
+(`grep -c GMAIL_PUBSUB .github/workflows/deploy.yml` → **0**):
+
+| Variable | Quién la lee | Qué pasa sin ella |
+|---|---|---|
+| `GMAIL_PUBSUB_TOPIC` | `gmail.service.ts:354` | `watchInbox` escribe «no está configurado. Omitiendo» y **vuelve**: la suscripción push no se registra |
+| `GMAIL_PUBSUB_AUDIENCE` | `pubsub-auth.guard.ts` | y si un push llegara igualmente, el guard lo rechaza: «Webhook de Pub/Sub mal configurado» |
+
+Ninguna de las dos rompe el arranque ni la sonda: **la revisión sale verde,
+atiende, y no entra un solo correo**. Es la misma forma de fallo que
+`GOOGLE_CLOUD_PROJECT` —una capacidad que se apaga en silencio— salvo que aquí
+no la cubre el `avisoDeConfiguracion` de `main.ts`.
+
+_Relacionado, y solo para que se sepa:_ `COPILOT_EMAIL_TRANSPORT` tampoco se
+inyecta, y su valor por defecto es **Gmail de verdad** (`copilot.module.ts:66`:
+simulado solo si vale `mock`). Es coherente con lo decidido —local simulado, real
+en la nube—, pero el transporte real **no se ha disparado nunca**: el primer clic
+de «Enviar» en producción manda un correo auténtico desde el Gmail del usuario.
+
+### 🟡 Tres cosas pequeñas del frontend, todas comprobadas hoy
+
+- **La fecha de vencimiento se pinta un día antes.**
+  `CreateTaskCard.tsx:146`: el `<input type="date">` da `2026-07-10`,
+  `new Date('2026-07-10')` lo interpreta como **medianoche UTC** y la línea de al
+  lado lo muestra con `toLocaleDateString()`, que en México resta seis horas y
+  enseña el **9**. El propio `input` sigue mostrando el 10 porque se recalcula con
+  `split('T')[0]`: **la misma tarjeta enseña dos fechas distintas**. Es la trampa
+  que ya resolviste en el eje X del tablero —`new Date(dateStr + 'T00:00:00')`,
+  `DashboardPage.tsx:41`—, sin aplicar aquí.
+- **`role="button"` anidado en el Inbox.** `InboxPage.tsx:283` y `:431`, uno
+  dentro del otro y los dos con `tabIndex={0}`: dos paradas de tabulación por
+  fila, y Enter sobre el hijo dispara lo suyo **y** burbujea al padre. Es la misma
+  forma del botón dentro de un botón que `0d2a4f4` vino a quitar, ahora declarada
+  con ARIA, donde el validador de HTML no la ve. Se arregla dejando
+  `role`/`tabIndex` en **uno solo** de los dos.
+- **`mockTasks.ts` sigue en el disco** y ya no lo importa nadie: 79 líneas de
+  cinco tareas de ejemplo. Quitarlo cierra del todo el capitulo de los mocks.
+
+### ⚠️ Una mina en el entorno local, que no está en git
+
+`apps/web/.env` (del 25 de julio, ignorado por `.gitignore`, así que solo existe
+en esta máquina) contiene:
+
+```
+VITE_API_URL=http://localhost:3000/tasks
+```
+
+Esa variable **gana sobre todo lo demás** en `lib/api.ts`, así que en desarrollo
+`apiFetch('/tasks')` sale hacia `http://localhost:3000/tasks/tasks`, y de paso se
+salta el proxy de Vite. Si alguna vez has visto la capa central fallar en local y
+las llamadas sueltas funcionar, el motivo puede estar ahí y no en el código.
+**`VITE_API_URL` no está documentada en ningún `.env.example`**, así que quien
+monte el proyecto no sabrá que existe ni que puede estar mintiendo.
+
+### Lo que el barrido **no** encontró
+
+Para que conste, porque un informe que solo trae defectos no dice cuánto se miró:
+en `apps/api` no hay un solo `any` fuera de las pruebas, ni `@ts-ignore`, ni
+`TODO`; los cuatro `$queryRaw` van parametrizados y el único `Prisma.raw` recibe
+un nombre de columna literal; todas las escrituras comprueban la propiedad por
+`userId`; el cifrado de los tokens de Google es AES-256-GCM con IV por mensaje y
+etiqueta verificada; la carrera del cronómetro está resuelta con un índice único
+centinela; y el socket exige `typ: access` en el handshake. En `apps/web` no hay
+un solo `dangerouslySetInnerHTML`. El detalle completo, con lo que **no** revisé
+línea a línea, está en la sección 12 de `ALANA.md`.
