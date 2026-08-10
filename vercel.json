@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build:shared && npm --workspace @pmo/web run build",
+  "outputDirectory": "apps/web/dist",
+  "framework": "vite"
+}
