@@ -429,12 +429,14 @@ jobs:
           #
           # Por eso estas cinco viven aquí y no en un comando suelto:
           #
-          # - `COPILOT_EMAIL_TRANSPORT` — `copilot.module.ts:66` compara contra
-          #   `'mock'`, así que **cualquier otro valor, y la ausencia, significa
-          #   enviar por Gmail de verdad**. Perderla no rompe nada visible: hace
-          #   que el siguiente clic en «Enviar» del copiloto mande un correo
-          #   auténtico a un destinatario real. De ahí que su ausencia salga
-          #   como aviso y no como nota al pie.
+          # - `COPILOT_EMAIL_TRANSPORT` — decide si el copiloto envía correos de
+          #   verdad. `copilot.module.ts` solo enciende el envío real con `real`
+          #   o `smtp`; **su ausencia significa simulado**, así que perderla ya
+          #   no manda un correo auténtico a un destinatario real. Ese respaldo
+          #   se invirtió el 2026-08-12, precisamente porque esta variable se
+          #   perdía en cada despliegue y el descuido caía del lado que no se
+          #   puede deshacer. Sigue inyectándose para que el entorno diga lo que
+          #   hace en vez de depender de un valor por defecto.
           # - Las cuatro `GMAIL_PUBSUB_*` — sin ellas la ingesta de correo no
           #   puede funcionar, y la revisión sale verde igual porque nada de
           #   esto se comprueba al arrancar. Es la pieza número uno del producto
@@ -456,8 +458,8 @@ jobs:
             if [ -n "${VALOR}" ]; then
               ENV_VARS="${ENV_VARS},${VARIABLE}"
             elif [ "${NOMBRE}" = "COPILOT_EMAIL_TRANSPORT" ]; then
-              echo "::warning::COPILOT_EMAIL_TRANSPORT no está definida y el valor por defecto es enviar por Gmail DE VERDAD." \
-                   "Ponla a 'mock' mientras se prueba, o confirma que el envío real es lo que se quiere."
+              echo "::notice::COPILOT_EMAIL_TRANSPORT no está definida; el copiloto usará el transporte SIMULADO y no enviará correos." \
+                   "Para enviar de verdad, ponla a 'real' o 'smtp'."
             else
               echo "::notice::${NOMBRE} no está definida; la ingesta de Gmail seguirá inactiva en esta revisión."
             fi

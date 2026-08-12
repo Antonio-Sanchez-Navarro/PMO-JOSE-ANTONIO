@@ -53,25 +53,55 @@ import { MetricsModule } from '../metrics/metrics.module';
       /**
        * Qué transporte despacha los correos.
        *
-       * Por defecto **Gmail**, que es enviar de verdad. `COPILOT_EMAIL_TRANSPORT=mock`
-       * lo cambia por el simulado, que es lo que se quiere mientras se monta la
-       * tarjeta del borrador: si no, cada clic en "Enviar" sale a la calle.
+       * **Por defecto SIMULADO, y hay que pedir el envío real por su nombre**
+       * (`COPILOT_EMAIL_TRANSPORT=real` o `=smtp`). Cualquier otra cosa —vacía,
+       * ausente o un valor que no se reconoce— se queda en simulado.
        *
-       * Se decide al arrancar y se deja dicho en el log, porque "creía que
-       * estaba en simulado" es un error que solo se descubre cuando el correo
+       * Hasta el 2026-08-12 era al revés: el valor por defecto era Gmail y solo
+       * `=mock` lo apagaba. Se invirtió porque el modo peligroso no puede ser el
+       * que sale de no hacer nada. Esa variable **no llegó a producción** —el
+       * pipeline la borraba en cada despliegue, y sigue siendo opcional—, así
+       * que durante días bastaba un clic en «Enviar» para que saliera un correo
+       * auténtico a un destinatario real. Un fallo por olvido debe caer del lado
+       * que no se puede deshacer, y un correo enviado no se recoge.
+       *
+       * De ahí que se comparen los valores que **encienden** el envío en vez de
+       * los que lo apagan: la lista de lo que envía de verdad es cerrada y corta;
+       * la de lo que no, es infinita. Un `=reall` con un dedazo se queda en
+       * simulado y lo dice, en vez de salir a la calle.
+       *
+       * Se decide al arrancar y se deja dicho en el log, porque «creía que
+       * estaba en simulado» es un error que solo se descubre cuando el correo
        * ya llegó.
        */
       provide: EMAIL_SENDER,
       useFactory: (config: ConfigService, gmail: GmailSender, mock: MockSender) => {
-        const simulado = config.get<string>('COPILOT_EMAIL_TRANSPORT') === 'mock';
+        const TRANSPORTES_REALES = ['real', 'smtp'];
 
-        new Logger('CopilotEmail').log(
-          simulado
-            ? 'Transporte de correo: SIMULADO (no se envía nada)'
-            : 'Transporte de correo: Gmail — los envíos salen de verdad',
-        );
+        const configurado = (config.get<string>('COPILOT_EMAIL_TRANSPORT') ?? '').trim();
+        const enviaDeVerdad = TRANSPORTES_REALES.includes(configurado.toLowerCase());
 
-        return simulado ? mock : gmail;
+        const registro = new Logger('CopilotEmail');
+
+        if (enviaDeVerdad) {
+          registro.warn(
+            `Transporte de correo: Gmail (COPILOT_EMAIL_TRANSPORT=${configurado}) — los envíos salen de verdad`,
+          );
+        } else {
+          // El valor no reconocido se avisa aparte: el resultado es el seguro,
+          // pero quien escribió algo esperaba que hiciera *algo*, y callarlo
+          // deja a alguien creyendo que configuró un transporte que no existe.
+          if (configurado !== '' && configurado.toLowerCase() !== 'mock') {
+            registro.warn(
+              `COPILOT_EMAIL_TRANSPORT="${configurado}" no es un transporte conocido; ` +
+                `se usa el simulado. Para enviar de verdad: ${TRANSPORTES_REALES.join(' o ')}.`,
+            );
+          }
+
+          registro.log('Transporte de correo: SIMULADO (no se envía nada)');
+        }
+
+        return enviaDeVerdad ? gmail : mock;
       },
       inject: [ConfigService, GmailSender, MockSender],
     },

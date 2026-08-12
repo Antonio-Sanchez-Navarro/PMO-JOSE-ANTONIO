@@ -59,9 +59,10 @@ export class GmailSender implements EmailSender {
  * No envía: deja constancia en el log y responde como si hubiera enviado.
  *
  * Existe para que se pueda montar y probar la tarjeta de borrador sin que cada
- * clic en "Enviar" salga a la calle. Se activa con
- * `COPILOT_EMAIL_TRANSPORT=mock`, y la respuesta lleva `transport: "mock"` para
- * que la interfaz pueda decirlo en vez de dar por enviado lo que no salió.
+ * clic en "Enviar" salga a la calle. **Es el transporte por defecto** desde el
+ * 2026-08-12: se usa salvo que `COPILOT_EMAIL_TRANSPORT` pida explícitamente
+ * `real` o `smtp`. La respuesta lleva `transport: "mock"` para que la interfaz
+ * pueda decirlo en vez de dar por enviado lo que no salió.
  */
 @Injectable()
 export class MockSender implements EmailSender {

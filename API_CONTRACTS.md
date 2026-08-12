@@ -76,20 +76,28 @@ cabecera.
 
 # Sprint 6 — Copiloto de IA · contrato de referencia
 
-> ### ⚠️ Antes de seguir: pon esto en tu `.env`
+> ### El transporte de correo, y cómo se elige
 >
-> ```
-> COPILOT_EMAIL_TRANSPORT=mock
-> ```
+> `POST /copilot/emails/send` está terminado y puede hablar con el **Gmail real
+> del usuario**. Cuál de los dos transportes atiende lo decide
+> `COPILOT_EMAIL_TRANSPORT`:
 >
-> `POST /copilot/emails/send` está terminado y **conectado al Gmail real del
-> usuario**. Sin esa línea, cada clic en "Enviar" mientras pruebas la tarjeta
-> manda un correo de verdad, a quien sea que el modelo haya puesto en `to`.
+> | Valor | Transporte |
+> |---|---|
+> | (sin poner), vacío, o cualquier valor no reconocido | **simulado** — registra el envío en el log y responde 200 sin mandar nada |
+> | `real` · `smtp` | **Gmail** — el correo sale de verdad |
 >
-> Con ella, el backend registra el envío en el log y responde 200 sin mandar
-> nada. La respuesta trae `transport: "mock"` o `"gmail"` — puedes usar esa
-> bandera para pintar un aviso de **"Modo de simulación"** en la interfaz
-> mientras desarrollas, que es justo para lo que viaja.
+> **Cambio de contrato del 2026-08-12.** Hasta esa fecha era al revés: sin la
+> variable se enviaba de verdad, y solo `=mock` lo apagaba. Se invirtió porque
+> esa variable no llegaba a producción —el despliegue la borraba en cada
+> revisión— y el descuido caía del lado que no se puede deshacer: un clic en
+> «Enviar» mandaba un correo auténtico a quien el modelo hubiera puesto en `to`.
+> Ahora el modo peligroso hay que pedirlo por su nombre.
+>
+> **Lo que no cambió, y es lo que consume la interfaz:** la respuesta sigue
+> trayendo `transport: "mock"` o `"gmail"`. Esa bandera es la fuente de verdad
+> para pintar el aviso de **«Modo de simulación»** — no supongas el transporte
+> a partir de tu propia configuración, léelo de la respuesta.
 >
 > Recado de Doc, el 2026-07-29: el entorno local se queda en simulado; el
 > transporte real lo valida QA en staging.
