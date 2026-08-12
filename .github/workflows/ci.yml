@@ -42,6 +42,28 @@ on:
       - '.editorconfig'
       - 'LICENSE'
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # workflow_dispatch — el botón que faltaba (2026-08-12)
+  #
+  # Hasta hoy **no había forma de publicar sin inventarse un commit**. El
+  # despliegue cuelga de `workflow_run` de este workflow, y este workflow solo
+  # corría por `push` o `pull_request` con el filtro de arriba. Consecuencia:
+  # cambiar una variable de repositorio —`WEB_URL`, `GOOGLE_REDIRECT_URI`, un
+  # id de modelo— **no la aplicaba**, porque las variables se leen en tiempo de
+  # despliegue y no había despliegue que dispararlas. Y un commit de solo `.md`
+  # tampoco servía: lo salta el `paths-ignore`.
+  #
+  # Lo que se hacía en su lugar era tocar Cloud Run a mano con
+  # `gcloud run services update`, que funciona pero deja la revisión **fuera
+  # del pipeline**: el siguiente despliegue de verdad la pisa entera, porque
+  # abajo se despliega con `--set-env-vars`, que reemplaza el conjunto, no lo
+  # completa. Así se perdió configuración inyectada en caliente más de una vez.
+  #
+  # `paths-ignore` **no aplica** a este disparador: quien pulsa el botón está
+  # pidiendo el pipeline entero a sabiendas, no reaccionando a unos archivos.
+  # ─────────────────────────────────────────────────────────────────────────
+  workflow_dispatch:
+
 jobs:
   build-and-lint:
     runs-on: ubuntu-latest

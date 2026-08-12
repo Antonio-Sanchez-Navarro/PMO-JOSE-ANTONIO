@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { DashboardMetrics } from '../types';
-import { API_BASE } from '../../../lib/api';
+import { apiFetch } from '../../../lib/api';
 
 export function useDashboardMetrics() {
   const [data, setData] = useState<DashboardMetrics | null>(null);
@@ -12,13 +12,8 @@ export function useDashboardMetrics() {
       try {
         setIsLoading(true);
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const response = await fetch(`${API_BASE}/dashboard/metrics?tz=${tz}`);
+        const json = await apiFetch<DashboardMetrics>(`/dashboard/metrics?tz=${tz}`);
         
-        if (!response.ok) {
-          throw new Error('Failed to fetch metrics');
-        }
-        
-        const json = await response.json();
         setData(json);
       } catch (err) {
         setError(err instanceof Error ? err : new Error('Unknown error'));

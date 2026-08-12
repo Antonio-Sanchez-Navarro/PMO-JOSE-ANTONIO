@@ -36,6 +36,10 @@ gh run list                    # NUEVO el 2026-08-07: `gh` ya está instalado y
                                # autenticado, así que el CI y el despliegue por
                                # fin se miran desde aquí en vez de suponerlos
 curl <URL>/health/ready        # y la API desplegada se sonda sin credenciales
+gh variable list               # NUEVO el 2026-08-12: WEB_URL y GOOGLE_REDIRECT_URI
+                               # deciden si el login existe, y cambian fuera de git
+curl <WEB_URL> | grep title    # y se compara con apps/web/index.html: el 08-10 ese
+                               # dominio servía otra aplicación entera (§13)
 ```
 
 > **Excepción puntual del 2026-08-07**, por orden expresa del usuario: Alana
@@ -177,7 +181,7 @@ aparece en `AI_ROLES.md`; Alana sigue viviendo solo en la regla del usuario._
 | 5 | Registro de tiempos | ✅ cerrado el 2026-07-29 |
 | **6** | **Copiloto de IA** | ✅ **completo en el código el 2026-07-30**: backend cerrado el 29 y las dos piezas de interfaz commiteadas hoy en `0d2a4f4`. Falta que Doc lo declare cerrado |
 | 7 | WhatsApp | ⬜ sin empezar (bloqueado: alta en Meta Business / Twilio) |
-| **8** | **Métricas, hardening, despliegue** | 🚧 **abierto el 2026-07-29**: seguridad ✅, métricas ✅, observabilidad ✅ el 08-03, **CI/CD y despliegue ✅ el 2026-08-07 — la API está en producción y verificada en vivo**. Queda runbook, backups y **enchufar el frontend a la API** (ver §5) |
+| **8** | **Métricas, hardening, despliegue** | 🚧 **abierto el 2026-07-29**: seguridad ✅, métricas ✅, observabilidad ✅ el 08-03, **CI/CD y despliegue de la API ✅ el 2026-08-07**. **El frontend ya habla con la API en el código ✅ (08-12)**, pero su despliegue está detrás del SSO de Vercel y no lo publica el pipeline. Quedan runbook, backups, las variables de Pub/Sub y el acceso al frontend (§14) |
 
 ### Sprint 8 — el despliegue (lo nuevo, y es casi todo este corte)
 
@@ -399,7 +403,21 @@ en realidad eran cierre del 3 y del 4. Regla acordada: mirar el checklist de
 
 ---
 
-## 5. Árbol de trabajo (2026-08-07, rama `master`)
+## 5. Árbol de trabajo
+
+### Corte del 2026-08-12 (rama `master`)
+
+```
+ M GRAVITY_MEMORY.md     (3 inserciones, 1 borrado)
+```
+
+HEAD es **`ccbd498`**, del 08-10 a las 17:11. `origin/master` al día (0 ahead /
+0 behind). **Dos commits desde el corte anterior**, los dos del 08-10 por la
+tarde y los dos respuesta directa al diagnóstico de §13: `2123003` (documenta la
+`WEB_URL` de producción) y `ccbd498` (`vercel.json`). El detalle de este corte
+está en **§14**.
+
+### Corte del 2026-08-07 (histórico)
 
 ```
  M GRAVITY_MEMORY.md
@@ -408,9 +426,8 @@ en realidad eran cierre del 3 y del 4. Regla acordada: mirar el checklist de
  M apps/web/src/features/kanban/components/KanbanBoard.tsx
 ```
 
-HEAD es `b1f6bcb`, de hoy a las 12:45. `origin/master` al día (0 ahead / 0
-behind). **33 commits desde el corte anterior**, repartidos en tres días de
-trabajo: 08-03 (tarde), 08-05 y 08-07.
+HEAD era `b1f6bcb`, de ese día a las 12:45. **33 commits desde el corte
+anterior**, repartidos en tres días de trabajo: 08-03 (tarde), 08-05 y 08-07.
 
 **`ALANA.md` ya no sale como `??`.** Se commiteó el 2026-08-03 dentro de
 `3578f8d` («Actualización de infraestructura y variables de entorno»), un commit
@@ -420,6 +437,11 @@ en el mensaje. Es justo lo que la regla de `DOC.md` «añadir por ruta, nunca
 disgusto. No rompe nada: lo que cambia es que estas notas viajan a GitHub.
 
 ### 🔴 Hallazgo rojo: el frontend desplegado no puede hablar con la API desplegada
+
+> **Cerrado en el código el 2026-08-12** (ver §14): las tres roturas y la cookie
+> están arregladas y verificadas. Lo que queda vivo de este apartado es otra
+> cosa —a qué dominio apunta `WEB_URL` y quién puede entrar en él—, y eso vive
+> en §13 y §14. Se deja el texto entero porque explica **cómo** se rompió.
 
 Es el hallazgo de este corte y no lo ve ningún guardarraíl del proyecto, porque
 todos miran la API. **El pipeline en verde dice que la API atiende; no dice que
@@ -895,11 +917,20 @@ definidos en los avisos del run.
 
 ## 9. Pruebas y CI
 
-- **525 pruebas en 20 suites**, ejecutadas hoy sobre el árbol de trabajo (19,9 s).
-  Antes eran 497 en 18. Las suites nuevas cubren la cadena
-  `COPILOT_ANTHROPIC_MODEL_*` → `CLAUDE_MODEL_*` → tabla de niveles y el cálculo
-  de espera ante un 429 de Anthropic.
-- `npm run lint`: **0 errores y 0 avisos** en los tres paquetes, ejecutado hoy.
+- **535 pruebas en 21 suites**, ejecutadas el 2026-08-12 sobre el árbol (68,8 s).
+  Antes eran 525 en 20, y antes 497 en 18. La suite nueva es `health.spec.ts`:
+  las diez que faltaban cubren la sonda de esquema de `0c6c238`.
+- `npm run lint`: **0 errores y 0 avisos** en los tres paquetes, ejecutado el
+  2026-08-12.
+- ⚠️ **Corrección a lo que escribí abajo: el CI sí mira el frontend.** `npm run
+  build` de la raíz construye los tres paquetes, y el 08-07 **tumbó el CI dos
+  veces seguidas** (`31206448510` y `31206463690`) con
+  `src/lib/api.ts(8,37): error TS2339: Property 'env' does not exist on type
+  'ImportMeta'` — el commit que puso la URL de producción en el frontend
+  (`5a8e15f`) no compilaba, y quien lo destapó fue el guardarraíl, no una
+  persona. `dbeb4d5` lo cerró añadiendo `vite-env.d.ts`. Lo que **nadie** hace
+  desde este repo es **desplegar ni sondar** `apps/web`; construirlo sí se
+  construye.
   El CI corre con `--max-warnings 0` desde `d653b5f`, así que ya no queda margen:
   un aviso nuevo es un rojo.
 - ✅✅ **Se acabó la suposición: `gh` está instalado y autenticado.** Era la
@@ -930,11 +961,15 @@ definidos en los avisos del run.
   `prisma migrate` hace semanas y en un CI que parte de `npm ci` no lo ha generado
   nadie, así que el build se caía con errores **que parecen del código**. Ahora
   hay un `prebuild` en `@pmo/api`.
-- ⚠️ **`TASKS.md` vuelve a ir por detrás, y van cuatro cortes.** No se toca desde
-  el 08-03 a las 17:53 (`c8a5d33`). Dice **«497 pruebas en 18 suites»** (son
-  525/20), dice **«`gh` no está instalado en la máquina»** (lo está desde hoy) y
-  la casilla «CI/CD completo» sigue en `[ ]` con el pipeline desplegando a
-  producción. Es el mismo patrón de siempre: el plan se queda con la foto vieja.
+- ⚠️ **`TASKS.md` va por detrás por sexto corte, y ahora además afirma de más.**
+  No se toca desde el 08-07 (`5a8e15f`, una línea). La 192 sigue diciendo
+  **«497 pruebas en 18 suites»** (son **535/21**) y **«`gh` no está instalado en
+  la máquina»** (lo está desde el 08-07). Y la 201 ya no es solo foto vieja: está
+  marcada `[x]` y dice «API desplegada en Cloud Run **y Frontend en Vercel por el
+  pipeline CI/CD**». **El pipeline no despliega el frontend**: no hay workflow que
+  lo publique: lo construye Vercel por su cuenta con el `vercel.json` de
+  `ccbd498`. Una casilla marcada que describe algo que no existe es peor que una
+  sin marcar.
 - ⚠️ **El hueco del histórico ya no es un hueco, es un cambio de costumbre.**
   `docs/` se para en `SESSION-2026-07-31.md`: el 08-03, el 08-05 y el 08-07 no
   tienen acta, y son los tres días del despliegue. Lo que sí hay es el relato
@@ -945,15 +980,28 @@ definidos en los avisos del run.
 
 ## 10. Deuda abierta
 
-### 🔴 Lo único rojo de este corte
+> Estado al **2026-08-12**. Lo anterior a esta línea se conserva por historia;
+> lo vigente es esto.
 
-**El frontend desplegado no alcanza a la API desplegada** (§5): rutas relativas
-`/api/…` que solo funcionan tras el proxy de Vite, sin `vercel.json` ni
-`import.meta.env` en el repo → **404 comprobado en vivo**. Y detrás, las cookies
-`sameSite: "lax"`, que impiden la salida fácil de apuntar el SPA al host de
-Cloud Run. **No está anotado en ninguna lista de deuda del proyecto.**
+### 🔴 Lo rojo hoy
 
-### Lo que se cerró en este corte
+**El frontend solo lo puede ver su dueño.** `WEB_URL` ya no apunta a la
+aplicación ajena —eso se arregló el 08-10— pero el dominio nuevo
+(`pmo-frontend-antoniosanchez-5466s-projects.vercel.app`) responde **302 hacia
+`vercel.com/sso-api`** a cualquiera sin sesión en esa cuenta de Vercel. Para el
+dueño el producto funciona; para todos los demás el login termina en la puerta
+de Vercel. Detalle y comprobación en **§14**.
+
+### ✅ Cerrado el 2026-08-12 (verificado, no leído)
+
+- **Las tres roturas del §12**: `API_BASE` sin `/api`, el socket ya no apunta a
+  `localhost` en producción, y no queda una sola llamada con `/api` relativo.
+- **La cookie cross-site**: `sameSite: none` + `secure` en producción, con el
+  `lax` del `state` de OAuth conservado **a propósito y razonado**.
+- **`WEB_URL` apuntando a otra aplicación** (§13), la causa del 404 del login.
+- **La sonda de salud ahora mira el esquema**, no solo la conexión.
+
+### Lo que se cerró en el corte del 2026-08-07
 
 - ✅ **`MOCK_TASKS` como respaldo del `catch`** — el gemelo de `MOCK_METRICS`,
   sobre la superficie de trabajo principal. En el árbol, **sin commitear**.
@@ -998,6 +1046,9 @@ Cloud Run. **No está anotado en ninguna lista de deuda del proyecto.**
 
 | Fecha | Qué revisó | Corte de git |
 |---|---|---|
+| 2026-08-12 (2) | **Barrido de los entornos externos, con el navegador y en modo lectura (§15).** Y lo primero es una corrección mía: **el frontend sí es público y sí es el nuestro** —`pmo-frontend-ten.vercel.app` da 200 con la pantalla de login—; lo que probé en §14 era el alias protegido porque es el que dice `WEB_URL`, y de ahí saqué una conclusión falsa. **El fallo real es de una variable**: `WEB_URL` apunta al alias del equipo, así que la API autoriza por CORS un origen distinto del que sirve la página, y ejecutado dentro de la propia página el `fetch` con credenciales sale **`TypeError: Failed to fetch`** mientras el mismo servidor responde en `no-cors`. La API está intacta; el navegador tira todas las respuestas. **Y en Vercel hay dos cosas más:** la rama de producción es **`main`** y el repo trabaja en `master` —el mismo fallo que ya tuvo el CI, repetido en otra herramienta—, así que los pushes caen en Preview; y **`vercel.json` no arregló la compilación, la rompió** (`Missing script: "build:shared"`, porque el comando se ejecuta dentro de `apps/web`). Lo que sostiene producción es un **redespliegue a mano**, y lo que sirve es el código de `dbeb4d5`, no el de HEAD. **En Google:** la URI de redirección está autorizada y exacta ✅ —duda cerrada desde el 08-07—, pero la pantalla de consentimiento está en **«Prueba», con cero usuarios de prueba** y pidiendo ámbitos **restringidos** (`gmail.modify`, `gmail.send`): el refresco caduca a los 7 días, nadie externo puede autorizar, y publicar exige verificación de Google. Anotado también que la consola dice «última fecha de uso: 29 de julio», que apunta en contra del «login verificado» del árbol. Confirmado por CLI: 8 secretos, un servicio y un job, y **Pub/Sub completamente vacío**. Sin revisar por pedir sesión: Neon, Upstash, Anthropic y AI Studio. | `ccbd498`, sin cambios en el repo |
+| 2026-08-12 | **Despertar 9. El corte en que el hallazgo rojo cambia de forma en vez de desaparecer.** Dos commits, los dos del 08-10 y los dos respuesta a mi diagnóstico de §13. **La causa del 404 del login está corregida**: `WEB_URL` dejó de apuntar a la aplicación ajena el 08-10 a las 22:08 UTC, y no me quedé en la variable del repositorio —**lo leí de la revisión que sirve**, por el `access-control-allow-origin` de un preflight, que además devuelve el dominio nuevo aunque le mande el viejo, que es lo correcto—. **Pero el dominio nuevo responde 302 hacia `vercel.com/sso-api`**: está detrás de la protección de despliegue de Vercel y solo atiende a quien tenga sesión en esa cuenta. De ahí las tres cosas que dejo dichas: que **no puedo verificar desde aquí que ese dominio sirva nuestro código** —lo digo en vez de suponerlo—, que el «funciona» del usuario y el mío no son el mismo experimento, y que para cualquier otra persona el login sigue acabando en una puerta que parece un fallo de OAuth y no lo es. **Cerradas y verificadas en el código las cuatro roturas del frontend**: `API_BASE` sin `/api`, ni una llamada relativa, el socket ya no apunta al `localhost` de quien mire la página, y la cookie a `none`+`secure` en producción — con el `lax` del `state` de OAuth **conservado a propósito y razonado en el propio archivo**, que es la clase de distinción que se pierde cuando se arregla a golpe de buscar y reemplazar. Nuevo y bueno: `/health/ready` **comprueba el esquema**, y en vivo devuelve `aplicadas: 9, aMedias: 0, revertidas: 0`. Reconfirmado que el dominio viejo sirve otra aplicación, ahora con la prueba barata que faltaba: el HTML servido es `lang="en"` / «Vite + React» con PWA y el del repo es `lang="es"` / «PMO Dashboard». **Sigue apagada la ingesta de Gmail** —`deploy.yml` no inyecta una sola `GMAIL_PUBSUB_*`, van dos cortes— y **`WEB_URL` sigue sin guardarraíl**, que era la lección del corte anterior. `TASKS.md` ya no solo va atrasado: tiene marcada `[x]` una casilla que dice que el pipeline despliega el frontend, y no lo despliega. Ejecutado, no leído: **535 pruebas en 21 suites y lint a 0/0**. Actualizadas las secciones 5, 9, 10, 13 y añadida la 14. | `ccbd498` + `GRAVITY_MEMORY.md` sin commitear (3 líneas) |
+| 2026-08-10 | **Despertar 8.** Encargo puntual: diagnóstico del `404 DEPLOYMENT_NOT_FOUND` al entrar con Google. **La sospecha del usuario —que el backend redirigía a un despliegue muerto— es razonable y es falsa: el backend no participa en ese 404.** Descartado con cinco comprobaciones, entre ellas que la cadena `manejo-org` no ha existido nunca en el repo y que las 26 revisiones de Cloud Run llevan la misma `WEB_URL`. Lo que sí pasa: **`https://pmo-frontend.vercel.app` no es el frontend de este proyecto** — sirve «PMO Digital / Gestão de Planos de Manejo Orgânico», una aplicación en portugués con Supabase, y quien redirige tras el consentimiento es Supabase hacia el despliegue hermano de *esa* aplicación, que ya no existe. Causa de fondo en una frase: **el frontend de este proyecto no estaba desplegado en ninguna parte**, y `WEB_URL` se rellenó con un dominio que «parecía el nuestro» porque los dos proyectos se llaman PMO. Registrado en §13. | `dbeb4d5` |
 | 2026-08-07 | **Despertar 7. El corte del despliegue: la API está en producción — y el frontend no llega a ella.** 33 commits en tres días (08-03, 08-05, 08-07) y el mayor cambio de forma del proyecto: **`HANDOFF.md` se partió en cuatro memorias** (`API_CONTRACTS.md` neutral, `CLAUDE_MEMORY.md`, `GRAVITY_MEMORY.md`, `DOC.md`) y `AI_ROLES.md` ya lo refleja. **La API vive en `https://pmo-api-mlpuuasqka-uc.a.run.app`** sobre Cloud Run con Neon y Upstash, desplegada por pipeline encadenado al CI, con las migraciones corriendo en un Job **antes** de publicar la revisión. Sondado por mí, sin credenciales: `/health/ready` **200** con base y Redis arriba, `/health/live` 200, `/auth/me` **401** y `/auth/google` **302** —abrir el servicio no lo dejó desprotegido—. **Y por fin se acabó suponer: `gh` está instalado**, así que el verde del CI y del despliegue está visto, no deducido. Costó tres obstáculos y **ninguno era del código**: unos secretos de modelo que no existían y cuya revisión condenada **se llevó por delante a la que estaba sirviendo**, Cloud Run naciendo privado (cinco 403 de la puerta, con el contenedor arrancando impecable al lado) y un `--args` de gcloud que exige el igual. **Hallazgo rojo nuevo, y no lo ve ningún guardarraíl porque todos miran la API: el SPA de Vercel pide contra `/api/…` relativo —el proxy de Vite, que en producción no existe— y devuelve 404 comprobado en vivo; detrás, las cookies `sameSite: lax` cierran la salida fácil de apuntar al host de Cloud Run.** En el árbol sin commitear está el saneamiento de Gravity, que cierra de golpe tres apuntes míos: fuera `MOCK_TASKS` del `catch`, el updater impuro de `handleDragEnd` —única deuda de arquitectura declarada— y los dos contratos copiados a mano. Ejecutado, no leído: **525 pruebas en 20 suites y lint a 0 errores / 0 avisos**. Anotado también: `CLAUDE_MEMORY.md` se contradice a sí mismo sobre `GOOGLE_REDIRECT_URI` (comprobado contra GitHub: vale la URL real); `3578f8d` se llevó este cuaderno a git sin decirlo; `TASKS.md` sigue con la foto vieja y `docs/` se paró el 07-31. **Y después, a petición del usuario, barrido completo de la programación (§12)**, que multiplica el hallazgo rojo por tres —prefijo `/api` inexistente en `API_BASE`, llamadas relativas contra el origen de Vercel y el socket clavado en `localhost:3000`— y destapa que **la ingesta de Gmail está apagada en producción** por dos variables que nadie inyecta. El backend, en cambio, sale limpio de lo que fui a buscar: 0 `any`, SQL parametrizado, propiedad por `userId` en todas las escrituras, AES-256-GCM correcto y la carrera del cronómetro resuelta con índice único. Actualizadas las secciones 0, 1, 3, 4, 5, 8, 9, 10 y añadida la 12. **Y por orden del usuario, los hallazgos quedaron también anotados al final de `GRAVITY_MEMORY.md`**, añadidos y revalidados antes contra `0c6c238`: entre el barrido y la escritura, la otra terminal cerró dos —las llamadas con `/api` relativo y las cookies cross-site (`sameSite: none`)— y siguen vivos el prefijo `/api` de `API_BASE`, el socket clavado en `localhost:3000` y las variables de Pub/Sub ausentes. | `b1f6bcb` + 13 archivos sin commitear, y **el árbol cambiando mientras leía** |
 | 2026-08-03 | **Despertar 6. El corte sin hallazgos rojos, el primero.** Cuatro commits nuevos (tres del viernes por la tarde, uno de hoy) y árbol limpio por tercera vez seguida. **Se cerró el hallazgo rojo único: ya hay remoto** —`origin` en GitHub, `HEAD == origin/master`, 0 ahead / 0 behind—, así que el proyecto deja de vivir en un solo disco y el CI tiene por fin dónde correr; no lo hizo ningún commit, se configuró fuera del historial. **Cerrada la observabilidad del Sprint 8** en dos tiempos: `37e634e` dejó escrito que no estaba probado contra la app, y `0439a3b` lo cierra con 71 pruebas y la verificación viva, donde aparecieron los dos únicos fallos — 🔒 **el código de autorización de Google se estaba escribiendo cuatro veces en el log** (el serializador de `pino-http` guarda la petición como binding del logger hijo, así que la URL cruda salía en todas las líneas de esa petición) y el 503 de la sonda abriendo una incidencia por latido. Sentry cancelado: Error Reporting lee de Cloud Logging, sin SDK ni credencial. Ejecutado, no leído: **497 pruebas en 18 suites, 0 errores y 28 avisos de lint**. Cerrados también el acta del 30, las dos casillas de Gravity, el hash inventado del acta del 29 y la fila del Inbox sin teclado. **Hallazgos nuevos, ninguno rojo:** el `role="button"` anidado con que se arregló el Inbox (dos paradas de tabulación por fila, el botón dentro del botón otra vez pero en ARIA); el handoff al revés —la §0 dice «no arranques hasta que Doc active» y el trabajo entró 48 minutos después—; `GOOGLE_CLOUD_PROJECT` vacía apagando en silencio la correlación por traza, que Cloud Run no inyecta sola; y el hueco del histórico, que se movió del 30 al 31. `TASKS.md` vuelve a arrastrar la cifra vieja y a decir que no hay remoto. No se puede comprobar desde aquí si el CI llegó a ejecutarse: `gh` no está instalado. Actualizadas las secciones 4, 5, 6, 8, 9, 10. | `0439a3b` + árbol limpio (solo `?? ALANA.md`) |
 | 2026-07-31 | **Despertar 5.** Corte de cierre de día: dos commits nuevos, los dos de ayer a las 18:0x, **ninguno de hoy**, y el árbol limpio por segunda vez en la historia del proyecto. Los dos hallazgos que dejé abiertos anoche están cerrados: `b5995a7` quita los tres `catch (err)` y **`npm run lint` sobre HEAD da 0 errores / 28 avisos** (ejecutado, no leído del mensaje del commit); `f9ce09b` reescribe la sección 0 caducada del handoff y la sustituye por una regla útil para Gravity — lint en verde antes de cada commit. Anotado que esta vez la excepción de dominio en `apps/web` va **declarada** en el mensaje y comunicada, al contrario que el `tz` de `2ceedd2`. **Queda un solo hallazgo rojo, y es el mismo desde el despertar 4: no hay remoto** (`git remote -v` vacío) — sin CI y sin copia, el proyecto entero en un disco. Los demás hallazgos son de documentos que no siguen al código: la cabecera del HANDOFF sigue en `TRABAJAR` pidiendo cuatro cosas ya hechas, la §9 sigue pidiendo el `tz`, y **`TASKS.md` no se toca desde ayer al mediodía** (423/13 suites, CI en `main`, dos casillas de Gravity sin marcar). Y el 30 cerró con 9 commits y **sin acta**. Actualizadas las secciones 4, 5, 9, 10. | `f9ce09b` + árbol limpio (solo `?? ALANA.md`) |
@@ -1241,3 +1292,552 @@ cualquier cadena. Una comprobación de que responde y de que **es nuestra**
 (buscar un marcador propio en el HTML servido) habría cazado esto el primer día.
 Es la misma leccion del `/api/v1`: lo que no valida el pipeline, lo descubre el
 usuario.
+
+> ✅ **Atendido el mismo día.** `WEB_URL` se cambió el 2026-08-10 a las 22:08 UTC
+> y el despliegue de las 22:12 la recogió. **El guardarraíl que pedía este
+> apartado sigue sin existir**: `deploy.yml` continúa aceptando cualquier cadena
+> en `WEB_URL`, con respaldo `https://pmo-frontend.placeholder.com`. Ver §14.
+
+---
+
+## 14. Despertar 9 — el corte del 2026-08-12
+
+Dos commits desde el corte anterior, los dos del **08-10 por la tarde** y los dos
+respuesta directa al diagnóstico de §13. HEAD `ccbd498`, `origin/master` al día,
+árbol con un solo archivo tocado (`GRAVITY_MEMORY.md`, 3 líneas).
+
+| Hash | Hora | Qué |
+|---|---|---|
+| `2123003` | 08-10 17:08 | Anota la `WEB_URL` de producción en `GRAVITY_MEMORY.md` — **y se lleva dentro 794 líneas de `ALANA.md`** sin mencionarlo |
+| `ccbd498` | 08-10 17:11 | `vercel.json` en la raíz, seis líneas |
+
+### ✅ La causa del 404 del login está corregida
+
+`gh variable list`, hoy:
+
+| Variable | Valor | Puesta |
+|---|---|---|
+| `WEB_URL` | `https://pmo-frontend-antoniosanchez-5466s-projects.vercel.app` | 08-10 **22:08** UTC |
+| `FRONTEND_URL` | lo mismo | 08-10 22:12 UTC |
+
+Y no me quedo en la variable del repositorio: **lo leí de la revisión que está
+sirviendo**, sin credenciales. Un preflight `OPTIONS /auth/me` devuelve
+`access-control-allow-origin:` con el dominio nuevo — y lo devuelve **también
+cuando mando el `Origin` viejo**, que es exactamente lo correcto: la lista de
+orígenes es fija, no un eco de lo que pregunte el cliente. El despliegue
+`31437342971` (22:12 UTC, en verde) es el que la recogió.
+
+_`FRONTEND_URL` sigue sin leerla ningún workflow_ (§5); ahora al menos las dos
+dicen lo mismo, así que ya no puede engañar a quien la mire.
+
+### 🔴 Pero el dominio nuevo está detrás del SSO de Vercel
+
+Es el hallazgo de este corte, y sale de una comprobación de dos líneas:
+
+```
+GET https://pmo-frontend-antoniosanchez-5466s-projects.vercel.app/
+  -> 302  Location: https://vercel.com/sso-api?url=…&nonce=…
+          Set-Cookie: _vercel_sso_nonce=…
+```
+
+Es la **protección de despliegue** de Vercel: el dominio con sufijo de proyecto
+sirve solo a quien tenga sesión en esa cuenta. Tres consecuencias, y las tres
+importan:
+
+1. **No puedo verificar desde aquí que ese dominio sirva nuestro código.** Lo
+   digo en vez de suponerlo: es el primer hallazgo de este cuaderno que se me
+   queda sin comprobar por falta de credenciales, y suponer que sí es justo el
+   error que costó el corte anterior.
+2. **El «funciona» del usuario y el mío no son el mismo experimento.** Su
+   navegador lleva la cookie de Vercel; el de cualquier otra persona, no. Un
+   producto que solo atiende a su dueño no está desplegado, está en preestreno.
+3. **El login acaba ahí.** Tras el consentimiento de Google, la API redirige a
+   `WEB_URL`; quien no sea el dueño aterriza en la puerta de Vercel, y el síntoma
+   —una pantalla de Vercel al volver de Google— vuelve a parecer un fallo de
+   OAuth sin serlo. Exactamente la forma del 404 de §13.
+
+**Lo que lo cierra**, y no me toca decidirlo: quitar la protección de despliegue
+en el proyecto de Vercel, o darle un dominio propio. La segunda arregla de paso
+la cookie: con `api.ejemplo.com` y `app.ejemplo.com` la sesión vuelve a `lax` y
+deja de depender de que el navegador acepte cookies de terceros —lo dice el
+propio `session.service.ts`—.
+
+### El dominio viejo sigue sirviendo la aplicación ajena
+
+Reconfirmado hoy, y con una prueba más limpia que la del 08-10:
+
+| Comprobación | Resultado |
+|---|---|
+| Bundle servido | `index-vq9e4Vot.js` — **el mismo hash del 08-07 y del 08-10** |
+| `manifest.webmanifest` | `{"name":"PMO Digital","description":"Gestão de Planos de Manejo Orgânico"}` |
+| Dentro del bundle | `supabase` **38** · `manejo` **43** · `run.app` **0** |
+| HTML servido | `lang="en"`, `<title>Vite + React</title>`, registra un service worker de PWA |
+| `apps/web/index.html` de este repo | `lang="es"`, `<title>PMO Dashboard</title>`, **sin plugin de PWA** |
+
+Las dos últimas filas son la prueba barata que no había hecho: no es una versión
+vieja de lo nuestro, **es otro programa**. Y sirve para el futuro — comparar el
+`<title>` servido con el del repo es una comprobación de una línea, que es justo
+el guardarraíl que §13 pedía para `WEB_URL`.
+
+### ✅ Las cuatro roturas del frontend, cerradas y verificadas en el código
+
+| Rotura (§12) | Estado hoy |
+|---|---|
+| `API_BASE` con un `/api` que no existe | ✅ `lib/api.ts:8` — en `PROD` va el host de Cloud Run pelado |
+| Llamadas con `/api` relativo | ✅ no queda ninguna: los tres aciertos del grep son comentarios |
+| Socket clavado en `localhost:3000` | ✅ `useSocket.ts:90` — `PROD` → Cloud Run |
+| Cookie `sameSite: "lax"` cross-site | ✅ `session.service.ts:63` — `none` + `secure` en producción |
+
+**Y el `lax` que queda no es un olvido.** `auth.controller.ts:65` conserva
+`sameSite: "lax"` en la cookie del `state`, con veinte líneas explicando por qué:
+sus dos puntas son navegaciones de primer nivel —un `<a href>` y el redirect de
+Google—, donde `Lax` **sí** viaja, y esa cookie **es** la defensa anti-CSRF del
+login: aflojarla a `none` la haría viajar también en peticiones cross-site que no
+son navegaciones, que es justo lo que debe impedir. Se aflojó lo que estorbaba y
+no lo que estaba al lado. Es la clase de distinción que se suele perder cuando se
+arregla a golpe de buscar y reemplazar.
+
+### 🆕 La sonda de salud ahora comprueba el esquema
+
+`0c6c238` añade un indicador de migraciones a `/health/ready`. Sondado hoy en
+vivo, sin credenciales:
+
+```json
+{"status":"ok","info":{
+  "database":{"status":"up","responseTimeMs":28},
+  "schema":{"status":"up","aplicadas":9,"aMedias":0,"revertidas":0,"responseTimeMs":30},
+  "redis":{"status":"up","responseTimeMs":28}}}
+```
+
+Es mejor sonda de lo que suele verse: una base que **conecta** pero con
+migraciones a medias o revertidas ya no pasa por sana, que es precisamente el
+estado en que la API responde y falla en la primera consulta real. Las nueve
+aplicadas cuadran con las nueve carpetas de `prisma/migrations`.
+
+### 🟠 Sigue apagada la ingesta de Gmail, y van dos cortes
+
+Reverificado leyendo el `ENV_VARS` que arma `deploy.yml` (~línea 297): lleva
+`NODE_ENV`, `LOG_FORMAT`, `GOOGLE_CLOUD_PROJECT`, `WEB_URL`,
+`GOOGLE_REDIRECT_URI`, `SERVICE_VERSION` y los `CLAUDE_MODEL_*` opcionales.
+**Ni una `GMAIL_PUBSUB_*`.** La pieza número uno del producto —correo → Pub/Sub →
+cola → clasificación— no puede funcionar en la revisión desplegada, la revisión
+sale verde igual y no entra un solo correo. Está anotado desde el 08-07, también
+al final de `GRAVITY_MEMORY.md`, y nadie lo ha recogido.
+
+### ⚠️ Lo que dice el árbol sin commitear, y lo que puedo sostener de ello
+
+`GRAVITY_MEMORY.md` tiene tres líneas sin commitear que afirman **«Frontend
+Vercel completado»** e **«Integración OAuth verificada: el flujo de login con
+Google en producción se completa sin errores»**. Separo lo que comprobé de lo que
+no:
+
+- **Lo confirmo**: la revisión viva tiene la `WEB_URL` nueva, `/auth/google`
+  devuelve 302 hacia Google, `/auth/me` sin cookie devuelve 401, la cookie es
+  `none`+`secure` en producción y el CORS admite el origen nuevo. La mitad de
+  backend del flujo está en su sitio.
+- **No lo puedo confirmar ni desmentir**: que el SPA servido en ese dominio sea
+  el nuestro y que el login se complete. El SSO me deja fuera.
+- **Y matizo una palabra**: «se completa sin errores» se comprobó desde un
+  navegador con sesión de Vercel. Es un resultado verdadero y más estrecho de lo
+  que la frase sugiere.
+
+### Ejecutado, no leído (hoy)
+
+```
+npm test       ->  Test Suites: 21 passed · Tests: 535 passed   (68,8 s)
+npm run lint   ->  los tres paquetes limpios: 0 errores y 0 avisos
+gh run list    ->  los cuatro últimos runs en verde; el despliegue 31437342971
+                   (08-10 22:12 UTC) es el que lleva la WEB_URL nueva
+```
+
+Sondas en vivo: `/health/ready` **200** (con el esquema dentro), `/health/live`
+**200**, `/auth/me` **401**, `/auth/google` **302**.
+
+### Apuntes menores de este corte
+
+- **`2123003` volvió a llevarse `ALANA.md` dentro sin decirlo** —794 líneas—,
+  igual que `3578f8d` el 08-03. Van dos. No rompe nada; es la regla de `DOC.md`
+  de «añadir por ruta, nunca `git add -A`» saltada otra vez, y quien lea el
+  mensaje del commit no sabrá que este cuaderno viajó dentro.
+- **`vercel.json` es configuración de Vercel, no del pipeline.** Seis líneas con
+  `buildCommand` (`build:shared` y luego el workspace `@pmo/web`) y
+  `outputDirectory`. Está bien planteado —resuelve el problema real del monorepo,
+  que `@pmo/web` no compila sin `@pmo/shared` construido antes— pero **no mete el
+  frontend en GitHub Actions**, y `TASKS.md` dice que sí (§9).
+- **`docs/` sigue parado en `SESSION-2026-07-31.md`.** Van doce días y cinco de
+  trabajo sin acta. Sigue sin decidirse si las cuatro memorias las sustituyen.
+- **`DOC.md` no se toca desde el 08-03** (`a1e9554`), y es el documento donde
+  viven los pendientes de decisión — que ahora incluyen dos gordos: qué se hace
+  con la protección de Vercel y si el frontend entra en el pipeline.
+
+---
+
+## 15. Barrido de los entornos externos (2026-08-12, con el navegador)
+
+Encargo del usuario: entrar yo a las consolas en vez de pedirle capturas. Todo en
+**modo lectura**: no cambié un solo ajuste. Lo que sigue **corrige** parte de §14
+—ahí me faltaba mirar dentro de Vercel—.
+
+### ✅ Corrección a §14: el frontend **sí** es público, y es el nuestro
+
+`https://pmo-frontend-ten.vercel.app` → **200**, `lang="es"`,
+`<title>PMO Dashboard</title>`, y la pantalla de login de Sprint 1 pintada. Ese
+es el **dominio de producción** del proyecto `pmo-frontend`. Lo que está detrás
+del SSO es el alias del equipo y las vistas previas, que es el comportamiento
+normal de Vercel. **Mi conclusión de §14 —«el producto solo lo puede ver su
+dueño»— era falsa, y lo era porque probé el dominio equivocado: el que dice
+`WEB_URL`.**
+
+### 🔴 El fallo real, y es de una sola variable
+
+**`WEB_URL` apunta al alias protegido en vez de al dominio de producción**, y de
+ahí sale que el CORS de la API autorice un origen distinto del que sirve la
+página. Comprobado en los dos sentidos:
+
+```
+OPTIONS /auth/me   Origin: https://pmo-frontend-ten.vercel.app
+  -> access-control-allow-origin: https://pmo-frontend-antoniosanchez-5466s-projects.vercel.app
+```
+
+Y ejecutado **dentro** de la página pública, que es la prueba que no admite
+discusión:
+
+```js
+fetch('https://pmo-api-.../auth/me', {credentials:'include'})
+  -> BLOQUEADA: TypeError — Failed to fetch
+fetch('https://pmo-api-.../health/live', {mode:'no-cors'})
+  -> el servidor sí responde (opaque)
+```
+
+O sea: **la API está perfecta y el navegador tira todas las respuestas**. El
+arreglo es poner `vars.WEB_URL` = `https://pmo-frontend-ten.vercel.app` y
+redesplegar. No hay que tocar la protección de Vercel para nada.
+
+_Nota de método:_ el rastreador de red del navegador enseñaba esas llamadas como
+**503**, y `curl` contra la misma ruta daba 401. La diferencia no era el
+servidor: un bloqueo de CORS no tiene código de estado, y quien mire solo esa
+cifra concluye «la API está caída» y se va a depurar al sitio equivocado.
+
+### 🔴 Los pushes a `master` no llegan a producción, y encima no compilan
+
+Dos cosas distintas, las dos en la consola de Vercel:
+
+1. **Branch Tracking = `main`.** Está escrito en Settings → Environments →
+   Production: «Every commit pushed to the `main` branch will create a Production
+   Deployment». **El repo trabaja en `master`.** Por eso `ccbd498` y `2123003`
+   figuran como **Preview**, no como Production. **Es exactamente el mismo fallo
+   que tuvo el CI** —el workflow escuchaba `main` mientras se trabajaba en
+   `master`— y que este cuaderno tiene anotado como lo que dejó pasar un `lint`
+   roto durante meses. Ha vuelto, en otra herramienta.
+2. **`vercel.json` no arregló la compilación: la rompió.** El despliegue de
+   `ccbd498` murió en 9 segundos:
+
+   ```
+   npm error Lifecycle script 'build:shared' failed with error:
+   npm error workspace @pmo/web@0.1.0
+   npm error location /vercel/path0/apps/web
+   npm error Missing script: "build:shared"
+   ```
+
+   El `buildCommand` da por hecho que se ejecuta en la raíz del repo, y se
+   ejecutó dentro de `apps/web`, donde ese script no existe: `build:shared` solo
+   está en el `package.json` de la raíz.
+
+**Lo que sostiene producción hoy es un redespliegue a mano.** En la lista de
+despliegues, los dos únicos `Ready` son «Redeploy of 58vizb3ke»; todos los que
+vienen de un push están en `Error`. Los ajustes de la interfaz (Root Directory
+vacío, Build Command, Output Directory `apps/web/dist`) ya están bien puestos, así
+que probablemente un push nuevo **sí** compile — pero seguiría cayendo en Preview
+mientras la rama de producción sea `main`.
+
+_Y hay una consecuencia que conviene decir:_ **el frontend en producción es el
+código de `dbeb4d5`**, no el de HEAD.
+
+### 🔴 La pantalla de consentimiento de Google está en «Prueba» y con cero usuarios
+
+`console.cloud.google.com/auth/audience`:
+
+| Campo | Valor |
+|---|---|
+| Estado de publicación | **Prueba** |
+| Tipo de usuario | Externos |
+| Usuarios de prueba | **ninguno** («No hay filas para mostrar») |
+| Límite de OAuth | 0 usuarios (0 de prueba, 0 de otro tipo) / 100 |
+
+Tres consecuencias, y ninguna deja rastro en nuestros logs:
+
+1. **En «Prueba», el token de refresco de Google caduca a los 7 días.** La sesión
+   de Gmail se rompe sola cada semana, y el síntoma es «dejó de entrar correo»
+   sin ningún error el día que pasa.
+2. **Sin usuarios de prueba, nadie que no administre el proyecto puede
+   autorizar**: Google corta en su propia pantalla con «acceso bloqueado».
+3. **Publicar no es un botón.** Los ámbitos que pide la aplicación son
+   `gmail.modify` y `gmail.send`, que Google clasifica como **restringidos**:
+   pasar a producción exige verificación con evaluación de seguridad. Es un
+   trámite largo, y conviene saberlo ahora y no el día del arranque.
+
+### ✅ Lo que sí está bien en el cliente OAuth
+
+- **URI de redirección autorizada**, exacta:
+  `https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback`. Era la duda que
+  arrastraba desde el 08-07 y queda cerrada.
+- Ámbitos pedidos: `openid email profile gmail.modify gmail.send`, con
+  `access_type=offline` y `prompt=consent` — correcto para obtener refresco.
+- ⚠️ Los **orígenes de JavaScript** listan el alias protegido y
+  `http://localhost:3000`, y **no** el dominio de producción. En este flujo
+  —redirección de servidor— no bloquea nada, pero es el mismo dominio equivocado
+  otra vez, en un tercer sitio.
+- ⚠️ **«Última fecha de uso: 29 de julio de 2026».** La propia consola avisa de
+  que ese dato puede retrasarse «un día o más», pero de ser correcto significa
+  que **desde el 29 de julio no se ha completado un intercambio OAuth**, lo que
+  no cuadra con el «login verificado en producción» del árbol sin commitear. No
+  lo doy por probado: lo dejo como lo que es, un indicador que apunta en contra.
+
+### Inventario confirmado
+
+| Entorno | Estado |
+|---|---|
+| **GitHub** | 7 variables, 2 secretos (los dos de WIF). Sin sorpresas |
+| **Cloud Run** | servicio `pmo-api` + job `pmo-api-migrate`, `us-central1` |
+| **Secret Manager** | **8 secretos**, los ocho que consume `deploy.yml` |
+| **Artifact Registry** | repositorio `pmo`, formato DOCKER |
+| **Pub/Sub** | **cero temas y cero suscripciones** — la tubería de Gmail no existe |
+| **Vercel** | proyecto `pmo-frontend`, plan Hobby, **sin variables de entorno** |
+| **Google OAuth** | un cliente web, creado el 24 jul, secreto habilitado |
+| **Neon** | org ZEPTO, plan Free, `pmo-db` en **AWS Ohio**, historial **6 h** |
+| **Upstash** | `pmo-redis` Free en **AWS Ohio**, 108 k/500 k comandos, sin expulsión, sin copias |
+| **Anthropic** | nivel Scale · **una clave, «Make Consciente», vence el 17 ago** |
+| **Google AI Studio** | dos claves, **ninguna del proyecto del PMO** |
+
+### Neon, revisado (segunda pasada, con sesión)
+
+| Campo | Valor |
+|---|---|
+| Organización · plan | ZEPTO · **Free** |
+| Proyecto | `pmo-db` (`quiet-wave-45706493`), creado ~2026-08-05 |
+| Región | **AWS US East 2 (Ohio)** |
+| Ramas | **1** (`production`), de 10 |
+| Cómputo | `.25 ↔ 2 CU` con autoescalado · **Scale to zero: 5 minutos** |
+| **Ventana de historial** | **6 h** — el máximo del plan gratuito |
+| Consumo | 0,81/100 CU-h · 33 MB/0,5 GB · 0/5 GB de red |
+| Red | solo internet público; sin lista de IP ni VPC en este plan |
+| Acceso | una persona, Admin |
+
+**Lo que esto significa para la casilla «backups» del Sprint 8: hay seis horas de
+restauración puntual y nada más.** No hay volcado programado en ninguna parte.
+Una tabla borrada a las 09:00 se recupera hasta las 15:00; a las 15:01, no. Es el
+mínimo del plan y conviene que sea una decisión y no un descubrimiento.
+
+_Y un apunte de arquitectura:_ la base está en **AWS Ohio** y la API en **GCP
+Iowa**. Los 28 ms que mide la sonda lo hacen perfectamente viable, pero cada
+consulta cruza de nube, y eso no está escrito en ningún documento del proyecto.
+
+### Upstash, revisado
+
+| Campo | Valor |
+|---|---|
+| Base · plan | `pmo-redis` (`clean-flamingo-142554`) · **Free Tier** |
+| Región | **AWS Ohio (us-east-2)**, tipo Global — **la misma que Neon** |
+| Consumo | **108 k comandos / 500 k al mes** · 81 KB de 256 MB · 0 B de 50 GB |
+| **Expulsión de claves** | **desactivada** ✅ |
+| Copias | **ninguna** — la pestaña Backups está vacía |
+| TLS | habilitado, puerto 6379 |
+| Del plan gratuito | sin lista de IP, sin cifrado en reposo, sin SLA |
+
+**La expulsión desactivada es lo correcto y conviene que quede escrito por qué:**
+con expulsión encendida, al llenarse la base Redis empezaría a borrar claves para
+hacer sitio, y en una cola eso significa **trabajos que desaparecen sin error**.
+Apagada, la escritura falla y se entera alguien. Es la diferencia entre un fallo
+ruidoso y uno silencioso, y aquí está del lado bueno.
+
+⚠️ **108 k de 500 k comandos al mes, con el producto sin usuarios.** El consumo no
+viene del trabajo: viene de que BullMQ sondea Redis mientras hay un proceso vivo.
+Si se corrige el escalado a cero —que es lo que hay que corregir, ver abajo— el
+consumo sube, no baja. Con el tope del plan gratuito eso deja de ser un detalle.
+
+### 🔴 Los trabajos de fondo no corren a su hora, y aquí está la prueba
+
+Era una deducción cuando junté el escalado de Cloud Run con el cron de BullMQ.
+**Ya no lo es: está en el registro de la propia cola.** `deploy.yml` **no pasa
+`--min-instances` ni `--no-cpu-throttling`**, así que la revisión se queda en el
+valor por defecto —cero instancias sin tráfico, CPU estrangulada entre
+peticiones— y el barrido de vencidas es un job repetible (`5 * * * *`,
+`overdue.constants.ts:16`), o sea un temporizador que necesita un proceso vivo.
+
+`bull:overdue-sweep:completed` es un conjunto ordenado de **29 elementos** donde
+el identificador lleva la hora **programada** y el marcador la hora **de
+ejecución**. Convertidas:
+
+| Programado (UTC) | Ejecutado (UTC) | Retraso |
+|---|---|---|
+| 2026-08-11 00:05:00 | 2026-08-11 00:26:01 | 21 min |
+| **2026-08-11 01:05:00** | **2026-08-12 16:35:28** | **39,5 h** |
+
+Las citas del cron son las de identificador redondo; las demás son el barrido de
+arranque, que sí sale puntual porque lo dispara el propio arranque. **Y las dos
+ejecuciones del 08-12, a las 16:35 y 17:36 UTC, coinciden con mis propias
+sondas**: el barrido que llevaba atascado desde el día 11 se disparó en cuanto
+mis peticiones despertaron el contenedor. Es decir: **lo desperté yo, sin
+querer, y eso es la demostración**.
+
+Sumado a que Pub/Sub no existe (§14), **la mitad de fondo del producto está
+inerte en producción**: ni entra correo, ni se marcan las tareas vencidas a su
+hora. Y explica por qué todo se ve sano desde fuera — **lo único que falla es lo
+que no responde a una petición HTTP**, y las sondas solo miran lo que sí.
+
+_Se arregla con `--min-instances=1` y `--no-cpu-throttling` en el despliegue._
+Cuesta dinero (una instancia siempre encendida) y sube el consumo de Upstash: es
+decisión de Doc, no mía. La alternativa barata sería mover el barrido a Cloud
+Scheduler llamando a una ruta, que es lo que Cloud Run espera de un cron.
+
+### 🔴 Anthropic: la clave caduca el 17 de agosto, y es la única que hay
+
+`console.anthropic.com` redirige a **`platform.claude.com`** —el permiso que
+faltaba era el de ese dominio, no el del primero—. Dentro, una sola clave:
+
+| Campo | Valor |
+|---|---|
+| Nombre | **«Make Consciente»** |
+| Creada | 18 jul 2026 |
+| **Vence** | **17 ago 2026** |
+| Último uso | **4 ago 2026** |
+| Coste acumulado | $0,31 |
+
+**Faltan cinco días.** Cuando caduque, la clasificación de correos y el copiloto
+empiezan a devolver 401 —no un error de configuración, no un fallo de despliegue:
+una credencial vencida—, y como la ingesta ya está apagada, es muy posible que
+nadie lo note hasta que alguien abra el copiloto y no funcione.
+
+**Y el nombre no es un detalle: la clave nació para otra cosa.** «Make
+Consciente» es de un escenario de Make.com, no de este proyecto. El PMO va
+montado sobre una credencial prestada de otro sistema: si allí la rotan o la
+borran, esto se cae, y nadie relacionará una cosa con la otra. Es el mismo patrón
+que `WEB_URL` apuntando a otra aplicación (§13) — **infraestructura de otro
+proyecto reutilizada porque estaba a mano**.
+
+_El «último uso: 4 ago» encaja con todo lo demás de este barrido:_ la mitad de
+fondo del producto lleva días sin ejecutarse.
+
+### ⚠️ El gasto no tiene freno real
+
+| Campo | Valor |
+|---|---|
+| Organización · nivel | Individual · **Scale** |
+| Saldo | $12,50 con **recarga automática activada** (Visa ••••0905) |
+| Gastado en el mes | $0,31 |
+| **Límite de gasto mensual** | **USD 200 000** |
+
+Un tope de doscientos mil dólares **con recarga automática y tarjeta guardada no
+es un tope**. El límite de 20 peticiones/minuto de `/copilot` protege del abuso
+de fuera, no de un bucle propio: el tope de 4 vueltas del bucle de herramientas
+es hoy la única barrera real, y es de código, no de cuenta.
+
+Los **límites de tasa no son un problema**: nivel Scale, 10 000 peticiones y 10 M
+de tokens de entrada por minuto en Opus y Sonnet 5. Nada que ver con el 429 de
+Anthropic que motivó el código de espera del 08-05, que sería de ráfaga.
+
+### ⚠️ Gemini: dos claves, ninguna del proyecto del PMO
+
+| Clave | Proyecto de Google | Nivel |
+|---|---|---|
+| `…YnSQ` | `My First Project` (`continual-loop-496922-h9`) | 1 · pospago |
+| `…BNpY` | `Gemini Project` (`gen-lang-client-0325947422`) | 2 · pospago |
+
+Las dos son del **20 may 2026** y **ninguna pertenece a
+`pmo-dashboard-503418`**. No puedo decir cuál de las dos está en Secret Manager
+sin leer el secreto, y no lo voy a hacer. Lo que importa es el patrón, que ya van
+tres: **la aplicación de producción se sostiene sobre credenciales y dominios de
+otros proyectos** — la clave de Anthropic de un escenario de Make, las de Gemini
+de dos proyectos sueltos, y hasta el 08-10 la `WEB_URL` de una aplicación ajena.
+Ninguna de esas dependencias está escrita en ningún documento del repositorio.
+
+### Inventario cerrado
+
+No queda ningún entorno sin revisar.
+
+---
+
+## 16. Verificación de la Fase 1 (2026-08-12, en el navegador)
+
+Doc ejecutó la Fase 1 y me pidió comprobar el resultado. **Entré yo a la
+aplicación desplegada**, con permiso expreso del usuario y sin escribir ninguna
+contraseña.
+
+### ✅ Por primera vez, el producto funciona de extremo a extremo
+
+En una **ventana normal** —no incógnito— la sesión vive y el tablero carga:
+
+| Comprobación | Resultado |
+|---|---|
+| `GET /auth/me` | **200** |
+| `GET /tags` · `GET /emails?status=PENDING` · `GET /health` | **200** los tres |
+| WebSocket | **conectado** — `🔗 Conectado a WebSocket 3lnwajjDVVtNORNcAAAF` |
+| Cuenta | `antonio.sanchez@zepto.com.mx`, rol `owner`, **permisos de Gmail concedidos** |
+| Revisión que sirve | `vpmo-api-00033-g6g` |
+| Kanban | las cinco columnas, **vacías de verdad** — sin `MOCK_TASKS` |
+| Bandeja | **0 correos · 0 conversaciones** |
+
+**El socket conectado cierra en vivo la tercera rotura del §12**, que hasta hoy
+solo estaba comprobada leyendo el código. Y las columnas vacías cierran la del
+respaldo falso: con la API respondiendo y sin datos, el tablero enseña vacío en
+vez de cinco tareas inventadas, que era justo el hallazgo.
+
+_Los 0 correos no son un fallo nuevo: son la ingesta apagada de la Fase 3,
+visible ahora en la pantalla en vez de deducida del `deploy.yml`._
+
+### ✅ El diagnóstico de Doc sobre el bucle era correcto
+
+El bucle de login se daba en **incógnito**, donde Chrome bloquea las cookies de
+terceros por defecto. En ventana normal no ocurre. Queda confirmado que el
+backend hacía su parte y que lo que fallaba era el navegador descartando la
+cookie — y con ello, que **la solución de fondo sigue siendo un dominio propio**,
+no una bandera: hoy la sesión depende de que cada navegador acepte cookies
+cruzadas, y esa puerta se está cerrando en toda la industria.
+
+### Variables de la revisión viva, leídas directamente
+
+`WEB_URL` = `https://pmo-frontend-ten.vercel.app` ✅ ·
+`COPILOT_EMAIL_TRANSPORT` = `mock` ✅ ·
+`ANTHROPIC_API_KEY` → `pmo-anthropic-api-key:latest` ✅ ·
+`SERVICE_VERSION` = `ccbd498…` (HEAD).
+
+⚠️ **Y aquí se ve el aviso que di al revisar el plan, ya no como hipótesis:**
+`COPILOT_EMAIL_TRANSPORT=mock` **existe solo en esta revisión inyectada a mano**.
+`deploy.yml` construye su lista con `--set-env-vars`, que reemplaza el conjunto
+entero, y esa variable no está en la lista. **El primer push de la Fase 2 la
+borra**, sin error y sin rojo, y el transporte vuelve a Gmail real. Tiene que
+entrar en `deploy.yml` antes de que la Fase 2 despliegue algo.
+
+### 🔴 Defecto nuevo: la vista de Métricas no carga en producción
+
+`Error al cargar métricas: Failed to fetch metrics`, y en la red:
+
+```
+GET /dashboard/metrics?tz=America/Cancun  ->  401
+```
+
+**401 en la misma sesión en la que `/auth/me`, `/tags` y `/emails` dan 200.** La
+causa está en `useDashboardMetrics.ts:15`:
+
+```js
+const response = await fetch(`${API_BASE}/dashboard/metrics?tz=${tz}`);
+```
+
+**Le falta `credentials: 'include'`.** Sin eso el navegador no adjunta las
+cookies en una petición cross-site, y la API responde lo que debe: 401. Es la
+**única** llamada de `apps/web` a la que le falta —comprobado archivo por
+archivo; `time.api.ts` y `tags.api.ts` parecen sospechosas pero solo redefinen
+`API_BASE` localmente y sí llevan credenciales, y el `/health` de `App.tsx` es
+público—.
+
+**Es el último superviviente del saneamiento de la capa de API**: a este archivo
+le arreglaron la URL y se le olvidaron las credenciales. Y de paso se salta el
+reintento con `/auth/refresh` que da `apiFetch`, así que ni siquiera se recupera
+cuando caduca el token de 15 minutos.
+
+**En local no se ve**, porque el proxy de Vite lo convierte en mismo origen y ahí
+las cookies viajan solas. Es exactamente la misma forma de fallo que todo lo
+demás de este proyecto: **solo existe en producción**.
+
+_Se arregla llamando por `apiFetch`, que da las dos cosas a la vez. Es
+`apps/web`, o sea dominio de Gravity._

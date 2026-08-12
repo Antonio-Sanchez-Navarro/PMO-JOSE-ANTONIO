@@ -18,6 +18,27 @@ on:
     workflows: ["CI"]
     types: [completed]
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # workflow_dispatch — desplegar sin commit (2026-08-12)
+  #
+  # Dos disparadores, dos formas distintas de saber **qué commit** se despliega,
+  # y de ahí salen los `||` que hay repartidos más abajo:
+  #
+  # - Por `workflow_run`, el commit lo dice el CI que acaba de aprobarlo
+  #   (`github.event.workflow_run.head_sha`).
+  # - Por `workflow_dispatch`, ese objeto **no existe** y sus campos salen
+  #   vacíos; el commit es el de la rama que se elige en el desplegable
+  #   (`github.sha`). Sin el respaldo, `checkout` se traería la rama por defecto
+  #   y la imagen se etiquetaría con la cadena vacía.
+  #
+  # **Este botón se salta el CI a propósito**, y conviene saberlo antes de
+  # pulsarlo: publica lo que haya en la rama elegida sin pasar por lint, build
+  # ni pruebas. Es la herramienta para aplicar un cambio de variable o repetir
+  # un despliegue, no para publicar código sin revisar. Para eso está pulsar el
+  # botón en **CI**, que encadena aquí por `workflow_run` con todo en verde.
+  # ───────────────────────────────────────────────────────────────────────────
+  workflow_dispatch:
+
 # Cancela un despliegue en curso si entra otro: si dos commits se pisan, lo que
 # tiene que quedar arriba es el último, no el que acabe de tardar más.
 concurrency:
@@ -51,11 +72,25 @@ jobs:
     # y no se dispara nunca. `vars.GCP_PROJECT_ID` sirve igual: se pone en el
     # mismo paso de provisión que los secretos, así que su presencia es la misma
     # señal.
+    #
+    # **Y las tres primeras solo tienen sentido viniendo del CI.** Con
+    # `workflow_dispatch` el objeto `github.event.workflow_run` no existe, así
+    # que sus tres campos salen vacíos y la condición sería falsa siempre: el
+    # botón nuevo estaría puesto pero el job se saltaría en silencio, que es la
+    # peor forma de no funcionar. De ahí que se agrupen bajo el disparador que
+    # las produce.
+    #
+    # `vars.GCP_PROJECT_ID != ''` se queda **fuera del paréntesis**, aplicando a
+    # los dos caminos: sin proyecto no hay nada que desplegar, venga de donde
+    # venga.
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'master' &&
-      github.event.workflow_run.event == 'push' &&
-      vars.GCP_PROJECT_ID != ''
+      vars.GCP_PROJECT_ID != '' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'master' &&
+          github.event.workflow_run.event == 'push'
+        )
+      )
 
     permissions:
       # Federación de identidades: el runner pide un token de OIDC a GitHub y
@@ -78,7 +113,7 @@ jobs:
       - name: Traer el commit que aprobó el CI
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Autenticarse en Google Cloud
         uses: google-github-actions/auth@v2
@@ -102,7 +137,17 @@ jobs:
       - name: Construir la imagen
         run: |
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}"
-          SHA="${{ github.event.workflow_run.head_sha }}"
+
+          # El mismo respaldo que en el `checkout` de arriba, y por el mismo
+          # motivo: en un despliegue manual no hay `workflow_run`. Si esto
+          # quedara vacío, la imagen se etiquetaría `…/pmo-api:` y
+          # `SERVICE_VERSION` viajaría en blanco a la revisión.
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+
+          if [ -z "${SHA}" ]; then
+            echo "::error::No se pudo determinar el commit a desplegar."
+            exit 1
+          fi
 
           # El contexto es la RAÍZ del monorepo: el `package-lock.json` que
           # `npm ci` necesita vive ahí, no en `apps/api`.
@@ -289,6 +334,69 @@ jobs:
             exit 1
           fi
 
+          # ───────────────────────────────────────────────────────────────
+          # WEB_URL — el guardarraíl que faltaba (2026-08-12)
+          #
+          # `GOOGLE_REDIRECT_URI` tenía cuatro comprobaciones aquí arriba y ya
+          # paró dos despliegues. `WEB_URL` no tenía **ninguna**: se aceptaba
+          # cualquier cadena, con un respaldo `placeholder.com` que no existe.
+          # Por ese hueco entraron los dos fallos de agosto, y cada uno costó
+          # un diagnóstico entero:
+          #
+          # - **08-07:** apuntaba a `pmo-frontend.vercel.app`, que sirve **otra
+          #   aplicación** —«PMO Digital», en portugués, con Supabase— porque
+          #   los dos proyectos se llaman PMO. El login moría en un 404 que
+          #   parecía de OAuth sin serlo.
+          # - **08-10:** se corrigió al alias con sufijo de proyecto, que está
+          #   detrás del **SSO de Vercel** y responde 302 a quien no tenga
+          #   sesión en esa cuenta. Funcionaba para su dueño y para nadie más.
+          #
+          # Las dos comprobaciones de abajo cazan exactamente esos dos casos y
+          # no cuestan más que un `curl` y un `grep`.
+          #
+          # **Sin `-L`, a propósito.** Un 302 no se sigue: aquí `WEB_URL` es el
+          # sitio donde aterriza el navegador al volver de Google, así que
+          # cualquier cosa que no sea servir la aplicación directamente es el
+          # fallo que se busca. Siguiendo el redirect, la puerta del SSO
+          # devolvería 200 y la comprobación (a) pasaría por buena justo el
+          # caso que existe para cazar.
+          #
+          # **La tercera comprobación —el preflight de CORS— no puede ir aquí.**
+          # Mira la revisión que está sirviendo, que todavía lleva la `WEB_URL`
+          # **vieja**; puesta antes del despliegue fallaría precisamente cuando
+          # la variable cambia, que es el caso que hay que dejar pasar. Va
+          # después de desplegar, como post-condición, en su propio paso al
+          # final de este archivo.
+          # ───────────────────────────────────────────────────────────────
+          if [ -z "${FRONTEND_URL}" ]; then
+            echo "::error::La variable de repositorio WEB_URL no está definida." \
+                 "Es el origen que admite el CORS y el destino al que vuelve el login:" \
+                 "sin ella la API se despliega y el frontend no puede hablarle."
+            exit 1
+          fi
+
+          echo "Comprobando WEB_URL: ${FRONTEND_URL}"
+          CODIGO_WEB=$(curl -sS -o /tmp/web.html -w '%{http_code}' --max-time 20 "${FRONTEND_URL}" || echo "000")
+
+          if [ "${CODIGO_WEB}" != "200" ]; then
+            echo "::error::WEB_URL (${FRONTEND_URL}) devolvió ${CODIGO_WEB} sin credenciales, y tiene que devolver 200." \
+                 "Un 3xx suele ser la protección de despliegue de Vercel: ese dominio solo sirve a quien tenga sesión" \
+                 "en la cuenta, así que el login terminaría en la pantalla de Vercel para todos los demás." \
+                 "Un 000 es que no respondió."
+            exit 1
+          fi
+
+          if ! grep -q '<title>PMO Dashboard' /tmp/web.html; then
+            echo "::error::WEB_URL (${FRONTEND_URL}) responde 200 pero no sirve este frontend:" \
+                 "su HTML no contiene <title>PMO Dashboard, que es el de apps/web/index.html." \
+                 "Comprueba que el dominio es el de este proyecto y no el de otro que se llame parecido."
+            echo "Primeros 400 caracteres de lo que sirvió:"
+            head -c 400 /tmp/web.html || true
+            exit 1
+          fi
+
+          echo "WEB_URL sirve este frontend y responde sin credenciales."
+
           # Los ids de modelo se añaden **solo si están puestos**: pasarlos
           # vacíos escribiría `CLAUDE_MODEL_CLASSIFY=` en la revisión, que el
           # código trata como ausente pero que en la consola de Cloud Run se lee
@@ -307,6 +415,63 @@ jobs:
               echo "::notice::${VARIABLE%%=*} no está definida; la API usará su modelo por defecto y lo dirá en el log de arranque."
             fi
           done
+
+          # ───────────────────────────────────────────────────────────────
+          # Configuración de ejecución — y por qué tiene que estar AQUÍ
+          #
+          # Abajo se despliega con **`--set-env-vars`**, que **reemplaza el
+          # conjunto entero** de variables de la revisión; no lo completa. Todo
+          # lo que no se arme en esta cadena desaparece en el siguiente
+          # despliegue, aunque alguien lo hubiera inyectado en caliente con
+          # `gcloud run services update`. Eso ya pasó: la configuración puesta
+          # a mano sobrevivía hasta el primer push y se perdía sin un solo
+          # error, justo cuando todo parecía por fin arreglado.
+          #
+          # Por eso estas cinco viven aquí y no en un comando suelto:
+          #
+          # - `COPILOT_EMAIL_TRANSPORT` — `copilot.module.ts:66` compara contra
+          #   `'mock'`, así que **cualquier otro valor, y la ausencia, significa
+          #   enviar por Gmail de verdad**. Perderla no rompe nada visible: hace
+          #   que el siguiente clic en «Enviar» del copiloto mande un correo
+          #   auténtico a un destinatario real. De ahí que su ausencia salga
+          #   como aviso y no como nota al pie.
+          # - Las cuatro `GMAIL_PUBSUB_*` — sin ellas la ingesta de correo no
+          #   puede funcionar, y la revisión sale verde igual porque nada de
+          #   esto se comprueba al arrancar. Es la pieza número uno del producto
+          #   fallando en silencio.
+          #
+          # ⚠️ Los valores **no pueden contener comas**: `--set-env-vars` separa
+          # por comas y una coma dentro de un valor partiría la variable en dos.
+          # Vale para toda esta cadena, incluidos los ids de modelo de arriba.
+          # ───────────────────────────────────────────────────────────────
+          for VARIABLE in \
+            "COPILOT_EMAIL_TRANSPORT=${{ vars.COPILOT_EMAIL_TRANSPORT }}" \
+            "GMAIL_PUBSUB_TOPIC=${{ vars.GMAIL_PUBSUB_TOPIC }}" \
+            "GMAIL_PUBSUB_AUDIENCE=${{ vars.GMAIL_PUBSUB_AUDIENCE }}" \
+            "GMAIL_PUBSUB_SERVICE_ACCOUNT=${{ vars.GMAIL_PUBSUB_SERVICE_ACCOUNT }}" \
+            "GMAIL_PUBSUB_ALLOW_UNSIGNED=${{ vars.GMAIL_PUBSUB_ALLOW_UNSIGNED }}"; do
+            NOMBRE="${VARIABLE%%=*}"
+            VALOR="${VARIABLE#*=}"
+
+            if [ -n "${VALOR}" ]; then
+              ENV_VARS="${ENV_VARS},${VARIABLE}"
+            elif [ "${NOMBRE}" = "COPILOT_EMAIL_TRANSPORT" ]; then
+              echo "::warning::COPILOT_EMAIL_TRANSPORT no está definida y el valor por defecto es enviar por Gmail DE VERDAD." \
+                   "Ponla a 'mock' mientras se prueba, o confirma que el envío real es lo que se quiere."
+            else
+              echo "::notice::${NOMBRE} no está definida; la ingesta de Gmail seguirá inactiva en esta revisión."
+            fi
+          done
+
+          # No se bloquea el despliegue —puede haber un motivo puntual para
+          # depurar sin firma—, pero que no pase inadvertido: esta bandera apaga
+          # la verificación OIDC del webhook de Pub/Sub, y con la API abierta a
+          # peticiones anónimas eso deja el buzón de entrada expuesto a
+          # cualquiera que conozca la ruta.
+          if [ -n "${{ vars.GMAIL_PUBSUB_ALLOW_UNSIGNED }}" ] && [ "${{ vars.GMAIL_PUBSUB_ALLOW_UNSIGNED }}" != "false" ]; then
+            echo "::warning::GMAIL_PUBSUB_ALLOW_UNSIGNED está puesta a '${{ vars.GMAIL_PUBSUB_ALLOW_UNSIGNED }}' en producción:" \
+                 "el webhook de Pub/Sub aceptará mensajes sin verificar su firma."
+          fi
 
           # ───────────────────────────────────────────────────────────────
           # --allow-unauthenticated — quién llama a esta API
@@ -366,3 +531,51 @@ jobs:
           echo "La revisión no llegó a responder 200 en /health/ready:"
           cat /tmp/ready.json || true
           exit 1
+
+      # ─────────────────────────────────────────────────────────────────────
+      # La tercera comprobación de `WEB_URL`, y va DESPUÉS de desplegar
+      #
+      # Las otras dos —que responda 200 sin credenciales y que sirva este
+      # frontend— miran el dominio y pueden correr antes. Esta mira **la
+      # revisión recién publicada**, así que antes de desplegar habría
+      # interrogado a la revisión vieja, con la `WEB_URL` vieja, y habría
+      # fallado justo en el despliegue que cambia la variable: el único que no
+      # debe bloquearse.
+      #
+      # Puesta aquí es una post-condición y comprueba lo que de verdad
+      # importaba: que el valor **llegó** a la revisión que está sirviendo. Un
+      # `gcloud run deploy` que sale con 0 no lo dice; dice que la API aceptó el
+      # comando.
+      #
+      # Se pide `OPTIONS /auth/me` porque es la ruta que llama el SPA nada más
+      # cargar, y su preflight es exactamente el que falla en un navegador real
+      # cuando el origen no está admitido. La lista de orígenes de la API es
+      # fija —no un eco de lo que pregunte el cliente—, así que la cabecera solo
+      # devuelve el origen si de verdad está en ella.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Comprobar que el CORS de la revisión admite WEB_URL
+        run: |
+          URL=$(gcloud run services describe "${SERVICE}" \
+                  --region "${REGION}" --format 'value(status.url)')
+          ORIGEN="${{ vars.WEB_URL }}"
+
+          PERMITIDO=$(curl -sS -D - -o /dev/null --max-time 20 \
+                        -X OPTIONS "${URL}/auth/me" \
+                        -H "Origin: ${ORIGEN}" \
+                        -H "Access-Control-Request-Method: GET" \
+                      | tr -d '\r' \
+                      | grep -i '^access-control-allow-origin:' \
+                      | head -1 \
+                      | cut -d' ' -f2- || true)
+
+          echo "origen pedido:   ${ORIGEN}"
+          echo "origen admitido: ${PERMITIDO:-(ninguno)}"
+
+          if [ "${PERMITIDO}" != "${ORIGEN}" ]; then
+            echo "::error::La revisión desplegada no admite ${ORIGEN} en CORS." \
+                 "El despliegue salió con 0 pero la variable no llegó a la revisión que sirve," \
+                 "así que el navegador bloqueará todas las llamadas del frontend."
+            exit 1
+          fi
+
+          echo "El CORS de la revisión admite el origen del frontend."

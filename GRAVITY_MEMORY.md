@@ -46,12 +46,14 @@ terminar y reportar esto.
 - Eliminados los placeholders de bases de datos locales.
 - Cloud Run configurado para inyectar las versiones activas de Secret Manager directamente a las variables de entorno `DATABASE_URL` y `REDIS_URL`.
 - Las migraciones de Prisma se ejecutan sobre Neon durante el despliegue.
+- **Frontend Vercel completado:** El monorepo compila de forma consistente usando la configuración de Vercel manual / `vercel.json` desde la raíz. El frontend (Vite) consume la API en Cloud Run sin sufijos extra.
+- **Integración OAuth verificada:** El flujo de login con Google en producción se completa sin errores, enlazando el cliente de Vercel con la redirección autorizada hacia el dominio de Cloud Run.
 
 **Diagnóstico y Mitigación (Arranque de Cloud Run):**
 - **Causa Raíz:** El origen real del timeout fue resuelto por la revisión de proveedores síncronos en el bootstrap (el `AuthService` requería `GOOGLE_REDIRECT_URI` de forma estricta antes de abrir el puerto).
 - **Solución:** Claude añadió validación e inyección de la variable en `deploy.yml`. 
 - **Timeouts y Secretos:** El timeout de Cloud Run se reestablece a su valor estándar de 60s tras confirmar que el servicio responde. *(Nota: El pipeline ya no inyecta los secretos `pmo-claude-model-*` mediante `--set-secrets`)*.
-- **Verificación Final (Telemetría):** Tras un push vacío para redesplegar con la URL real en `GOOGLE_REDIRECT_URI` (obtenida de Cloud Run sin marcadores ni `/api/v1`), el pipeline de GitHub Actions corrió de principio a fin en verde. Cloud Logging confirma que la API escucha correctamente en el puerto 8080 y la sonda `/health/ready` devuelve HTTP 200, validando la inyección exitosa de `DATABASE_URL` y `REDIS_URL` desde Secret Manager. La correlación por `GOOGLE_CLOUD_PROJECT` y el enrutamiento de CORS vía `WEB_URL` también operan con normalidad.
+- **Verificación Final (Telemetría y End-to-End):** El flujo Frontend ↔ Backend opera en verde total. La integración de OAuth de Google valida credenciales correctamente desde Vercel hacia la API de Cloud Run, registrando sesiones vivas. Cloud Logging confirma que la API escucha y rutea CORS adecuadamente.
 
 ## Deuda conocida de `apps/web`, sin asignar
 
