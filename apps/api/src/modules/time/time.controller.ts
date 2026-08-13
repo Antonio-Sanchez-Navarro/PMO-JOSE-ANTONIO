@@ -48,11 +48,23 @@ export class TimeController {
    * con `Unexpected end of JSON input`. El contrato dice «el fichaje o `null`»,
    * así que aquí se manda el `null` literal. Visto en la consola del navegador
    * el 2026-07-30: fallaba en cada montaje del tablero sin cronómetro activo.
+   *
+   * ⚠️ **`@Res()` a secas, sin `passthrough`.** Con `passthrough: true` Nest
+   * conserva el control del ciclo de la respuesta y, al terminar el método,
+   * manda **también** el valor devuelto: como aquí es `void`, acaba llamando a
+   * `res.send(undefined)` sobre una respuesta cuyas cabeceras ya salió a mandar
+   * `res.json()`. Resultado: `ERR_HTTP_HEADERS_SENT` y un **500 intermitente**
+   * en la ruta que el tablero llama en cada montaje. Corregido el 2026-08-13
+   * tras verlo cinco veces en diez minutos en los logs de producción.
+   *
+   * `passthrough` es para cuando se quiere tocar la respuesta —una cookie, una
+   * cabecera, un estado— **y dejar que Nest mande el cuerpo**. Aquí el cuerpo lo
+   * manda este método, así que el control tiene que ser suyo entero.
    */
   @Get('active')
   async findActive(
     @CurrentUser() user: CurrentUserContext,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
   ): Promise<void> {
     const activo = await this.timeService.findActive(user.userId);
     res.json(activo ?? null);
