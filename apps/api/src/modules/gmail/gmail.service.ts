@@ -350,11 +350,23 @@ export class GmailService {
 
   // ─── Suscripción push ──────────────────────────────────────────────────
 
-  async watchInbox(userId: string): Promise<void> {
+  /**
+   * Registra (o renueva) la suscripción push de la bandeja de un usuario.
+   *
+   * Devuelve `true` si Gmail aceptó el `watch`. Antes no devolvía nada y los
+   * fallos solo quedaban en el log, lo cual bastaba mientras el único llamador
+   * era el worker; desde que `/cron/gmail-watch` recorre a todos los usuarios
+   * hace falta saber **cuántos** quedaron observados de verdad, porque un
+   * «renovados: 0 de 3» es la diferencia entre la ingesta viva y apagada.
+   *
+   * `GMAIL_PUBSUB_TOPIC` debe llevar el nombre completo del tema
+   * (`projects/<proyecto>/topics/<tema>`): Gmail rechaza el nombre corto.
+   */
+  async watchInbox(userId: string): Promise<boolean> {
     const topicName = this.config.get<string>('GMAIL_PUBSUB_TOPIC');
     if (!topicName) {
       this.logger.warn('GMAIL_PUBSUB_TOPIC no está configurado. Omitiendo watchInbox.');
-      return;
+      return false;
     }
 
     const gmail = await this.getGmailClient(userId);
@@ -376,8 +388,46 @@ export class GmailService {
       }
 
       this.logger.log(`Bandeja de entrada observada (watch) para el usuario ${userId}`);
+      return true;
     } catch (err) {
       this.logger.error(`Error configurando watchInbox para ${userId}`, err);
+      return false;
     }
+  }
+
+  /**
+   * Renueva el `watch` de todos los usuarios que tengan credenciales de Google.
+   *
+   * **La razón de que esto exista es que `users.watch` caduca a los 7 días.**
+   * No avisa al vencer y no deja ningún error: sencillamente dejan de llegar
+   * push, y la ingesta de correo se apaga en silencio. Un producto que
+   * funcionaba deja de funcionar sin que nada cambie ni nadie toque nada, que
+   * es la clase de fallo más cara de diagnosticar.
+   *
+   * Un usuario que falla **no corta el recorrido**: `watchInbox` ya captura sus
+   * propios errores, así que un token revocado no puede impedir que se renueve
+   * el de los demás.
+   */
+  async renovarWatchDeTodos(): Promise<{ candidatos: number; renovados: number }> {
+    const usuarios = await this.prisma.user.findMany({
+      // Sin credenciales de Google no hay buzón que observar. Filtrar aquí evita
+      // una llamada condenada al 401 por cada usuario que nunca entró con Google.
+      where: { googleTokens: { not: null } },
+      select: { id: true },
+    });
+
+    let renovados = 0;
+    for (const usuario of usuarios) {
+      if (await this.watchInbox(usuario.id)) renovados++;
+    }
+
+    if (renovados < usuarios.length) {
+      this.logger.warn(
+        `Watch de Gmail renovado solo para ${renovados} de ${usuarios.length} usuario(s): ` +
+          `los demás dejarán de recibir correo cuando caduque el suyo`,
+      );
+    }
+
+    return { candidatos: usuarios.length, renovados };
   }
 }

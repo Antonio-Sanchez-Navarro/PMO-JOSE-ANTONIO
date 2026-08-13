@@ -446,23 +446,45 @@ jobs:
           # por comas y una coma dentro de un valor partiría la variable en dos.
           # Vale para toda esta cadena, incluidos los ids de modelo de arriba.
           # ───────────────────────────────────────────────────────────────
+          # Las dos `CRON_*` identifican a **Cloud Scheduler**, que firma con su
+          # propia cuenta de servicio y no con la de Pub/Sub. Reutilizar las
+          # `GMAIL_PUBSUB_*` para las rutas de `/cron` daría 401 —son emisores
+          # distintos— y aflojar el guard para aceptar ambas dejaría que el
+          # webhook de Gmail pudiera disparar el barrido de vencidas, y al revés.
+          # Cada puerta valida a su emisor, así que cada una necesita su par.
           for VARIABLE in \
             "COPILOT_EMAIL_TRANSPORT=${{ vars.COPILOT_EMAIL_TRANSPORT }}" \
             "GMAIL_PUBSUB_TOPIC=${{ vars.GMAIL_PUBSUB_TOPIC }}" \
             "GMAIL_PUBSUB_AUDIENCE=${{ vars.GMAIL_PUBSUB_AUDIENCE }}" \
             "GMAIL_PUBSUB_SERVICE_ACCOUNT=${{ vars.GMAIL_PUBSUB_SERVICE_ACCOUNT }}" \
-            "GMAIL_PUBSUB_ALLOW_UNSIGNED=${{ vars.GMAIL_PUBSUB_ALLOW_UNSIGNED }}"; do
+            "GMAIL_PUBSUB_ALLOW_UNSIGNED=${{ vars.GMAIL_PUBSUB_ALLOW_UNSIGNED }}" \
+            "CRON_OIDC_AUDIENCE=${{ vars.CRON_OIDC_AUDIENCE }}" \
+            "CRON_SERVICE_ACCOUNT=${{ vars.CRON_SERVICE_ACCOUNT }}"; do
             NOMBRE="${VARIABLE%%=*}"
             VALOR="${VARIABLE#*=}"
 
             if [ -n "${VALOR}" ]; then
               ENV_VARS="${ENV_VARS},${VARIABLE}"
-            elif [ "${NOMBRE}" = "COPILOT_EMAIL_TRANSPORT" ]; then
-              echo "::notice::COPILOT_EMAIL_TRANSPORT no está definida; el copiloto usará el transporte SIMULADO y no enviará correos." \
-                   "Para enviar de verdad, ponla a 'real' o 'smtp'."
-            else
-              echo "::notice::${NOMBRE} no está definida; la ingesta de Gmail seguirá inactiva en esta revisión."
+              continue
             fi
+
+            case "${NOMBRE}" in
+              COPILOT_EMAIL_TRANSPORT)
+                echo "::notice::COPILOT_EMAIL_TRANSPORT no está definida; el copiloto usará el transporte SIMULADO y no enviará correos." \
+                     "Para enviar de verdad, ponla a 'real' o 'smtp'."
+                ;;
+              CRON_*)
+                # Aviso y no nota al pie: el guard falla cerrado, así que sin
+                # esto Cloud Scheduler recibe 401 en cada cita y el barrido de
+                # vencidas no corre. Los jobs se ven «ejecutados» en la consola
+                # de Scheduler igualmente, que es como se pierde una tarde.
+                echo "::warning::${NOMBRE} no está definida; las rutas /cron rechazarán a Cloud Scheduler con 401" \
+                     "y las tareas vencidas dejarán de marcarse."
+                ;;
+              *)
+                echo "::notice::${NOMBRE} no está definida; la ingesta de Gmail seguirá inactiva en esta revisión."
+                ;;
+            esac
           done
 
           # No se bloquea el despliegue —puede haber un motivo puntual para

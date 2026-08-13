@@ -20,6 +20,7 @@ import { TagsModule } from './modules/tags/tags.module';
 import { TimeModule } from './modules/time/time.module';
 import { CopilotModule } from './modules/copilot/copilot.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
+import { CronModule } from './modules/cron/cron.module';
 
 // Módulos de dominio (se implementan por sprint — ver TASKS.md):
 import { TasksModule } from "./modules/tasks/tasks.module";
@@ -71,6 +72,9 @@ import { TasksModule } from "./modules/tasks/tasks.module";
     TimeModule,
     CopilotModule,
     MetricsModule,
+    // Las rutas que dispara Cloud Scheduler. Va después de OverdueModule y
+    // GmailModule porque consume lo que ambos exportan.
+    CronModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
