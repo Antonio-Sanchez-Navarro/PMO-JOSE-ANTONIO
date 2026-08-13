@@ -35,7 +35,8 @@ terminar y reportar esto.
 | Provisión de Infraestructura GCP | Completado (Neon + Upstash + Cloud Run) |
 | Saneamiento de Deuda Técnica (Frontend) | Eliminación de mocks, mutación impura en DND y corrección de tipos |
 | Configuración de OAuth de Google | Variable `GOOGLE_REDIRECT_URI` actualizada en GitHub Actions |
-
+| Configuración de Vercel (CI/CD) | Eliminación de `vercel.json` local para priorizar la UI de Vercel y prevenir errores de `build:shared`. |
+| Estabilización de Métricas (Producción) | Refactor de llamada directa a `apiFetch` en `useDashboardMetrics.ts`, resolviendo errores 401 mediante `credentials: 'include'` y refresh de tokens. |
 ## Estado de la Infraestructura en Producción
 
 **Infraestructura de Datos:**
@@ -57,7 +58,7 @@ terminar y reportar esto.
 
 ## Deuda conocida de `apps/web`, sin asignar
 
-*(Actualmente sin deuda crítica documentada tras el saneamiento del Tablero Kanban y Tipos)*
+- **UX del Botón "Convertir a Tarea" (Inbox):** El botón debe desaparecer, deshabilitarse o cambiar a "Ver Tarea" si el correo ya fue procesado automáticamente por la IA y enlazado a una tarjeta. Actualmente, el frontend permite hacer clic múltiples veces, lo que provoca que el backend rechace la duplicación con errores `409 Conflict` en `POST /emails/.../to-task`.
 
 ---
 
