@@ -9,6 +9,107 @@
 
 ---
 
+## Estado a 2026-08-13
+
+### ⏰ Ya no hay cron dentro de la API
+
+El barrido de vencidas era un **job repetible de BullMQ**, y un repetible
+necesita un proceso vivo que lo dispare. Cloud Run escala a cero sin tráfico y
+estrangula la CPU entre peticiones, así que **no corría**: medido en la propia
+cola, una cita de las 01:05 se ejecutó **39,5 horas tarde**, y solo porque una
+sonda externa despertó el contenedor.
+
+Ahora lo dispara **Cloud Scheduler** por HTTP, que es como Cloud Run espera que
+se haga un cron:
+
+| Ruta | Cada | Qué hace |
+|---|---|---|
+| `POST /cron/overdue` | hora | El barrido de vencidas de siempre |
+| `POST /cron/gmail-watch` | día | Renueva `users.watch`, que **caduca a los 7 días** |
+
+Tres cosas que conviene no volver a descubrir:
+
+1. **Sin prefijo global.** `main.ts` no llama a `setGlobalPrefix`, así que las
+   rutas son exactamente `/cron/...`. Un `/api/cron/...` en la configuración de
+   Scheduler da 404 y el job se ve «ejecutado» en la consola igual.
+2. **Los guards no se comparten.** `CronAuthGuard` valida a Scheduler y
+   `PubSubAuthGuard` a Pub/Sub, **con cuentas de servicio distintas**.
+   Reutilizar uno para el otro da 401; relajarlo para aceptar ambas dejaría que
+   el webhook de Gmail pudiera disparar el barrido, y al revés. La verificación
+   OIDC común (firma, `aud`, cuenta emisora) vive una sola vez en
+   `common/security/google-oidc.verifier.ts`.
+3. **La audiencia es una sola para los dos jobs**, pasada explícita con
+   `--oidc-token-audience`. Si se deja que Scheduler la deduzca, cada job firma
+   con su propia URL como `aud` y `CRON_OIDC_AUDIENCE` solo puede validar uno.
+
+⚠️ **Quitar un cron de BullMQ del código no lo apaga**: el planificador vive en
+Redis y con Upstash sobrevive indefinidamente. `OverdueCronPurge` lo borra
+explícitamente al arrancar, en tres pasadas —nuestro id, planificadores
+huérfanos de la cola y repetibles del formato antiguo `queue.add({repeat})`—.
+Sin eso habría dos barridos: el nuevo y el fantasma.
+
+### 📧 La ingesta de Gmail está viva (por fin)
+
+Verificada de extremo a extremo el 2026-08-13: correo real → push de Gmail →
+webhook 200 → cola → `Sync incremental: 1 correo(s)` → clasificación por IA →
+**1 tarea creada**. Antes no podía funcionar: `deploy.yml` no inyectaba ni una
+`GMAIL_PUBSUB_*` y la revisión salía verde igual.
+
+⚠️ **Pub/Sub entrega cada aviso dos veces** (dos `messageId` distintos, así que
+el `jobId` no deduplica). Es inofensivo —la sincronización es idempotente y el
+segundo job encuentra 0 correos— pero duplica el trabajo en Redis, y Upstash va
+por 108 k de 500 k comandos al mes del plan gratuito. Sin resolver.
+
+### 🚨 Dos trampas de `deploy.yml` que costaron un diagnóstico cada una
+
+**`--set-env-vars` reemplaza el conjunto entero.** Todo lo inyectado a mano con
+`gcloud run services update` desaparece en el siguiente despliegue, **sin un
+solo error**. Si una variable tiene que sobrevivir, va en la lista condicional
+de `deploy.yml`; ponerla solo en la revisión es ponerla hasta el próximo push.
+
+**`WEB_URL` no se validaba** y por ahí entraron dos fallos: un dominio que
+servía otra aplicación entera y luego un alias tras el SSO de Vercel (302 para
+quien no tenga sesión en la cuenta). Ahora el pipeline exige 200 sin
+credenciales y `<title>PMO Dashboard` en el HTML antes de construir, más un
+preflight de CORS **después** de desplegar. Ese último no puede ir antes:
+interrogaría a la revisión vieja y bloquearía justo el despliegue que arregla la
+variable.
+
+### ✉️ El transporte de correo ahora falla del lado seguro
+
+`COPILOT_EMAIL_TRANSPORT` comparaba contra `'mock'`, así que **su ausencia
+significaba enviar por Gmail de verdad** — y el despliegue la borraba en cada
+revisión. Invertido: el envío real se pide por su nombre (`real` o `smtp`) y
+todo lo demás cae en simulado. Un correo enviado no se recoge, así que el modo
+peligroso no puede ser el que sale de no hacer nada.
+
+### 🐛 `@Res({ passthrough: true })` + `res.json()` = 500 intermitente
+
+`/time/active` daba `ERR_HTTP_HEADERS_SENT` cinco veces cada diez minutos. Con
+`passthrough`, Nest **conserva el control del ciclo de respuesta** y manda
+también el valor devuelto: tras el `res.json()` del método, intentaba un segundo
+envío con `undefined` sobre una respuesta ya cerrada. `passthrough` es para
+tocar la respuesta —una cookie, una cabecera— **y dejar que Nest mande el
+cuerpo**. Si el cuerpo lo manda el método, el control tiene que ser suyo entero:
+`@Res()` a secas.
+
+### 🔎 Un `try` demasiado ancho miente sobre la causa
+
+El webhook de Gmail registraba `Error parseando payload` cada pocos minutos, y
+`queue.add` estaba **dentro del mismo `try`** que el `JSON.parse`: un fallo de
+Redis se registraba como un fallo de parseo, culpando al remitente. Ahora hay
+tres mensajes distintos —payload que no es JSON, notificación de control sin
+`emailAddress` que se ignora limpiamente, y fallo de la cola—, los dos primeros
+con muestra recortada a 200 caracteres del contenido real.
+
+_El misterio sigue medio abierto:_ contando líneas del incidente de las 21:51:30
+(dos pushes, dos «recibido», un error) al menos **uno** de esos errores no pudo
+ser de parseo. Los de las 21:51:08 sí encajan con parseo real. La sospecha es la
+notificación inicial que Gmail manda al crear un `watch` — el primer error cae
+un segundo después de registrarlo.
+
+---
+
 ## Estado a 2026-08-07
 
 ### 🌐 La URL pública de la API
