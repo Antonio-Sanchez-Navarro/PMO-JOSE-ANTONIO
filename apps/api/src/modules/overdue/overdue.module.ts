@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule } from '@nestjs/config';
 import { OverdueService } from './overdue.service';
-import { OverdueProcessor } from './overdue.processor';
 import { OverdueCronPurge } from './overdue.cron-purge';
 import { OVERDUE_QUEUE } from './overdue.constants';
 import { TasksModule } from '../tasks/tasks.module';
@@ -19,8 +18,19 @@ import { TasksModule } from '../tasks/tasks.module';
   //
   // `OverdueService` se exporta para que `CronModule` pueda invocarlo sin
   // duplicar la lógica en el controlador.
+  //
+  // **`OverdueProcessor` también se fue** (2026-08-13): consumía la cola que
+  // alimentaba el repetible, y desde que el barrido lo dispara Cloud Scheduler
+  // **nadie encola nada ahí**. Un worker sobre una cola sin productor no está
+  // ocioso: mantiene su llamada bloqueante contra Redis y la rehace cada pocos
+  // segundos, así que estaba pagando cuota de Upstash por esperar un trabajo
+  // que no podía llegar.
+  //
+  // La cola sigue registrada porque `OverdueCronPurge` necesita el objeto
+  // `Queue` para borrar lo que quedara programado. Un `Queue` no sondea: solo
+  // habla con Redis cuando se le pide algo.
   imports: [ConfigModule, TasksModule, BullModule.registerQueue({ name: OVERDUE_QUEUE })],
-  providers: [OverdueService, OverdueProcessor, OverdueCronPurge],
+  providers: [OverdueService, OverdueCronPurge],
   exports: [OverdueService],
 })
 export class OverdueModule {}

@@ -5,7 +5,12 @@ import { OAuth2Client } from 'google-auth-library';
 export interface CriteriosOidc {
   /** El `aud` que tiene que llevar el token. Sin esto no se valida nada. */
   audience?: string;
-  /** Correo de la cuenta de servicio que debe haberlo firmado. */
+  /**
+   * Correo de la cuenta de servicio que debe haberlo firmado.
+   *
+   * **Obligatorio en la práctica**: si llega vacío se rechaza la llamada. Ver
+   * el porqué en `verificar`.
+   */
   cuentaEsperada?: string;
   /** Nombre del emisor para los mensajes de log ("Pub/Sub", "Cloud Scheduler"). */
   etiqueta: string;
@@ -58,6 +63,30 @@ export class GoogleOidcVerifier {
       throw new UnauthorizedException(`Webhook de ${etiqueta} mal configurado`);
     }
 
+    // ⚠️ **Y la cuenta emisora se exige aquí, antes de verificar nada.**
+    //
+    // Comprobarla solo «si está configurada» —como se hacía hasta el
+    // 2026-08-13— convierte una variable de entorno que falta en una puerta
+    // abierta, y en silencio: la firma seguiría validando, así que los logs
+    // dirían que todo va bien.
+    //
+    // Y la firma **no basta**: acredita que el token lo emitió Google, no que
+    // lo pidiera alguien de esta casa. Google emite tokens OIDC a cualquiera
+    // con un proyecto, así que un tercero puede apuntar su propio Cloud
+    // Scheduler a estas URLs —que son públicas— y firmar con su cuenta. Lo
+    // único que lo distingue de nosotros es este correo.
+    //
+    // Fallar cerrado deja el cron parado hasta que alguien ponga la variable.
+    // Fallar abierto deja que un extraño dispare el barrido y la renovación
+    // del watch, y nadie se entera. La primera se nota; la segunda no.
+    if (!cuentaEsperada) {
+      this.logger.error(
+        `No hay cuenta de servicio configurada para ${etiqueta}: se rechaza la llamada. ` +
+          `Una firma válida de Google no acredita que la llamada sea nuestra.`,
+      );
+      throw new UnauthorizedException(`Webhook de ${etiqueta} mal configurado`);
+    }
+
     const token = cabecera.slice('Bearer '.length).trim();
 
     let payload;
@@ -73,7 +102,7 @@ export class GoogleOidcVerifier {
       throw new UnauthorizedException('El token OIDC no acredita una cuenta de servicio verificada');
     }
 
-    if (cuentaEsperada && payload.email !== cuentaEsperada) {
+    if (payload.email !== cuentaEsperada) {
       this.logger.warn(
         `Llamada de ${etiqueta} firmada por una cuenta inesperada: ${payload.email} ` +
           `(se esperaba ${cuentaEsperada})`,

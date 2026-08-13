@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { GmailService } from './gmail.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { AJUSTE_WORKER } from '../../common/bullmq/polling.config';
 
 interface SyncHistoryJob {
   emailAddress?: string;
@@ -15,7 +16,7 @@ interface WatchInboxJob {
 
 type GmailJob = SyncHistoryJob & WatchInboxJob;
 
-@Processor('gmail-sync')
+@Processor('gmail-sync', { ...AJUSTE_WORKER })
 export class GmailProcessor extends WorkerHost {
   private readonly logger = new Logger(GmailProcessor.name);
 

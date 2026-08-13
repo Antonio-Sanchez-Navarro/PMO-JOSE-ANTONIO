@@ -629,6 +629,58 @@ describe('AnthropicStrategy — herramientas', () => {
       expect(trozos.filter((t) => t.type === 'tool_call')).toHaveLength(1);
     });
 
+    /**
+     * El turno mezclado: una herramienta que se ejecuta y otra que espera a una
+     * persona, en la **misma** respuesta del modelo.
+     *
+     * Es el caso de «busca los correos de este cliente y créame la tarea», y
+     * hasta el 2026-08-13 rompía el turno entero con un **400 de Anthropic**:
+     * apilábamos el turno de asistente con sus dos bloques `tool_use` y
+     * devolvíamos `tool_result` solo del ejecutable. La API exige respuesta
+     * para **todos**, y ante uno que falta rechaza el array completo — así que
+     * el fallo no degradaba nada: el copiloto simplemente no contestaba.
+     */
+    it('un turno mixto contesta a TODOS los tool_use: sin eso Anthropic devuelve 400', async () => {
+      const { strategy, llamadas } = conVueltas([
+        {
+          content: [
+            { type: 'tool_use', id: 'tu-lee', name: SEARCH_EMAILS, input: { query: 'lote' } },
+            { type: 'tool_use', id: 'tu-actua', name: CREATE_TASK, input: { title: 'Revisar' } },
+          ],
+        },
+        { content: [{ type: 'text', text: 'Listo.' }] },
+      ]);
+      const execute = jest.fn().mockResolvedValue({ total: 3 });
+
+      const trozos: LlmChunk[] = [];
+      for await (const c of strategy.stream({ messages: [], tier: LlmTier.PRO, execute })) {
+        trozos.push(c);
+      }
+
+      // La manual sale al frontend, como siempre: la confirma una persona.
+      expect(trozos.filter((t) => t.type === 'tool_call')).toHaveLength(1);
+      // Y la ejecutable se ejecuta, también como siempre.
+      expect(execute).toHaveBeenCalledWith(SEARCH_EMAILS, { query: 'lote' });
+
+      // Lo que se prueba de verdad: el turno de usuario que se le devuelve al
+      // modelo responde a los DOS bloques, no solo al que se ejecutó.
+      type Resultado = { type: string; tool_use_id: string; content: string };
+
+      const segunda = (llamadas[1] as { messages: { role: string; content: unknown }[] }).messages;
+      const resultados = (segunda.at(-1) as { content: Resultado[] }).content;
+
+      expect(resultados.map((r) => r.tool_use_id).sort()).toEqual(['tu-actua', 'tu-lee']);
+
+      // Y a la manual se le dice que está pendiente, para que el modelo no la
+      // dé por hecha ni la repita en la vuelta siguiente.
+      const pendiente = resultados.find((r) => r.tool_use_id === 'tu-actua');
+      expect(pendiente).toBeDefined();
+      expect(pendiente!.type).toBe('tool_result');
+      expect(JSON.parse(pendiente!.content)).toMatchObject({
+        estado: 'pendiente_de_confirmacion',
+      });
+    });
+
     it('el turno tiene tope de vueltas: un modelo que insista no agota la cuota', async () => {
       const busca = {
         content: [{ type: 'tool_use', id: 'tu-1', name: SEARCH_EMAILS, input: { query: 'x' } }],

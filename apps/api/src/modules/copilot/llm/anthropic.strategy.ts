@@ -182,21 +182,51 @@ export class AnthropicStrategy implements LlmStrategy {
       // Se le devuelve al modelo lo que pidió, en el mismo formato que espera:
       // su propio turno de asistente y luego los resultados como `tool_result`.
       messages.push({ role: 'assistant', content: final.content });
-      messages.push({
-        role: 'user',
-        content: await Promise.all(
-          ejecutables.map(async (bloque) => {
-            this.logger.log(`Ejecutando ${bloque.name} para ${final.model}`);
-            const resultado = await request.execute!(bloque.name, bloque.input);
 
-            return {
-              type: 'tool_result' as const,
-              tool_use_id: bloque.id,
-              content: JSON.stringify(resultado),
-            };
+      // ⚠️ **Hay que contestar a TODOS los `tool_use`, no solo a los que se
+      // ejecutan.** La API de Anthropic exige que cada bloque `tool_use` del
+      // turno de asistente tenga su `tool_result` en el turno siguiente; si
+      // falta uno, **rechaza el array entero con un 400** y el turno muere —no
+      // se degrada, no responde a medias: no responde.
+      //
+      // Salta solo cuando el modelo mezcla en una misma respuesta una
+      // herramienta manual (`create_task`, enviar correo…) y una ejecutable
+      // (`search_emails`), que es un caso perfectamente razonable: «busca esto
+      // y créame la tarea». Como el turno de asistente que acabamos de apilar
+      // lleva los dos bloques, devolver solo el del ejecutable dejaba al otro
+      // sin respuesta.
+      //
+      // A las manuales se les contesta que quedan **pendientes de confirmación
+      // de una persona**, que es la verdad: ya salieron hacia el frontend como
+      // `tool_call` y ahí termina su camino en este turno. Decírselo al modelo
+      // además evita que insista o dé por hecha una acción que aún no ocurrió.
+      const pendientes = llamadas
+        .filter((b) => !esEjecutable(b.name))
+        .map((bloque) => ({
+          type: 'tool_result' as const,
+          tool_use_id: bloque.id,
+          content: JSON.stringify({
+            estado: 'pendiente_de_confirmacion',
+            detalle:
+              'Propuesta al usuario para que la confirme. Todavía no se ha ejecutado: ' +
+              'no des la acción por hecha ni la repitas.',
           }),
-        ),
-      });
+        }));
+
+      const resueltas = await Promise.all(
+        ejecutables.map(async (bloque) => {
+          this.logger.log(`Ejecutando ${bloque.name} para ${final.model}`);
+          const resultado = await request.execute!(bloque.name, bloque.input);
+
+          return {
+            type: 'tool_result' as const,
+            tool_use_id: bloque.id,
+            content: JSON.stringify(resultado),
+          };
+        }),
+      );
+
+      messages.push({ role: 'user', content: [...resueltas, ...pendientes] });
     }
 
     this.logger.log(`Copiloto (${model}): ${entrada} entrada / ${salida} salida`);

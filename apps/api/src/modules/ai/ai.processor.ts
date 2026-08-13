@@ -9,6 +9,7 @@ import {
   esperaSugeridaMs,
 } from '../../common/anthropic/anthropic-client';
 import type { ClassifyEmailJob, ClassifyEmailResult } from './classify-email.job';
+import { AJUSTE_WORKER } from '../../common/bullmq/polling.config';
 
 /**
  * Cuántas clasificaciones van a la vez y cuántas por minuto.
@@ -30,7 +31,11 @@ import type { ClassifyEmailJob, ClassifyEmailResult } from './classify-email.job
 const CONCURRENCIA = 2;
 const LIMITE_POR_VENTANA = { max: 20, duration: 60_000 };
 
-@Processor('classify-email', { concurrency: CONCURRENCIA, limiter: LIMITE_POR_VENTANA })
+@Processor('classify-email', {
+  concurrency: CONCURRENCIA,
+  limiter: LIMITE_POR_VENTANA,
+  ...AJUSTE_WORKER,
+})
 export class AiProcessor extends WorkerHost {
   private readonly logger = new Logger(AiProcessor.name);
 

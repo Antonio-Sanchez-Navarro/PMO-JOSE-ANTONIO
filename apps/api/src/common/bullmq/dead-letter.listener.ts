@@ -1,8 +1,9 @@
 import { Logger } from '@nestjs/common';
 import { QueueEventsListener, QueueEventsHost, InjectQueue, OnQueueEvent } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { AJUSTE_EVENTOS } from './polling.config';
 
-@QueueEventsListener('gmail-sync')
+@QueueEventsListener('gmail-sync', { ...AJUSTE_EVENTOS })
 export class GmailSyncDLQListener extends QueueEventsHost {
   private readonly logger = new Logger(GmailSyncDLQListener.name);
 
@@ -21,7 +22,7 @@ export class GmailSyncDLQListener extends QueueEventsHost {
   }
 }
 
-@QueueEventsListener('classify-email')
+@QueueEventsListener('classify-email', { ...AJUSTE_EVENTOS })
 export class ClassifyEmailDLQListener extends QueueEventsHost {
   private readonly logger = new Logger(ClassifyEmailDLQListener.name);
 
