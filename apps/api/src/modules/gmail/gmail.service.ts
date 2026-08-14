@@ -395,6 +395,38 @@ export class GmailService {
     // fallido, y con el registro roto tampoco se podía leer cuál de los dos
     // era. Un tropiezo de Postgres no puede invalidar un watch que Gmail ya
     // aceptó.
+    // ⚠️ **Hay que parar el watch anterior antes de poner el nuevo.**
+    //
+    // Gmail admite **un solo cliente de notificaciones push por desarrollador**
+    // y rechaza el segundo con un 400 que lo dice literalmente:
+    //
+    //   "Only one user push notification client allowed per developer
+    //    (call /stop then try again)"  ·  INVALID_ARGUMENT
+    //
+    // Es un fallo que **solo aparece a partir de la segunda ejecución**: el
+    // watch inicial del 2026-08-13 se puso sin problema porque no había
+    // ninguno, y desde entonces cada renovación chocaba contra el que aquel
+    // mismo dejó puesto. Una vez bien y todas las siguientes mal, que es por
+    // qué costó verlo — y por qué la ingesta iba camino de apagarse sola el
+    // 2026-08-20, siete días después del único watch que Gmail llegó a aceptar.
+    //
+    // `stop` es idempotente: sobre un buzón sin watch no falla. Aun así se
+    // captura aparte para no confundir un fallo suyo con un rechazo del
+    // `watch`, que es lo que de verdad decide el resultado.
+    //
+    // **Sí hay una ventana sin push entre las dos llamadas**, y conviene que
+    // esté escrita en vez de descubrirse: dura milisegundos y Gmail conserva el
+    // historial, así que lo que entre en medio lo recupera la sincronización
+    // incremental por `historyId`. No se pierde correo; se retrasa.
+    try {
+      await gmail.users.stop({ userId: 'me' });
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo parar el watch anterior de ${userId} (se intenta poner el nuevo igualmente): ${describirError(err)}`,
+        stackDe(err),
+      );
+    }
+
     let historyIdInicial: string | null | undefined;
     try {
       const res = await gmail.users.watch({
