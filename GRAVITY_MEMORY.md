@@ -37,6 +37,7 @@ terminar y reportar esto.
 | Configuración de OAuth de Google | Variable `GOOGLE_REDIRECT_URI` actualizada en GitHub Actions |
 | Configuración de Vercel (CI/CD) | Eliminación de `vercel.json` local para priorizar la UI de Vercel y prevenir errores de `build:shared`. |
 | Estabilización de Métricas (Producción) | Refactor de llamada directa a `apiFetch` en `useDashboardMetrics.ts`, resolviendo errores 401 mediante `credentials: 'include'` y refresh de tokens. |
+| Fase 4: DevOps, Alertas y DLQ | DLQ en Pub/Sub, Cloud Monitoring Policy y variable de Claude en Cloud Run |
 ## Estado de la Infraestructura en Producción
 
 **Infraestructura de Datos:**
@@ -55,6 +56,29 @@ terminar y reportar esto.
 - **Solución:** Claude añadió validación e inyección de la variable en `deploy.yml`. 
 - **Timeouts y Secretos:** El timeout de Cloud Run se reestablece a su valor estándar de 60s tras confirmar que el servicio responde. *(Nota: El pipeline ya no inyecta los secretos `pmo-claude-model-*` mediante `--set-secrets`)*.
 - **Verificación Final (Telemetría y End-to-End):** El flujo Frontend ↔ Backend opera en verde total. La integración de OAuth de Google valida credenciales correctamente desde Vercel hacia la API de Cloud Run, registrando sesiones vivas. Cloud Logging confirma que la API escucha y rutea CORS adecuadamente.
+
+**Fase 4 (DevOps, Alertas y DLQ):**
+- **Variable de Modelo Claude:** `CLAUDE_MODEL_CLASSIFY` fijada en `claude-3-5-sonnet-20240620` en GitHub variables y en Cloud Run.
+  ```bash
+  gh variable set CLAUDE_MODEL_CLASSIFY --body "claude-3-5-sonnet-20240620"
+  gcloud run services update pmo-api --region us-central1 --project pmo-dashboard-503418 --update-env-vars="CLAUDE_MODEL_CLASSIFY=claude-3-5-sonnet-20240620"
+  ```
+- **Pub/Sub DLQ:** Tópico `gmail-ingest-dlq` creado. Suscripción `gmail-ingest-push` configurada con `--max-delivery-attempts=5` y enlazada a la DLQ. Roles IAM asignados al service agent de Pub/Sub (`roles/pubsub.publisher` y `roles/pubsub.subscriber`).
+  ```bash
+  gcloud pubsub topics create gmail-ingest-dlq --project pmo-dashboard-503418
+  gcloud pubsub subscriptions create gmail-ingest-dlq-sub --topic=gmail-ingest-dlq --project pmo-dashboard-503418
+  gcloud pubsub topics add-iam-policy-binding gmail-ingest-dlq --member="serviceAccount:service-614812477499@gcp-sa-pubsub.iam.gserviceaccount.com" --role="roles/pubsub.publisher" --project pmo-dashboard-503418
+  gcloud pubsub subscriptions add-iam-policy-binding gmail-ingest-push --member="serviceAccount:service-614812477499@gcp-sa-pubsub.iam.gserviceaccount.com" --role="roles/pubsub.subscriber" --project pmo-dashboard-503418
+  gcloud pubsub subscriptions update gmail-ingest-push --dead-letter-topic=gmail-ingest-dlq --max-delivery-attempts=5 --project pmo-dashboard-503418
+  ```
+- **Alertas (Capa 2):** Política de Cloud Monitoring desplegada para detectar `severity>=ERROR` en `cloud_run_revision` y `cloud_scheduler_job` (pre-código).
+  ```bash
+  gcloud beta monitoring policies create --policy-from-file=alert_policy.json --project pmo-dashboard-503418
+  ```
+- **Secretos de Alertas:** Secreto `ALERT_WEBHOOK_URL` creado en Secret Manager (con valor temporal, a la espera del Webhook real de Google Chat por parte del administrador).
+  ```bash
+  echo "TO_BE_FILLED_BY_USER" | gcloud secrets create ALERT_WEBHOOK_URL --data-file=- --project pmo-dashboard-503418
+  ```
 
 ## Deuda conocida de `apps/web`, sin asignar
 
