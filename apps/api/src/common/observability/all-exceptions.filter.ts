@@ -5,6 +5,7 @@ import type { Request, Response } from 'express';
 import { REPORTED_ERROR_EVENT_TYPE, sanitizeUrl } from './gcp-logging';
 import { esSondaDeSalud } from './logger.config';
 import { SERVICE_CONTEXT } from './service-context';
+import { AlertService } from '../alerts/alert.service';
 
 /**
  * Filtro global de excepciones: **es la pieza que sustituye a Sentry.**
@@ -27,6 +28,7 @@ import { SERVICE_CONTEXT } from './service-context';
 export class AllExceptionsFilter extends BaseExceptionFilter {
   constructor(
     @InjectPinoLogger(AllExceptionsFilter.name) private readonly logger: PinoLogger,
+    private readonly alertas: AlertService,
   ) {
     super();
   }
@@ -93,6 +95,20 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
           error: { type: error.name, message: error.message },
         },
         error.stack ?? error.message,
+      );
+
+      // **Solo los 5xx no previstos**, que es lo que ya filtra esta rama: los
+      // 4xx son clientes pidiendo lo que no pueden y el 503 de una sonda es la
+      // dependencia caída, que el orquestador ya ve. Alertar de esos convierte
+      // el canal en ruido y el ruido se silencia.
+      //
+      // El freno agrupa por ruta y no por mensaje: una ruta rota falla en
+      // bucle, y lo que hay que saber es que esa ruta está caída, no leerlo
+      // trescientas veces.
+      void this.alertas.avisar(
+        `Error 500 en ${request.method} ${httpRequest.requestUrl}`,
+        error,
+        `http-5xx:${request.method}:${httpRequest.requestUrl}`,
       );
     } else {
       /**

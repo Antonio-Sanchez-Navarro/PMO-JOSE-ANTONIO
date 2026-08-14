@@ -21,6 +21,7 @@ import { TimeModule } from './modules/time/time.module';
 import { CopilotModule } from './modules/copilot/copilot.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { CronModule } from './modules/cron/cron.module';
+import { AlertModule } from './common/alerts/alert.module';
 
 // Módulos de dominio (se implementan por sprint — ver TASKS.md):
 import { TasksModule } from "./modules/tasks/tasks.module";
@@ -58,6 +59,8 @@ import { TasksModule } from "./modules/tasks/tasks.module";
           GOOGLE_CLOUD_PROJECT: config.get<string>('GOOGLE_CLOUD_PROJECT'),
         }),
     }),
+    // Global: lo que hay que vigilar no vive en un dominio.
+    AlertModule,
     PrismaModule,
     CryptoModule,
     TasksModule,

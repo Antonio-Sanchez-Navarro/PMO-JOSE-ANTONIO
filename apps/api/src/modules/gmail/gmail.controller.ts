@@ -16,6 +16,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { GmailService, EmailSnippet } from './gmail.service';
 import { describirError, stackDe } from '../../common/observability/describir-error';
+import { AlertService } from '../../common/alerts/alert.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { PubSubAuthGuard } from './pubsub-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -40,6 +41,7 @@ export class GmailController {
   constructor(
     private readonly gmailService: GmailService,
     @InjectQueue('gmail-sync') private readonly gmailQueue: Queue,
+    private readonly alertas: AlertService,
   ) {}
 
   @Get('gmail/inbox')
@@ -223,6 +225,16 @@ export class GmailController {
       this.logger.error(
         `No se pudo encolar la sincronización de ${payload.emailAddress}: ${describirError(err)}`,
         stackDe(err),
+      );
+
+      // 27 de estos en dos días y nadie se enteró: se recuperaban solos por la
+      // segunda entrega de Google, así que el correo llegaba y el fallo no
+      // dolía. Un fallo que no duele es el que sigue ahí el día que la red de
+      // seguridad no está.
+      void this.alertas.avisar(
+        'No se pudo encolar un correo entrante',
+        err,
+        'gmail-encolado-fallido',
       );
 
       // Se libera la reserva para que la **segunda entrega de Google vuelva a

@@ -498,6 +498,38 @@ jobs:
           fi
 
           # ───────────────────────────────────────────────────────────────
+          # Secretos de Secret Manager
+          #
+          # La URL del webhook de alertas **es una credencial**: quien la tenga
+          # puede escribir en el canal de Google Chat. Por eso viaja por aquí y
+          # no como variable de entorno en claro.
+          #
+          # Se añade **condicionada a `vars.ALERT_WEBHOOK_SECRET`** —el nombre
+          # del secreto— y no fija en la cadena, por una razón de orden: un
+          # `--set-secrets` que nombre un secreto inexistente **falla el
+          # despliegue entero**. Fijarla aquí antes de que el secreto exista
+          # dejaría la API sin poder desplegarse hasta que alguien lo creara, y
+          # el error hablaría de secretos, no de este cambio. Con la variable de
+          # por medio, el orden deja de importar: se crea el secreto, se pone la
+          # variable, y el siguiente despliegue la recoge.
+          # ───────────────────────────────────────────────────────────────
+          SECRETS="DATABASE_URL=pmo-database-url:latest"
+          SECRETS="${SECRETS},REDIS_URL=pmo-redis-url:latest"
+          SECRETS="${SECRETS},JWT_SECRET=pmo-jwt-secret:latest"
+          SECRETS="${SECRETS},TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest"
+          SECRETS="${SECRETS},GOOGLE_CLIENT_ID=pmo-google-client-id:latest"
+          SECRETS="${SECRETS},GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest"
+          SECRETS="${SECRETS},ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest"
+          SECRETS="${SECRETS},GEMINI_API_KEY=pmo-gemini-api-key:latest"
+
+          if [ -n "${{ vars.ALERT_WEBHOOK_SECRET }}" ]; then
+            SECRETS="${SECRETS},ALERT_WEBHOOK_URL=${{ vars.ALERT_WEBHOOK_SECRET }}:latest"
+          else
+            echo "::warning::ALERT_WEBHOOK_SECRET no está definida; la API no podrá enviar alertas." \
+                 "Crea el secreto con la URL del webhook de Google Chat y pon aquí su nombre."
+          fi
+
+          # ───────────────────────────────────────────────────────────────
           # --allow-unauthenticated — quién llama a esta API
           #
           # Cloud Run nace **privado**: sin esta bandera, su puerta de entrada
@@ -526,7 +558,7 @@ jobs:
             --port 8080 \
             --allow-unauthenticated \
             --set-env-vars "${ENV_VARS}" \
-            --set-secrets "DATABASE_URL=pmo-database-url:latest,REDIS_URL=pmo-redis-url:latest,JWT_SECRET=pmo-jwt-secret:latest,TOKEN_ENCRYPTION_KEY=pmo-token-encryption-key:latest,GOOGLE_CLIENT_ID=pmo-google-client-id:latest,GOOGLE_CLIENT_SECRET=pmo-google-client-secret:latest,ANTHROPIC_API_KEY=pmo-anthropic-api-key:latest,GEMINI_API_KEY=pmo-gemini-api-key:latest" \
+            --set-secrets "${SECRETS}" \
             --quiet
 
       # Comprobación de verdad: que la revisión conteste, no que el comando de

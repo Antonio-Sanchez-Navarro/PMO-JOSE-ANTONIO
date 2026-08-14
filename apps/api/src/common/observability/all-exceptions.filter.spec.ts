@@ -21,12 +21,14 @@ const host = (
 
 describe('AllExceptionsFilter', () => {
   let logger: { error: jest.Mock; warn: jest.Mock };
+  let alertas: { avisar: jest.Mock };
   let filtro: AllExceptionsFilter;
   let base: jest.SpyInstance;
 
   beforeEach(() => {
     logger = { error: jest.fn(), warn: jest.fn() };
-    filtro = new AllExceptionsFilter(logger as unknown as PinoLogger);
+    alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
+    filtro = new AllExceptionsFilter(logger as unknown as PinoLogger, alertas as never);
     // El filtro de Nest es quien responde; aquí solo interesa *que* se le
     // delegue, no lo que escriba en el socket.
     base = jest.spyOn(BaseExceptionFilter.prototype, 'catch').mockImplementation();

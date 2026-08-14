@@ -43,10 +43,15 @@ describe('GmailController · webhook de Gmail', () => {
     const del = opciones.del ?? jest.fn().mockResolvedValue(1);
     const add = opciones.add ?? jest.fn().mockResolvedValue({ id: 'job-1' });
 
+    const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
     const queue = { client: Promise.resolve({ set, del }), add };
-    const controller = new GmailController({} as unknown as GmailService, queue as never);
+    const controller = new GmailController(
+      {} as unknown as GmailService,
+      queue as never,
+      alertas as never,
+    );
 
-    return { controller, set, del, add };
+    return { controller, set, del, add, alertas };
   }
 
   it('encola el aviso y DEJA la clave puesta cuando todo va bien', async () => {

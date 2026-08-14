@@ -29,6 +29,8 @@ describe('GmailService · watchInbox', () => {
       get: jest.fn().mockReturnValue('tema' in opciones ? opciones.tema : TEMA),
     } as unknown as ConfigService;
 
+    const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
+
     const prisma = {
       user: {
         findUnique: jest.fn().mockResolvedValue({ gmailHistoryId: 'ya-tenia' }),
@@ -41,6 +43,7 @@ describe('GmailService · watchInbox', () => {
       config,
       prisma as never,
       {} as never, // cola de clasificación: no interviene aquí
+      alertas as never,
     );
 
     // Se simula el cliente de Gmail en vez del módulo `googleapis` entero: lo
@@ -49,7 +52,7 @@ describe('GmailService · watchInbox', () => {
       .fn()
       .mockResolvedValue({ users: { stop, watch } });
 
-    return { service, stop, watch, prisma };
+    return { service, stop, watch, prisma, alertas };
   }
 
   it('para el watch anterior ANTES de poner el nuevo', async () => {

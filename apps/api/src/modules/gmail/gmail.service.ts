@@ -6,6 +6,7 @@ import { Queue } from 'bullmq';
 import { AuthService } from '../auth/auth.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { describirError, stackDe } from '../../common/observability/describir-error';
+import { AlertService } from '../../common/alerts/alert.service';
 import type { ClassifyEmailJob } from '../ai/classify-email.job';
 
 /**
@@ -56,6 +57,7 @@ export class GmailService {
     // de estar de acuerdo sobre el nombre del campo, falla aquí y no en
     // producción con el job ya encolado.
     @InjectQueue('classify-email') private readonly classifyQueue: Queue<ClassifyEmailJob>,
+    private readonly alertas: AlertService,
   ) {}
 
   private async getGmailClient(userId: string): Promise<GmailClient> {
@@ -503,6 +505,15 @@ export class GmailService {
       // el contador decía que algo iba mal y no había forma de saber qué, así
       // que no se podía actuar sobre ello. Un contador sin causa no es una
       // alerta, es una intriga.
+      // **La alerta que faltaba.** Este aviso estuvo dos días en el log sin que
+      // nadie lo viera: el cron corre a las 02:30 y nadie lee logs de
+      // madrugada. Mientras tanto la ingesta iba camino de apagarse sola.
+      void this.alertas.avisar(
+        `Watch de Gmail sin renovar: ${renovados} de ${usuarios.length}`,
+        `La ingesta de correo se apagará cuando caduque el watch vigente (7 días). ${fallos.join(' | ')}`,
+        'gmail-watch-sin-renovar',
+      );
+
       this.logger.warn(
         `Watch de Gmail renovado solo para ${renovados} de ${usuarios.length} usuario(s) ` +
           `[${fallos.join(' | ')}]: ` +
