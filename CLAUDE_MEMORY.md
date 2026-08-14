@@ -9,6 +9,134 @@
 
 ---
 
+## Estado a 2026-08-15
+
+### 🔴 `users.watch` de Gmail: hay que llamar a `stop` ANTES
+
+Es la causa raíz de que la ingesta llevara dos días condenada. Gmail admite
+**un solo cliente de notificaciones push por desarrollador** y rechaza el
+segundo:
+
+```
+HTTP 400 · INVALID_ARGUMENT
+"Only one user push notification client allowed per developer
+ (call /stop then try again)"
+```
+
+`watchInbox` llama ahora a `gmail.users.stop()` antes de `gmail.users.watch()`.
+`stop` es idempotente —sobre un buzón sin watch no falla— y va en su propio
+`try` para no confundir un fallo suyo con un rechazo del `watch`.
+
+**La forma del fallo es lo que hay que recordar:** el primer `watch` funciona
+—no hay ninguno que estorbe— y **fallan todas las renovaciones posteriores**.
+Una vez bien y las demás mal. Eso hace que se lea como «funcionó y luego dejó
+de funcionar», que es el patrón de una credencial que caduca: por eso el
+diagnóstico apuntó dos días a OAuth y al refresh token, que estaban sanos.
+
+⚠️ **Y sin renovación, la ingesta se apaga sola a los 7 días** sin un solo
+error: dejan de llegar push y ya está. Hay prueba del orden en
+`gmail.service.spec.ts`, incluida una que renueva **dos veces**, porque una
+prueba de una sola llamada no habría visto nunca este fallo.
+
+### 🔴 `logger.error(mensaje, err)` tira el error al suelo
+
+**La segunda ranura de `logger.error` de Nest es el `stack` y espera una
+cadena.** Al pasarle un objeto, el formateador de pino lo descarta entero.
+Comprobado en el registro crudo del fallo del 08-14: el `jsonPayload` traía
+`message`, `logger`, `pid` y `req` — ni `err`, ni `stack`, ni `code`.
+
+Eso es lo que hizo la causa del watch **ilegible durante dos días**. La trampa
+ya estaba documentada en `all-exceptions.filter.ts` («el serializador de pino
+esperaba un `Error` de verdad») y aun así se repitió en nueve sitios.
+
+La forma correcta, con el helper de `common/observability/describir-error.ts`:
+
+```ts
+this.logger.error(`No se pudo X: ${describirError(err)}`, stackDe(err));
+```
+
+`describirError` saca además **`err.response.data.error`**, que es donde
+`googleapis` esconde el motivo real de un rechazo (`Insufficient Permission`,
+`Topic not found`, el `call /stop` de arriba). Sin eso, un 400 no se distingue
+de otro 400.
+
+### 🔴 Neon tarda más en despertar que el plazo de Prisma
+
+`Transaction already closed` intermitente: Neon es serverless, despertarlo tarda
+**~5,3 s** y el plazo por defecto de Prisma es de **5 s**. Fallaba por
+trescientas milésimas y solo con la base dormida — nunca en local, nunca dos
+veces seguidas.
+
+Fijado en el **constructor** de `PrismaService`, que Prisma admite desde la 5.10:
+
+| Opción | Antes | Ahora |
+|---|---|---|
+| `maxWait` | 2 s | 10 s |
+| `timeout` | 5 s | 15 s |
+
+Un solo sitio cubre las nueve transacciones del proyecto y las que se escriban
+después. **No es cosa de los workers**: Cloud Run también escala a cero, así que
+cualquier transacción puede pillar la base fría.
+
+⚠️ El precio: una transacción de verdad atascada retiene su conexión el triple.
+Correcto aquí —las transacciones son cortas— pero es el primer sospechoso si
+algún día aparece contención de conexiones.
+
+### 🔴 Deduplicación: deduplicar lo hecho, no lo intentado
+
+Google entrega **cada aviso de Gmail dos veces** (medido: dos push con el mismo
+`historyId` separados por 15 ms). El segundo job no encuentra nada porque el
+primero ya avanzó el marcador.
+
+Dos cosas que costaron entenderlo:
+
+1. **La clave es el `historyId`, no el `messageId`.** El `jobId: messageId` ya
+   deduplicaba y aun así entraron los dos, luego traían `messageId` distinto:
+   son entregas separadas de Google, no reintentos.
+2. **La clave se reserva antes de encolar y se libera si el encolado falla.**
+   La primera versión la reservaba y no la liberaba, y eso *perdía correos*:
+   había 27 fallos de encolado en dos días que se recuperaban solos porque la
+   segunda entrega reintentaba 4 ms después. Reservar por adelantado convertía
+   esa red de seguridad en diez minutos de silencio.
+
+**No se puede escribir la clave *después* del encolado**: `SET NX` es lo único
+atómico, y sin reserva previa las dos entregas concurrentes verían el terreno
+libre y encolarían las dos. Lo que arregla el fallo es el `del` en el `catch`.
+
+Si Redis falla, se deja pasar: perder un correo es peor que procesarlo dos
+veces, y el duplicado ya se sabe inofensivo.
+
+### 🟠 `AlertService` — las tres reglas de la Capa 1
+
+`common/alerts/`. Webhook entrante de **Google Chat** (`{ text }`, negrita con
+**un solo asterisco** — Chat no entiende `**esto**`).
+
+1. **Nunca lanza.** Se llama desde bloques `catch`; un alertador que lance
+   convierte un fallo en dos y se traga el error original.
+2. **Freno en Redis** (`SET NX EX`, 15 min por clave). Sin él un bucle de fallos
+   manda cientos de mensajes, y un canal que grita se silencia. Ante un fallo de
+   Redis, **manda igualmente**: un aviso de más es menos grave que un silencio.
+3. **Lleva la causa** (`describirError`). «0 de 1» sin motivo no es una alerta,
+   es una intriga.
+
+**Google Chat y no correo, por diseño:** la mitad de lo que hay que vigilar *es*
+Gmail, y mandar por Gmail el aviso de que Gmail falló es un detector de
+incendios que se apaga con el incendio.
+
+Cuatro enganches: el cron del watch cuando `renovados < candidatos`, el fallo de
+encolado del webhook, los 5xx no previstos del filtro global, y **los dos
+oyentes de la DLQ de BullMQ** — que llevaban semanas anotando trabajo perdido en
+una cola que **no leía nadie**. `QueueEvents.failed` se emite solo cuando el job
+llega al conjunto `failed`, es decir tras agotar reintentos, así que lo que pasa
+por ahí es trabajo definitivamente perdido.
+
+⚠️ `ALERT_WEBHOOK_URL` **es una credencial** —quien la tenga escribe en el
+canal—, así que va por Secret Manager. En `deploy.yml` se añade condicionada a
+`vars.ALERT_WEBHOOK_SECRET`: un `--set-secrets` que nombre un secreto
+inexistente **falla el despliegue entero**.
+
+---
+
 ## Estado a 2026-08-13
 
 ### ⏰ Ya no hay cron dentro de la API

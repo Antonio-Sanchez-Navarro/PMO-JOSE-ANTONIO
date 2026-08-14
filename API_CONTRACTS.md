@@ -67,6 +67,74 @@ cabecera.
 
 ---
 
+### Rutas de sistema — las llama Google, no el frontend
+
+> Añadidas el **2026-08-15**. Existían desde el 08-12 y faltaban aquí por
+> completo; se documentan ahora con el visto bueno del PO. **El SPA no las
+> llama nunca**: están aquí para que se sepa que existen, quién puede entrar y
+> qué pasa si dejan de responder.
+
+Las tres son **públicas a nivel de plataforma** —Cloud Run sirve el servicio con
+`--allow-unauthenticated`, porque quien llama no puede presentar un token de
+Google en la puerta— así que **lo único que las protege es su guard**. Y las
+tres están **exentas del límite por IP** (`@SkipThrottle()`): quien llama es
+Google desde unas pocas direcciones, un 429 no lo disuade —lo reintenta— y una
+ráfaga legítima se leería como abuso.
+
+| Ruta | Quién la llama | Guard | Cuenta de servicio |
+|---|---|---|---|
+| `POST /webhooks/gmail` | Pub/Sub (push de Gmail) | `PubSubAuthGuard` | `GMAIL_PUBSUB_SERVICE_ACCOUNT` |
+| `POST /cron/overdue` | Cloud Scheduler, cada hora | `CronAuthGuard` | `CRON_SERVICE_ACCOUNT` |
+| `POST /cron/gmail-watch` | Cloud Scheduler, a diario | `CronAuthGuard` | `CRON_SERVICE_ACCOUNT` |
+
+⚠️ **Los guards no son intercambiables, y es deliberado.** Pub/Sub y Cloud
+Scheduler firman con **cuentas de servicio distintas**: usar uno donde va el
+otro devuelve 401, y relajarlo para aceptar ambas dejaría que el webhook de
+Gmail pudiera disparar el barrido de vencidas, y al revés. La verificación OIDC
+común —firma, `aud` y cuenta emisora— vive una sola vez en
+`common/security/google-oidc.verifier.ts`, y **falla cerrado**: sin audiencia o
+sin cuenta esperada configuradas, rechaza.
+
+**Sin prefijo global.** `main.ts` no llama a `setGlobalPrefix`, así que las
+rutas son exactamente `/cron/overdue` y `/cron/gmail-watch`. Un `/api/cron/...`
+da 404 — y el job se ve «ejecutado» en la consola de Scheduler igualmente.
+
+#### `POST /cron/overdue`
+
+Marca como `OVERDUE` las tareas que pasaron de fecha. Sustituye al repetible de
+BullMQ, que no corría porque Cloud Run escala a cero (llegó a ejecutarse
+**39,5 h tarde**). Es idempotente: un reintento de Scheduler tras un timeout no
+hace daño.
+
+```jsonc
+// 200
+{ "ok": true, "candidates": 12, "moved": 3, "users": 1 }
+```
+
+#### `POST /cron/gmail-watch`
+
+Registra **o** renueva la suscripción push de Gmail de todos los usuarios con
+credenciales de Google. Sirve para las dos cosas a propósito: `users.watch`
+**caduca a los 7 días** y la llamada para renovarlo es la misma que para
+crearlo, así que se puede invocar a mano tras desplegar sin esperar a la
+primera cita.
+
+```jsonc
+// 200
+{ "ok": true, "candidatos": 1, "renovados": 1 }
+```
+
+> **`renovados < candidatos` es un incidente, no un detalle.** Significa que a
+> esos buzones les quedan como mucho 7 días de ingesta antes de apagarse **sin
+> error y sin aviso**. Desde el 08-15 dispara una alerta a Google Chat con el
+> motivo dentro.
+
+Internamente llama a `users.stop()` **antes** de `users.watch()`: Gmail admite
+un solo cliente de notificaciones push por desarrollador y rechaza el segundo
+con `400 INVALID_ARGUMENT`.
+
+---
+
 ### Contratos REST — vigentes
 
 > Recuperados literalmente de `git show HEAD:HANDOFF.md` y de

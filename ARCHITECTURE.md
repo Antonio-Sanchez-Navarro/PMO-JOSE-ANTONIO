@@ -35,8 +35,8 @@ El PMO Dashboard es una plataforma web que centraliza la operación de un direct
 | Build | **Vite** | Dev server rápido, HMR |
 | UI | **TailwindCSS + shadcn/ui** | Diseño consistente y accesible |
 | Kanban DnD | **@dnd-kit/core** | Drag & drop performante y accesible |
-| Estado servidor | **TanStack Query** | Cache, refetch, sincronización |
-| Estado cliente | **Zustand** | Ligero, sin boilerplate |
+| Estado servidor | ~~TanStack Query~~ → **`fetch` + estado propio** | Corregido el 2026-08-15: se propuso aquí y **la implementación nunca lo usó**. `apps/web` no tiene TanStack Query ni axios |
+| Estado cliente | ~~Zustand~~ → **estado propio de React** | Igual que arriba: propuesto, no instalado |
 | Realtime | **socket.io-client** | Actualización viva del tablero |
 | Gráficas | **Recharts** | KPIs, burndown, tiempos |
 | Formularios | **React Hook Form + Zod** | Validación tipada |
@@ -143,8 +143,15 @@ WhatsAppMessage(id, userId, direction[in|out], waMessageId, body,
 ```
 
 > **Estado `OVERDUE` (Atrasadas):** no se persiste manualmente; un **job programado**
-> (cron cada 15 min) marca como `OVERDUE` toda tarea con `dueDate < now` y `status ∈ {TODO, IN_PROGRESS, POSTPONED}`.
+> marca como `OVERDUE` toda tarea con `dueDate < now` y `status ∈ {TODO, IN_PROGRESS, POSTPONED}`.
 > En la UI se puede mostrar como columna derivada o como badge.
+>
+> ⚠️ **Corregido el 2026-08-15.** Aquí ponía «cron cada 15 min» y ninguna de las
+> dos cosas es cierta desde el 2026-08-12: **lo dispara Cloud Scheduler cada
+> hora**, llamando a `POST /cron/overdue`. El repetible de BullMQ que había
+> antes vivía dentro del contenedor y **no corría**: Cloud Run escala a cero sin
+> tráfico, así que una cita de las 01:05 llegó a ejecutarse **39,5 horas tarde**.
+> Un cron que necesita un proceso vivo no funciona en un servicio que se apaga.
 
 ---
 
