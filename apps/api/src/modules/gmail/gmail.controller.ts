@@ -117,6 +117,66 @@ export class GmailController {
       `Webhook de Gmail recibido para: ${payload.emailAddress} (historyId ${payload.historyId ?? 'n/d'})`,
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Deduplicación: Google entrega cada aviso dos veces
+    //
+    // Medido en producción el 2026-08-13: dos push con el **mismo
+    // `historyId`** separados por 15 ms, que producen dos jobs de
+    // sincronización. El segundo no encuentra nada porque el primero ya avanzó
+    // el marcador, así que no corrompe datos — pero duplica el trabajo: dos
+    // consultas a Gmail y dos rondas de escrituras en Redis por cada correo.
+    // Con Upstash en el plan gratuito eso importa.
+    //
+    // ⚠️ **La clave es el `historyId`, no el `messageId`**, y esa diferencia es
+    // el hallazgo. El `jobId: messageId` de aquí abajo ya deduplicaba, y aun
+    // así entraron los dos: **los dos avisos traían `messageId` distinto**, así
+    // que son entregas separadas de Google y no un reintento del mismo mensaje.
+    // Deduplicar por `messageId` habría dejado pasar exactamente el caso que
+    // estamos viendo.
+    //
+    // `SET NX EX` es atómico: si la clave ya existe devuelve `null` y no hay
+    // ventana entre comprobar y escribir por la que dos peticiones concurrentes
+    // puedan colarse. 10 minutos de vida sobran —los duplicados llegan con
+    // milisegundos de diferencia— y evitan que la clave se quede para siempre.
+    //
+    // Si Redis falla, se deja pasar: perder un correo es peor que procesarlo
+    // dos veces, y el duplicado ya se sabe inofensivo.
+    const claveDeAviso = `gmail:webhook:${payload.emailAddress}:${payload.historyId ?? 'sin-history'}`;
+    try {
+      // El cliente real es ioredis —BullMQ lo usa por dentro— y acepta el `SET`
+      // completo, pero la interfaz `IRedisClient` que BullMQ declara solo
+      // expone `{PX, EX}`, sin `NX`. Se declara aquí la firma que sí existe en
+      // tiempo de ejecución en vez de añadir `ioredis` como dependencia
+      // directa: lo que se necesita es una sola sobrecarga, y el paquete ya
+      // está instalado como transitiva.
+      //
+      // Sin `NX` no hay forma atómica de hacer esto: comprobar y escribir por
+      // separado deja una ventana entre las dos llamadas por la que se cuelan
+      // exactamente los duplicados que llegan con 15 ms de diferencia.
+      const redis = (await this.gmailQueue.client) as unknown as {
+        set(
+          clave: string,
+          valor: string,
+          modoExpiracion: 'EX',
+          segundos: number,
+          modoExistencia: 'NX',
+        ): Promise<string | null>;
+      };
+
+      const primero = await redis.set(claveDeAviso, '1', 'EX', 600, 'NX');
+
+      if (primero === null) {
+        this.logger.log(
+          `Aviso duplicado de Gmail ignorado (${payload.emailAddress}, historyId ${payload.historyId ?? 'n/d'})`,
+        );
+        return 'OK';
+      }
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo comprobar si el aviso estaba duplicado; se procesa igualmente: ${(err as Error).message}`,
+      );
+    }
+
     try {
       // El worker resuelve el usuario por correo; el historyId viaja con el job
       // para poder avanzar el marcador de sincronización.
