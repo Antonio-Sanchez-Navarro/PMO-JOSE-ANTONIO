@@ -9,7 +9,28 @@
 
 ---
 
-## Estado a 2026-08-15
+## Estado a 2026-08-15 — **CERRADO**
+
+> **Fase 4 cerrada por Doc el 2026-08-15.** Lo que sigue queda como referencia:
+> son trampas pagadas, no trabajo pendiente.
+>
+> **Salvo una cosa, y conviene que esté escrita en vez de descubrirse.** En el
+> momento del cierre, comprobado contra producción:
+>
+> | | Estado real |
+> |---|---|
+> | Capa 2 (Cloud Monitoring) | ✅ **Operativa.** Canal `Alertas PMO`, tipo nativo `google_chat`, apuntando a un espacio real. El `webhook_tokenauth` con la URL de ejemplo ya no está — Gravity lo rehízo bien |
+> | Capa 1 (`AlertService`) | ⚠️ **Desplegada pero muda.** La revisión `pmo-api-00046-64q` **no tiene `ALERT_WEBHOOK_URL`**: el servicio arranca, registra el aviso de que no puede enviar, y no manda nada |
+>
+> Falta atar el IAM del secreto (`roles/secretmanager.secretAccessor` para la
+> cuenta de Cloud Run) y poner `vars.ALERT_WEBHOOK_SECRET`; el siguiente
+> despliegue lo recoge solo. Hasta entonces **la aplicación sigue sin poder
+> pedir ayuda**, que es justo lo que la Fase 4 venía a resolver.
+>
+> Y queda una prueba sin hacer: **nadie ha visto sonar el canal todavía**. Un
+> alertador que no se ha visto disparar es una suposición — la forma barata de
+> comprobarlo es provocar un «0 de N» real forzando el cron con la cuenta de
+> servicio mal puesta.
 
 ### 🔴 `users.watch` de Gmail: hay que llamar a `stop` ANTES
 
