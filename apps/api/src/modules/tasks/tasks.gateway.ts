@@ -10,6 +10,7 @@ import { Task, TaskStatus } from '@prisma/client';
 import { SessionService } from '../auth/session.service';
 import cookie from 'cookie';
 import { SESSION_COOKIE } from '../auth/auth.constants';
+import { describirError, stackDe } from '../../common/observability/describir-error';
 
 /** Nombres de los eventos que emite el backend. Se importan desde los tests. */
 export const TASK_EVENTS = {
@@ -112,7 +113,7 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.join(payload.sub);
       this.logger.log(`Cliente conectado y unido a sala ${payload.sub} (client.id: ${client.id})`);
     } catch (error) {
-      this.logger.error(`Conexión rechazada por sesión inválida (client.id: ${client.id})`, error);
+      this.logger.error(`Conexión rechazada por sesión inválida (client.id: ${client.id}): ${describirError(error)}`, stackDe(error));
       client.disconnect();
     }
   }
@@ -255,7 +256,7 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
         room?.emit(event, payload);
       }
     } catch (error) {
-      this.logger.error(`No se pudo emitir ${event}`, error);
+      this.logger.error(`No se pudo emitir ${event}: ${describirError(error)}`, stackDe(error));
     }
   }
 

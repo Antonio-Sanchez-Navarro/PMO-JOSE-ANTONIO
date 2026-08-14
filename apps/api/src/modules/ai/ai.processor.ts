@@ -10,6 +10,7 @@ import {
 } from '../../common/anthropic/anthropic-client';
 import type { ClassifyEmailJob, ClassifyEmailResult } from './classify-email.job';
 import { AJUSTE_WORKER } from '../../common/bullmq/polling.config';
+import { describirError, stackDe } from '../../common/observability/describir-error';
 
 /**
  * Cuántas clasificaciones van a la vez y cuántas por minuto.
@@ -102,7 +103,7 @@ export class AiProcessor extends WorkerHost {
         return this.frenarLaCola(emailId, error);
       }
 
-      this.logger.error(`Falló la clasificación del email ${emailId}`, error);
+      this.logger.error(`Falló la clasificación del email ${emailId}: ${describirError(error)}`, stackDe(error));
       throw error; // Para que BullMQ lo reintente si hay redelivery configurado
     }
   }

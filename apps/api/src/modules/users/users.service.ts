@@ -3,6 +3,7 @@ import type { User } from "@prisma/client";
 import type { Credentials } from "google-auth-library";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { CryptoService } from "../../common/crypto/crypto.service";
+import { describirError, stackDe } from '../../common/observability/describir-error';
 
 export interface GoogleProfile {
   email: string;
@@ -56,7 +57,7 @@ export class UsersService {
       return this.crypto.decryptJson<Credentials>(user.googleTokens);
     } catch (err) {
       // Suele indicar que TOKEN_ENCRYPTION_KEY cambió: el usuario debe volver a autorizar.
-      this.logger.error(`No se pudieron descifrar los tokens de ${userId}`, err as Error);
+      this.logger.error(`No se pudieron descifrar los tokens de ${userId}: ${describirError(err)}`, stackDe(err));
       return null;
     }
   }

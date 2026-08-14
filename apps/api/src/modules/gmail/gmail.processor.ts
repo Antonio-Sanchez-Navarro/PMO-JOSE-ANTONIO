@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import { GmailService } from './gmail.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AJUSTE_WORKER } from '../../common/bullmq/polling.config';
+import { describirError, stackDe } from '../../common/observability/describir-error';
 
 interface SyncHistoryJob {
   emailAddress?: string;
@@ -73,7 +74,7 @@ export class GmailProcessor extends WorkerHost {
       );
       return result;
     } catch (error) {
-      this.logger.error(`Falló la sincronización para el usuario ${user.id}`, error);
+      this.logger.error(`Falló la sincronización para el usuario ${user.id}: ${describirError(error)}`, stackDe(error));
       throw error; // Lanzar error para que BullMQ lo reintente si aplica
     }
   }

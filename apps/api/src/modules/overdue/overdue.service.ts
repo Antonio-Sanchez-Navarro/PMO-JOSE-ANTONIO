@@ -3,6 +3,7 @@ import { Prisma, Task, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { adjustPriority, HIGH_WINDOW_HOURS } from '../ai/priority.rules';
 import { TasksGateway } from '../tasks/tasks.gateway';
+import { describirError, stackDe } from '../../common/observability/describir-error';
 
 /**
  * Estados desde los que una tarea puede caer a `OVERDUE`.
@@ -102,7 +103,7 @@ export class OverdueService {
           this.gateway.emitTaskUpdated(task);
         }
       } catch (error) {
-        this.logger.error(`Falló el barrido del usuario ${userId}`, error);
+        this.logger.error(`Falló el barrido del usuario ${userId}: ${describirError(error)}`, stackDe(error));
       }
     }
 

@@ -5,7 +5,20 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { AuthService } from '../auth/auth.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { describirError, stackDe } from '../../common/observability/describir-error';
 import type { ClassifyEmailJob } from '../ai/classify-email.job';
+
+/**
+ * Qué pasó al intentar poner el `watch` de un buzón.
+ *
+ * Devuelve el motivo y no solo un booleano porque quien llama —el cron que
+ * recorre a todos los usuarios— tiene que poder **decirlo en su aviso**. Un
+ * «renovados: 0 de 1» sin causa no se puede accionar.
+ */
+export interface ResultadoDeWatch {
+  ok: boolean;
+  motivo?: string;
+}
 
 export interface EmailSnippet {
   id: string;
@@ -102,7 +115,7 @@ export class GmailService {
           });
           return this.toEmailSnippet(detail.data);
         } catch (err) {
-          this.logger.warn(`Error obteniendo detalle del mensaje ${id}`, err);
+          this.logger.warn(`Error obteniendo detalle del mensaje ${id}: ${describirError(err)}`, stackDe(err));
           return null;
         }
       }),
@@ -341,7 +354,7 @@ export class GmailService {
 
         processedCount++;
       } catch (err) {
-        this.logger.warn(`Error guardando correo ${email.id} en BD para usuario ${userId}`, err);
+        this.logger.warn(`Error guardando correo ${email.id} en BD para usuario ${userId}: ${describirError(err)}`, stackDe(err));
       }
     }
 
@@ -362,37 +375,64 @@ export class GmailService {
    * `GMAIL_PUBSUB_TOPIC` debe llevar el nombre completo del tema
    * (`projects/<proyecto>/topics/<tema>`): Gmail rechaza el nombre corto.
    */
-  async watchInbox(userId: string): Promise<boolean> {
+  async watchInbox(userId: string): Promise<ResultadoDeWatch> {
     const topicName = this.config.get<string>('GMAIL_PUBSUB_TOPIC');
     if (!topicName) {
-      this.logger.warn('GMAIL_PUBSUB_TOPIC no está configurado. Omitiendo watchInbox.');
-      return false;
+      const motivo = 'GMAIL_PUBSUB_TOPIC no está configurado';
+      this.logger.warn(`${motivo}. Omitiendo watchInbox.`);
+      return { ok: false, motivo };
     }
 
     const gmail = await this.getGmailClient(userId);
 
+    // ⚠️ **Solo la llamada a Gmail va dentro del `try`.**
+    //
+    // Hasta el 2026-08-14 el `findUnique` de más abajo estaba aquí dentro, y
+    // eso hacía imposible distinguir dos fallos muy distintos: que Gmail
+    // rechazara el `watch` (la ingesta no queda observada) o que tropezara la
+    // base de datos **después** de que Gmail lo aceptara (el watch está puesto
+    // y solo falló guardar el marcador). El segundo caso se contaba como watch
+    // fallido, y con el registro roto tampoco se podía leer cuál de los dos
+    // era. Un tropiezo de Postgres no puede invalidar un watch que Gmail ya
+    // aceptó.
+    let historyIdInicial: string | null | undefined;
     try {
       const res = await gmail.users.watch({
         userId: 'me',
         requestBody: { labelIds: ['INBOX'], topicName },
       });
+      historyIdInicial = res.data.historyId;
+    } catch (err) {
+      const motivo = describirError(err);
+      // El motivo va **en el mensaje**: la segunda ranura de `logger.error` es
+      // el stack y espera una cadena; pasarle el error ahí lo tira al suelo.
+      // Ver `common/observability/describir-error.ts`.
+      this.logger.error(`Gmail rechazó el watch de ${userId}: ${motivo}`, stackDe(err));
+      return { ok: false, motivo };
+    }
 
+    // A partir de aquí el watch **ya está puesto en Gmail**. Lo que queda es
+    // guardar el punto de partida del historial, y si eso falla el watch sigue
+    // siendo bueno: se avisa y se devuelve `ok`.
+    try {
       // `watch` devuelve el historyId vigente: si es la primera vez, sirve de
       // punto de partida para que la sync incremental no empiece desde cero.
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { gmailHistoryId: true },
       });
-      if (!user?.gmailHistoryId && res.data.historyId) {
-        await this.saveHistoryId(userId, res.data.historyId);
+      if (!user?.gmailHistoryId && historyIdInicial) {
+        await this.saveHistoryId(userId, historyIdInicial);
       }
-
-      this.logger.log(`Bandeja de entrada observada (watch) para el usuario ${userId}`);
-      return true;
     } catch (err) {
-      this.logger.error(`Error configurando watchInbox para ${userId}`, err);
-      return false;
+      this.logger.warn(
+        `Watch puesto para ${userId}, pero no se pudo guardar el historyId inicial: ${describirError(err)}`,
+        stackDe(err),
+      );
     }
+
+    this.logger.log(`Bandeja de entrada observada (watch) para el usuario ${userId}`);
+    return { ok: true };
   }
 
   /**
@@ -417,13 +457,23 @@ export class GmailService {
     });
 
     let renovados = 0;
+    const fallos: string[] = [];
+
     for (const usuario of usuarios) {
-      if (await this.watchInbox(usuario.id)) renovados++;
+      const resultado = await this.watchInbox(usuario.id);
+      if (resultado.ok) renovados++;
+      else fallos.push(`${usuario.id}: ${resultado.motivo ?? 'motivo desconocido'}`);
     }
 
     if (renovados < usuarios.length) {
+      // ⚠️ **El aviso lleva el motivo, y esa es la mitad del arreglo.**
+      // «0 de 1» sin causa es lo que dejó pasar dos días de ingesta condenada:
+      // el contador decía que algo iba mal y no había forma de saber qué, así
+      // que no se podía actuar sobre ello. Un contador sin causa no es una
+      // alerta, es una intriga.
       this.logger.warn(
-        `Watch de Gmail renovado solo para ${renovados} de ${usuarios.length} usuario(s): ` +
+        `Watch de Gmail renovado solo para ${renovados} de ${usuarios.length} usuario(s) ` +
+          `[${fallos.join(' | ')}]: ` +
           `los demás dejarán de recibir correo cuando caduque el suyo`,
       );
     }

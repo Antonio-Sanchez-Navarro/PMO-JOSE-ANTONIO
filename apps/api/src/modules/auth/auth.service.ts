@@ -4,6 +4,7 @@ import { Credentials, OAuth2Client } from "google-auth-library";
 import { CryptoService } from "../../common/crypto/crypto.service";
 import { UsersService } from "../users/users.service";
 import { GOOGLE_SCOPES } from "./auth.constants";
+import { describirError, stackDe } from '../../common/observability/describir-error';
 
 export interface AuthenticatedUser {
   id: string;
@@ -115,7 +116,7 @@ export class AuthService {
       this.users
         .saveGoogleCredentials(userId, merged)
         .catch((err) =>
-          this.logger.error(`No se pudieron guardar los tokens renovados de ${userId}`, err),
+          this.logger.error(`No se pudieron guardar los tokens renovados de ${userId}: ${describirError(err)}`, stackDe(err)),
         );
     });
 

@@ -15,6 +15,7 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { GmailService, EmailSnippet } from './gmail.service';
+import { describirError, stackDe } from '../../common/observability/describir-error';
 import { AuthGuard } from '../auth/auth.guard';
 import { PubSubAuthGuard } from './pubsub-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -141,7 +142,19 @@ export class GmailController {
     //
     // Si Redis falla, se deja pasar: perder un correo es peor que procesarlo
     // dos veces, y el duplicado ya se sabe inofensivo.
+    //
+    // ⚠️ **Y si el encolado falla, la clave se borra** (ver el `catch` de más
+    // abajo). Esto no es cosmético: la primera versión de esta deduplicación
+    // marcaba el aviso como visto **antes** de encolarlo, y en producción había
+    // 27 fallos de encolado en dos días que se recuperaban solos precisamente
+    // porque la segunda entrega de Google volvía a intentarlo 4 ms después.
+    // Reservar la clave por adelantado convertía esa red de seguridad en un
+    // silencio de diez minutos: el primer aviso fallaba al encolar y el
+    // segundo —el que salvaba el correo— se descartaba por duplicado.
+    // Deduplicar lo hecho es correcto; deduplicar lo intentado pierde correos.
     const claveDeAviso = `gmail:webhook:${payload.emailAddress}:${payload.historyId ?? 'sin-history'}`;
+    let reservada = false;
+
     try {
       // El cliente real es ioredis —BullMQ lo usa por dentro— y acepta el `SET`
       // completo, pero la interfaz `IRedisClient` que BullMQ declara solo
@@ -171,9 +184,12 @@ export class GmailController {
         );
         return 'OK';
       }
+
+      reservada = true;
     } catch (err) {
       this.logger.warn(
-        `No se pudo comprobar si el aviso estaba duplicado; se procesa igualmente: ${(err as Error).message}`,
+        `No se pudo comprobar si el aviso estaba duplicado; se procesa igualmente: ${describirError(err)}`,
+        stackDe(err),
       );
     }
 
@@ -199,10 +215,33 @@ export class GmailController {
       // Ya no dice «error parseando»: aquí el payload está parseado y lo que
       // pudo fallar es Redis. Confundir las dos cosas costó el diagnóstico de
       // hoy, porque el mensaje culpaba al remitente de un fallo de la cola.
+      //
+      // Y el motivo va en el mensaje: durante dos días este error se registró
+      // 27 veces **sin decir cuál era**, porque el objeto iba en la ranura del
+      // stack y el formateador lo tiraba. «¿Redis caído?» era una pregunta,
+      // no un diagnóstico.
       this.logger.error(
-        `No se pudo encolar la sincronización de ${payload.emailAddress} (¿Redis caído?)`,
-        err,
+        `No se pudo encolar la sincronización de ${payload.emailAddress}: ${describirError(err)}`,
+        stackDe(err),
       );
+
+      // Se libera la reserva para que la **segunda entrega de Google vuelva a
+      // intentarlo**. Esa entrega duplicada lleva dos días siendo, sin que
+      // nadie lo supiera, la red de seguridad de este fallo: el reintento
+      // llega ~4 ms después y sí encola. Dejar la clave puesta la anularía
+      // durante diez minutos y el correo se perdería en silencio.
+      if (reservada) {
+        try {
+          const redis = await this.gmailQueue.client;
+          await redis.del(claveDeAviso);
+        } catch (errBorrado) {
+          this.logger.warn(
+            `No se pudo liberar la clave de deduplicación ${claveDeAviso}; ` +
+              `el reintento de Google se descartará como duplicado: ${describirError(errBorrado)}`,
+            stackDe(errBorrado),
+          );
+        }
+      }
     }
 
     return 'OK';
