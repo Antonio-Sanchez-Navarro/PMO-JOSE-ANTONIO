@@ -92,21 +92,28 @@ Las dos opciones que parecen obvias son trampas:
 ⚠️ Los jobs que agotan reintentos **no se reprocesan al restaurar**: quedan en
 `dead-letter` y hay que reencolarlos a mano si importan.
 
-### 🔴 El pipeline despliega desde commits de documentación
+### 🔴 Un `git commit -a` de un agente puede desplegar código de otro
 
 `ce5b7de`, titulado «Update GRAVITY_MEMORY.md», arrastró un
 `all-exceptions.filter.ts` **a medio escribir** de otro agente, lo empujó a
-`master` y **el `workflow_run` lo desplegó a Cloud Run**. Salió verde por
-casualidad de segundos: treinta antes habría publicado un filtro con `async
-catch` y sin los `await`.
+`master` y de ahí salió a Cloud Run. Salió verde por casualidad de segundos:
+treinta antes habría publicado un filtro con `async catch` y sin los `await`.
 
-Dos agujeros distintos, y los dos siguen abiertos:
+⚠️ **Lo primero que escribí aquí era falso y conviene que quede dicho**: culpé
+al pipeline de desplegar desde commits de documentación. No es cierto. El
+`paths-ignore` de `ci.yml` existe desde el 2026-08-07 y funciona — `40b65c0`,
+solo bitácora, no disparó nada. `ce5b7de` desplegó **porque llevaba un `.ts`
+dentro**, y el filtro solo se salta si encajan *todos* los archivos del push.
+El pipeline hizo exactamente lo que debía.
 
-1. Un `git commit -a` de un agente puede llevarse código de otro. La regla de
-   rutas exactas existe desde el 08-13 y no la cumplen todos.
-2. **Un cambio de `.md` dispara un despliegue de producción.** Se cierra con
-   `paths-ignore: ['**.md']` en el `on: push` del CI; el encadenado por
-   `workflow_run` se corta solo si el CI no arranca.
+Así que el agujero es uno solo, y no está en el CI: **la disciplina de
+`git add` de los agentes**. La regla de rutas exactas existe desde el 08-13 y no
+la cumplen todos. No tiene equivalente en Git: solo la regla escrita y, si se
+quiere red de verdad, un hook `pre-commit` que rechace un índice con rutas fuera
+del dominio del agente que commitea.
+
+Moraleja aparte, y más cara que la anterior: **un hallazgo sin verificar es una
+suposición aunque suene a hallazgo**. Bastaba abrir `ci.yml`.
 
 ---
 
