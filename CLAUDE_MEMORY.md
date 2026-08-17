@@ -9,6 +9,107 @@
 
 ---
 
+## Estado a 2026-08-17 — **Capa 1 PROBADA en fuego real**
+
+> Lo que el 08-15 quedó como suposición ya no lo es. **La aplicación pidió
+> ayuda sola y el mensaje llegó a Google Chat**, sin intervención humana en
+> ningún punto de la cadena.
+>
+> ```
+> Alertas API Capa 1 · App · 2026-08-17 22:53 UTC
+> Clasificación perdida: un job agotó sus reintentos
+> cola=classify-email job=105 · 404 {"type":"not_found_error",
+> "message":"model: modelo-inexistente-prueba-e2e", "request_id":"req_011Ce99B…"}
+> ```
+>
+> Dos cosas se validaron de una vez y solo una estaba planeada:
+>
+> 1. **La cadena completa**: fallo en producción → `AlertService` → `fetch` →
+>    webhook → Chat.
+> 2. **El freno de 15 minutos**, gratis. Saltaron dos alertas con 74 s de
+>    diferencia (jobs 105 y 106, misma clave `dlq-classify-email`) y **en Chat
+>    solo está la primera**. La segunda se frenó, que es exactamente el diseño.
+
+### 🔴 BullMQ rechaza el `jobId` por su FORMA, no por su tipo
+
+Tuvo toda la ingesta de correo caída y **ningún correo entraba en la cola**.
+`job.js:1068`:
+
+```js
+if (`${parseInt(this.opts.jobId, 10)}` === this.opts.jobId) {
+    throw new Error('Custom Id cannot be integers');
+}
+```
+
+El `messageId` de Pub/Sub **ya es un `string`** —así está tipado— pero de
+dígitos (`"15481022266393333"`), así que encajaba en esa comparación.
+**`String(messageId)` no arregla nada**: sigue siendo dígitos. Hay que cambiar
+la forma, no el tipo: `gmail-sync-${messageId}`, con guiones porque BullMQ solo
+admite `:` en jobId de tres partes.
+
+⚠️ El helper del spec usaba `messageId = 'msg-1'`, que no es un entero, y por
+eso **las pruebas pasaban mientras producción rechazaba todo**. Un dato de
+prueba que no se parece al real no prueba el caso real.
+
+### 🔴 `void fetch(...)` en Cloud Run se congela a mitad de vuelo
+
+Cloud Run **estrangula la CPU al cerrar la petición** salvo que se ponga
+`run.googleapis.com/cpu-throttling=false`. Una promesa lanzada y olvidada puede
+quedarse helada mientras su `AbortSignal.timeout` sigue corriendo, y la alerta
+se pierde en silencio — el fallo que esta capa existe para evitar.
+
+Los cinco puntos de llamada esperan ahora, pero **en dos de ellos la espera no
+puede ir donde estaba el `void`**:
+
+| Sitio | Dónde va el `await` | Por qué |
+|---|---|---|
+| `all-exceptions.filter` | tras `super.catch` | esperar antes suma el viaje al webhook al tiempo de un 500 |
+| `gmail.controller` | tras soltar la clave de Redis | esperar antes retiene la reserva 5 s y la segunda entrega de Google (~4 ms) se descarta como duplicada: **la alerta costaría el correo del que avisa** |
+
+⚠️ `cpu-throttling=false` vive **solo en la infraestructura**, no en
+`deploy.yml`. Sobrevive a los despliegues porque Cloud Run conserva las
+anotaciones que no se mencionan, pero nadie que lea el repositorio sabe que
+existe y un despliegue con reemplazo completo se lo lleva sin avisar.
+
+### Cómo provocar una alerta de Capa 1 sin romper nada importante
+
+Las dos opciones que parecen obvias son trampas:
+
+- ❌ **Vaciar `GMAIL_PUBSUB_TOPIC`.** `watchInbox` llama a `users.stop()`
+  **antes** e incondicionalmente. El sabotaje apagaría el watch vigente y
+  fallaría al reponerlo: la ingesta se queda ciega **en el acto**, no dentro de
+  siete días.
+- ❌ **Quitar `ANTHROPIC_API_KEY`.** `ai.service.ts:167` lanza en el
+  constructor si falta, así que el contenedor no arranca, Cloud Run no le
+  enruta tráfico y el sabotaje no llega a ocurrir. Además gcloud no deja
+  cambiar la variable de secreto a literal en un solo paso.
+- ✅ **Sabotear `CLAUDE_MODEL_CLASSIFY`** con un modelo inexistente. Un comando,
+  variable en claro, ningún secreto tocado, el copiloto sigue vivo, y el 404 no
+  lo cubre `convieneEsperar` (solo 429, 529 y ≥500), así que lanza → reintentos
+  → DLQ → alerta. Falla además **más rápido**, porque el SDK no reintenta los
+  4xx irrecuperables. Restaurar: `CLAUDE_MODEL_CLASSIFY=claude-sonnet-5`.
+
+⚠️ Los jobs que agotan reintentos **no se reprocesan al restaurar**: quedan en
+`dead-letter` y hay que reencolarlos a mano si importan.
+
+### 🔴 El pipeline despliega desde commits de documentación
+
+`ce5b7de`, titulado «Update GRAVITY_MEMORY.md», arrastró un
+`all-exceptions.filter.ts` **a medio escribir** de otro agente, lo empujó a
+`master` y **el `workflow_run` lo desplegó a Cloud Run**. Salió verde por
+casualidad de segundos: treinta antes habría publicado un filtro con `async
+catch` y sin los `await`.
+
+Dos agujeros distintos, y los dos siguen abiertos:
+
+1. Un `git commit -a` de un agente puede llevarse código de otro. La regla de
+   rutas exactas existe desde el 08-13 y no la cumplen todos.
+2. **Un cambio de `.md` dispara un despliegue de producción.** Se cierra con
+   `paths-ignore: ['**.md']` en el `on: push` del CI; el encadenado por
+   `workflow_run` se corta solo si el CI no arranca.
+
+---
+
 ## Estado a 2026-08-15 — **CERRADO**
 
 > **Fase 4 cerrada por Doc el 2026-08-15.** Lo que sigue queda como referencia:
@@ -31,6 +132,10 @@
 > alertador que no se ha visto disparar es una suposición — la forma barata de
 > comprobarlo es provocar un «0 de N» real forzando el cron con la cuenta de
 > servicio mal puesta.
+>
+> ⚠️ **Todo este bloque está resuelto desde el 2026-08-17**: ver el estado de
+> arriba. El secreto llegó (versión 2), el canal sonó solo, y el método de
+> prueba que se propone aquí resultó ser **el peligroso** — apaga la ingesta.
 
 ### 🔴 `users.watch` de Gmail: hay que llamar a `stop` ANTES
 
