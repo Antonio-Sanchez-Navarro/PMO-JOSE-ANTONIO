@@ -36,14 +36,14 @@ describe('GmailController · webhook de Gmail', () => {
   }
 
   function crear(
-    opciones: { set?: jest.Mock; del?: jest.Mock; add?: jest.Mock } = {},
+    opciones: { set?: jest.Mock; del?: jest.Mock; add?: jest.Mock; avisar?: jest.Mock } = {},
   ) {
     // `null` = la clave ya existía (duplicado). `'OK'` = la reservamos nosotros.
     const set = opciones.set ?? jest.fn().mockResolvedValue('OK');
     const del = opciones.del ?? jest.fn().mockResolvedValue(1);
     const add = opciones.add ?? jest.fn().mockResolvedValue({ id: 'job-1' });
 
-    const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
+    const alertas = { avisar: opciones.avisar ?? jest.fn().mockResolvedValue(undefined) };
     const queue = { client: Promise.resolve({ set, del }), add };
     const controller = new GmailController(
       {} as unknown as GmailService,
@@ -117,6 +117,39 @@ describe('GmailController · webhook de Gmail', () => {
     // Sin esto, el reintento de Google que llega 4 ms después se descarta como
     // duplicado y el correo se pierde en silencio durante diez minutos.
     expect(del).toHaveBeenCalledWith(CLAVE);
+  });
+
+  it('suelta la clave ANTES de esperar al aviso, y no termina hasta que el aviso termina', async () => {
+    // Dos invariantes de una vez, y las dos se pierden con facilidad:
+    //
+    // 1. Sin `await`, el fetch del webhook queda sin dueño y Cloud Run puede
+    //    congelarlo al cerrar la petición: la alerta se pierde en silencio.
+    // 2. Pero si se espera **antes** de soltar la clave de deduplicación, la
+    //    reserva se retiene hasta 5 s y la segunda entrega de Google —que llega
+    //    a los ~4 ms y es la que salva el correo— se descarta como duplicada.
+    //
+    // Es decir: hay que esperar, y hay que esperar en el sitio correcto.
+    const add = jest.fn().mockRejectedValue(new Error('Redis caído'));
+    let terminarAviso!: () => void;
+    const avisar = jest.fn().mockImplementation(
+      () => new Promise<void>((resolver) => { terminarAviso = resolver; }),
+    );
+    const { controller, del } = crear({ add, avisar });
+
+    let terminado = false;
+    const enCurso = controller
+      .handleGmailWebhook(avisoDeGmail())
+      .then(() => { terminado = true; });
+
+    // Vacía la cola de microtareas: el handler llega hasta el `await` del aviso.
+    await new Promise((resolver) => setImmediate(resolver));
+
+    expect(del).toHaveBeenCalledWith(CLAVE);   // la clave ya está libre…
+    expect(terminado).toBe(false);             // …pero el handler sigue esperando
+
+    terminarAviso();
+    await enCurso;
+    expect(terminado).toBe(true);
   });
 
   it('el segundo aviso SÍ encola cuando el primero falló al encolar', async () => {

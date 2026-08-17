@@ -508,7 +508,7 @@ export class GmailService {
       // **La alerta que faltaba.** Este aviso estuvo dos días en el log sin que
       // nadie lo viera: el cron corre a las 02:30 y nadie lee logs de
       // madrugada. Mientras tanto la ingesta iba camino de apagarse sola.
-      void this.alertas.avisar(
+      await this.alertas.avisar(
         `Watch de Gmail sin renovar: ${renovados} de ${usuarios.length}`,
         `La ingesta de correo se apagará cuando caduque el watch vigente (7 días). ${fallos.join(' | ')}`,
         'gmail-watch-sin-renovar',

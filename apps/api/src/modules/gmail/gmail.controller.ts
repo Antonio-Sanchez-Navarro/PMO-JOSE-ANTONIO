@@ -244,7 +244,13 @@ export class GmailController {
       // segunda entrega de Google, así que el correo llegaba y el fallo no
       // dolía. Un fallo que no duele es el que sigue ahí el día que la red de
       // seguridad no está.
-      void this.alertas.avisar(
+      //
+      // ⚠️ **La promesa se guarda y se espera al final, después de soltar la
+      // clave.** Esperar aquí retendría la reserva hasta 5 s mientras se habla
+      // con el webhook, y la segunda entrega de Google —que llega a los ~4 ms y
+      // es la que salva el correo— se descartaría como duplicada. La alerta no
+      // puede costar el correo del que avisa.
+      const alerta = this.alertas.avisar(
         'No se pudo encolar un correo entrante',
         err,
         'gmail-encolado-fallido',
@@ -267,6 +273,11 @@ export class GmailController {
           );
         }
       }
+
+      // Ya con la clave liberada, ahora sí se espera al aviso: sin `await` el
+      // `fetch` queda sin dueño y Cloud Run puede congelarlo al cerrar la
+      // petición, con el plazo de 5 s corriendo. Ver la nota de arriba.
+      await alerta;
     }
 
     return 'OK';

@@ -34,7 +34,7 @@ export class GmailSyncDLQListener extends QueueEventsHost {
   async onFailed(args: { jobId: string; failedReason: string; prev?: string }) {
     this.logger.warn(`Job ${args.jobId} en gmail-sync falló: ${args.failedReason}`);
 
-    void this.alertas.avisar(
+    await this.alertas.avisar(
       'Correo entrante perdido: un job agotó sus reintentos',
       `cola=gmail-sync job=${args.jobId} · ${args.failedReason}`,
       'dlq-gmail-sync',
@@ -63,7 +63,7 @@ export class ClassifyEmailDLQListener extends QueueEventsHost {
   async onFailed(args: { jobId: string; failedReason: string; prev?: string }) {
     this.logger.warn(`Job ${args.jobId} en classify-email falló: ${args.failedReason}`);
 
-    void this.alertas.avisar(
+    await this.alertas.avisar(
       'Clasificación perdida: un job agotó sus reintentos',
       `cola=classify-email job=${args.jobId} · ${args.failedReason}`,
       'dlq-classify-email',
