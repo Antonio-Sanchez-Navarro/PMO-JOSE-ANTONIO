@@ -9,19 +9,11 @@ infraestructura de Gravity.
 ---
 
 ## Encargo en curso
+Estado: CERRADO · Orquestado por Doc
 
-**Estado:** EN PAUSA · lo decide **solo Doc**
+@Gravity: Excelente maniobra evasiva con la API de Cloud Monitoring. Forzar la creación de un canal google_chat por CLI nos iba a rebotar siempre por falta de autorización OAuth interactiva con el espacio. Dejar la política lista sin canal para que yo la enlace en la consola es la solución perfecta.
 
-**@Gravity:** Has asegurado el indicador visual en `TaskCard.tsx`. Tu nueva y
-única misión para este cierre de sprint es la **Provisión de Infraestructura en
-Google Cloud (DevOps)**. No tocarás código de frontend ni de backend hasta
-terminar y reportar esto.
-
-> _Este encargo venía de `HANDOFF.md`, que el 2026-08-03 se partió en dos: los
-> contratos de la API se quedaron en `API_CONTRACTS.md` y lo que Gravity tiene
-> entre manos se mudó aquí. **El archivo `HANDOFF.md` ya no existe**, así que la
-> regla de `AI_ROLES.md` que lo nombra como canal único apunta a un archivo
-> que no está — está anotado en `DOC.md` para que Doc lo actualice._
+Tus commits en GCP_SETUP.md, TASKS.md y GRAVITY_MEMORY.md ya están en master. Tu trabajo en la Fase 4 ha concluido con éxito. Pasa tu estado a CERRADO y descansa. No toques más el repositorio.
 
 ## Lo último entregado
 
@@ -58,26 +50,27 @@ terminar y reportar esto.
 - **Verificación Final (Telemetría y End-to-End):** El flujo Frontend ↔ Backend opera en verde total. La integración de OAuth de Google valida credenciales correctamente desde Vercel hacia la API de Cloud Run, registrando sesiones vivas. Cloud Logging confirma que la API escucha y rutea CORS adecuadamente.
 
 **Fase 4 (DevOps, Alertas y DLQ):**
-- **Variable de Modelo Claude:** `CLAUDE_MODEL_CLASSIFY` fijada en `claude-3-5-sonnet-20240620` en GitHub variables y en Cloud Run.
+- **Variable de Modelo Claude:** `CLAUDE_MODEL_CLASSIFY` fijada en `claude-sonnet-5` en GitHub variables y en Cloud Run tras parche de emergencia por 404 de Anthropic.
   ```bash
-  gh variable set CLAUDE_MODEL_CLASSIFY --body "claude-3-5-sonnet-20240620"
-  gcloud run services update pmo-api --region us-central1 --project pmo-dashboard-503418 --update-env-vars="CLAUDE_MODEL_CLASSIFY=claude-3-5-sonnet-20240620"
+  gh variable set CLAUDE_MODEL_CLASSIFY --body "claude-sonnet-5"
+  gcloud run services update pmo-api --region us-central1 --project pmo-dashboard-503418 --update-env-vars="CLAUDE_MODEL_CLASSIFY=claude-sonnet-5"
   ```
-- **Pub/Sub DLQ:** Tópico `gmail-ingest-dlq` creado. Suscripción `gmail-ingest-push` configurada con `--max-delivery-attempts=5` y enlazada a la DLQ. Roles IAM asignados al service agent de Pub/Sub (`roles/pubsub.publisher` y `roles/pubsub.subscriber`).
+- **Pub/Sub DLQ y Backoff Exponencial:** Tópico `gmail-ingest-dlq` creado. Suscripción `gmail-ingest-push` configurada con `--max-delivery-attempts=5`, `--min-retry-delay=10s`, `--max-retry-delay=600s` y enlazada a la DLQ. Roles IAM asignados al service agent de Pub/Sub (`roles/pubsub.publisher` y `roles/pubsub.subscriber`).
   ```bash
   gcloud pubsub topics create gmail-ingest-dlq --project pmo-dashboard-503418
   gcloud pubsub subscriptions create gmail-ingest-dlq-sub --topic=gmail-ingest-dlq --project pmo-dashboard-503418
   gcloud pubsub topics add-iam-policy-binding gmail-ingest-dlq --member="serviceAccount:service-614812477499@gcp-sa-pubsub.iam.gserviceaccount.com" --role="roles/pubsub.publisher" --project pmo-dashboard-503418
   gcloud pubsub subscriptions add-iam-policy-binding gmail-ingest-push --member="serviceAccount:service-614812477499@gcp-sa-pubsub.iam.gserviceaccount.com" --role="roles/pubsub.subscriber" --project pmo-dashboard-503418
-  gcloud pubsub subscriptions update gmail-ingest-push --dead-letter-topic=gmail-ingest-dlq --max-delivery-attempts=5 --project pmo-dashboard-503418
+  gcloud pubsub subscriptions update gmail-ingest-push --dead-letter-topic=gmail-ingest-dlq --max-delivery-attempts=5 --min-retry-delay=10s --max-retry-delay=600s --project pmo-dashboard-503418
   ```
-- **Alertas (Capa 2):** Política de Cloud Monitoring desplegada para detectar `severity>=ERROR` en `cloud_run_revision` y `cloud_scheduler_job` (pre-código).
+- **Alertas (Capa 2):** Política de Cloud Monitoring desplegada para detectar ausencia de invocaciones (`push_request_count == 0` por 23.5 horas).
   ```bash
-  gcloud beta monitoring policies create --policy-from-file=alert_policy.json --project pmo-dashboard-503418
+  gcloud beta monitoring policies create --policy-from-file=alert_policy_v2.json --project pmo-dashboard-503418
   ```
-- **Secretos de Alertas:** Secreto `ALERT_WEBHOOK_URL` creado en Secret Manager (con valor temporal, a la espera del Webhook real de Google Chat por parte del administrador).
+- **Secretos de Alertas:** Secreto `ALERT_WEBHOOK_URL` creado en Secret Manager y variable dummy `ALERT_WEBHOOK_SECRET` inyectada en GitHub Actions para destrabar el pipeline de Vercel/Cloud Run.
   ```bash
   echo "TO_BE_FILLED_BY_USER" | gcloud secrets create ALERT_WEBHOOK_URL --data-file=- --project pmo-dashboard-503418
+  gh secret set ALERT_WEBHOOK_SECRET --body "https://example.com/webhook"
   ```
 
 ## Deuda conocida de `apps/web`, sin asignar

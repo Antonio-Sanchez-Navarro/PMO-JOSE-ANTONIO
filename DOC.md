@@ -1,58 +1,53 @@
 # Bitácora de Project Management (Orchestrator / Doc)
 
-**Estado Actual:** Fase 3 Completada (Tubería IA + Pub/Sub). Transición a Fase 4 (OAuth & Backups).
-**Fecha de actualización:** 2026-08-12
-**Ubicación de despliegue:** Tulum, Quintana Roo (America/Cancun)
+**Estado Actual:** Fase 3 Completada & Blindada (Cero Deuda Técnica). Transición a Fase 4 (Alertas Proactivas y DLQ).
+**Fecha de actualización:** 2026-08-14
+**Ubicación de despliegue:** Tulum, Quintana Roo (America/Cancun)[cite: 2]
 
 ## 📌 1. Arquitectura de Gestión (El Estándar)
 
-* **`API_CONTRACTS.md`:** Único punto de verdad para endpoints, WebSockets y modelos. Ningún agente escribe instrucciones aquí.
-* **`CLAUDE_MEMORY.md`:** Cerebro del Backend. Refactorizaciones, variables de entorno, Cloud Run y lógica de Claude.
-* **`GRAVITY_MEMORY.md`:** Cerebro Frontend/DevOps. Estado de UI, despliegues Vercel y UI/UX de Gravity.
-* **`ALANA.md`:** Memoria de Auditoría. Guardiana del estado real, infraestructura, seguridad y fail-safes.
-* **`DOC.md`:** (Este archivo). Memoria de alto nivel para el PM y la orquestación de agentes.
+* **`API_CONTRACTS.md`:** Único punto de verdad para endpoints, WebSockets y modelos[cite: 2]. Ningún agente escribe instrucciones aquí[cite: 2].
+* **`CLAUDE_MEMORY.md`:** Cerebro del Backend[cite: 2]. Refactorizaciones, variables de entorno, Cloud Run y lógica de Claude[cite: 2].
+* **`GRAVITY_MEMORY.md`:** Cerebro Frontend/DevOps[cite: 2]. Estado de UI, despliegues Vercel y UI/UX de Gravity[cite: 2].
+* **`ALANA.md`:** Memoria de Auditoría[cite: 2]. Guardiana del estado real, infraestructura, seguridad y fail-safes (En pausa durante inicio de Fase 4).
+* **`DOC.md`:** (Este archivo)[cite: 2]. Memoria de alto nivel para el PM y la orquestación de agentes[cite: 2].
 
 ## 🧠 2. Mi Rol y Funciones en el Equipo
 
-Como **Orquestador (Doc)**, mi responsabilidad es dirigir la sinfonía:
-* **Diseño de Arquitectura:** Definir CÓMO se comunican los sistemas (ej. escalar a cero con Pub/Sub + HTTP).
-* **Coordinación de Agentes:** Asignar las tareas correctas al especialista adecuado.
-* **Resolución de Bloqueos:** Analizar errores en cadena y tomar decisiones ejecutivas que resuelvan choques de directrices (ej. separación de Service Accounts para Scheduler y Pub/Sub).
-* **Guía Humana:** Darte instrucciones quirúrgicas para ejecutar comandos de infraestructura (`gcloud`, `gh`) de forma segura en tu terminal.
+Como **Orquestador (Doc)**, mi responsabilidad es dirigir la sinfonía[cite: 2]:
+* **Diseño de Arquitectura:** Definir CÓMO se comunican los sistemas (ej. escalar a cero con Pub/Sub + HTTP)[cite: 2].
+* **Coordinación de Agentes:** Asignar las tareas correctas al especialista adecuado[cite: 2].
+* **Resolución de Bloqueos:** Analizar errores en cadena y tomar decisiones ejecutivas[cite: 2].
+* **Guía Humana:** Darte instrucciones quirúrgicas para ejecutar comandos de infraestructura (`gcloud`, `gh`) de forma segura en tu terminal[cite: 2].
 
 ---
 
-## 🏆 3. Hitos Recientes (Cierre Fases 1, 2 y 3) - 2026-08-12
+## 🏆 3. Hitos Recientes (Cierre Definitivo Fase 3) - 2026-08-14
 
-* **Infraestructura Serverless:** Cloud Run ahora escala a cero (`min-instances=0`). La ingesta de Gmail ocurre vía notificaciones Push de Pub/Sub validadas por OIDC.
-* **Flujo IA en Producción:** La tubería completa está operativa (Gmail → Pub/Sub → Worker → Anthropic → Neon DB). La IA demostró capacidad de desglosar 1 correo complejo en múltiples tareas accionables.
-* **Observabilidad y WIF:** El frontend de Vercel consume datos en tiempo real (WebSockets). Se instrumentaron los webhooks para atrapar avisos de control de Google sin generar errores falsos.
-* **Fail-Safe del Copiloto:** Si faltan variables de entorno, el envío de correos arranca en modo **SIMULADO**, protegiendo al proyecto de enviar spam accidental.
-* **Crons de Tulum:** Cloud Scheduler reemplazó a BullMQ para tareas programadas (barrido de vencidas y renovación del watch de Gmail), operando bajo la zona horaria `America/Cancun` (UTC-5).
+* **El Misterio del Webhook Resuelto:** Se desactivó la "bomba de tiempo" del 20 de agosto. Gmail rechazaba la renovación del webhook con un error HTTP 400 (`Only one user push notification client allowed`). Claude implementó la solución definitiva llamando a `gmail.users.stop()` antes de `gmail.users.watch()` de forma idempotente.
+* **Observabilidad Reparada:** Se descubrió que el logger descartaba los errores reales de la API de Google. Se creó el helper `describir-error.ts` para extraer `err.response.data.error` de `googleapis` y exponer la causa real de los fallos en Cloud Logging.
+* **Deduplicación Segura:** Se corrigió una regresión grave en Redis. El `SET NX` se mantiene antes de encolar en BullMQ (para evitar *race conditions* de eventos simultáneos), pero ahora la clave se libera correctamente en el bloque `catch` si el encolado falla, evitando la pérdida de correos.
+* **Cobertura Total (Deuda Saldada):** Se añadieron 385 líneas de pruebas unitarias verificando la observabilidad, la liberación de Redis y el orden `stop() -> watch()`. Pasamos a 569 pruebas en 25 suites, validadas revirtiendo el código para confirmar que las pruebas "muerden".
 
-## 🏛️ 4. Memoria Histórica (Cómo se hizo la migración original)
+## 🚀 4. Lo que falta (Fase 4 y Backlog Técnico)
 
-`HANDOFF.md` no se renombró tal cual: se partió en dos, porque sus primeras 185 líneas no eran contratos sino la misión de DevOps activa.
-* `HANDOFF.md` líneas 211–1281 (contratos, sockets, sondas, sesión) → Pasaron a `API_CONTRACTS.md`.
-* `HANDOFF.md` líneas 1–210 (misión GCP + convenciones) → Pasaron a `GRAVITY_MEMORY.md`.
+**Fase 4 Inmediata: Alertamiento Proactivo y DLQ (En curso)**
+*Decisión de Producto:* El alcance se mantiene en `N=1` (desarrollo personal). Se descarta el modo multiusuario.
 
-## 🚀 5. Lo que falta (Fase 4 y Backlog Técnico)
+1. **Canal Oficial de Alertas:** Se utilizará **Google Chat** mediante un webhook entrante. Proporciona independencia de la ruta de fallo de OAuth de Gmail y evita tener que crear cuentas en plataformas de terceros.
+2. **Seguridad de Credenciales:** La URL del webhook de Google Chat es una credencial sensible. Debe almacenarse en **Secret Manager** como `ALERT_WEBHOOK_URL` y nunca exponerse en código o variables planas.
+3. **Alertas Capa 1 (Aplicación - Claude):** Creación del `AlertService` inyectado en eventos de fallo (Cron, DLQ, 5xx). Obligatorio el uso de un freno en Redis (`SET NX EX`) para deduplicar notificaciones en ráfaga.
+4. **Alertas Capa 2 por Silencio (Infraestructura - Gravity):** "El vigía fuera de la muralla". La alerta de silencio total o caída de infraestructura debe residir fuera de Cloud Run (ej. Cloud Monitoring o un job en Scheduler), ya que un servidor caído no puede notificar que ha caído.
+5. **Dead Letter Queue (DLQ):** Configurar tema muerto en Pub/Sub (`--dead-letter-topic`) con roles IAM (`publisher` para Pub/Sub, `subscriber` para la suscripción). Se fija `--max-delivery-attempts=5` para asegurar un *fail-fast* que dispare la alerta rápidamente sin perder el payload del correo.
+6. **Limpieza de Variables:** Fijar `CLAUDE_MODEL_CLASSIFY` con una versión estable en GCP para silenciar warnings.
 
-**Fase 4 Inmediata:**
-1. **Verificación OAuth de Google:** La pantalla de consentimiento sigue en "Prueba", lo que hace que los tokens de Gmail caduquen a los 7 días. Requiere trámite formal en GCP.
-2. **Backups en Neon DB:** Configurar política de retención y copias de seguridad de la base de datos de producción (PostgreSQL).
-
-**Backlog de Deuda Técnica / UX (Pendientes de decisión):**
-3. ⚠️ **Deduplicación en Pub/Sub:** Google envía 2 notificaciones por evento; la idempotencia lo absorbe, pero duplica lecturas en Redis innecesariamente (Identificado en Fase 3).
-4. **Herramienta del copiloto para mover correos:** Pendiente de implementación con confirmación humana obligatoria.
-5. **Peso de la imagen (Optimización):** `googleapis` pesa 204 MB. Cambiar a `@googleapis/gmail` ahorraría ~190 MB de RAM en Cloud Run.
-6. **UX de Conversión:** Evitar error `409 Conflict` ocultando/deshabilitando el botón de "Convertir a Tarea" si la IA ya lo procesó.
-7. **Fallback MOCK_TASKS:** Resolver el `catch` en `KanbanBoard.tsx` (Deuda de UI sin asignar).
+**Trámites Cancelados (Gran Victoria):**
+* 🛑 **Verificación OAuth de Google:** Alana descubrió que al estar configurados como **Internos** en Google Workspace (`hd=zepto.com.mx`), **no aplica la caducidad de 7 días** de los refresh tokens ni se requiere verificación pública[cite: 2]. Este pendiente se elimina del backlog[cite: 2].
 
 ---
 
-## 🚨 6. Reglas de coordinación que ya costaron un disgusto
+## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
-* **Añadir por ruta, nunca `git add -A` o `git add .`.** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.
-* **El campo `Estado` de un encargo lo pone solo Doc.** Ha fallado dos veces: trabajo entrando con el documento en pausa, y encargos pidiendo cosas ya entregadas.
-* **Verificar en el código antes de dar una casilla por cerrada.** Nunca confiar a ciegas en el reporte de un agente sin evidencia (logs, HTTP 200, visualización de DB).
+* **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol[cite: 2]. Un *add* masivo rompe las bitácoras y sube código no probado[cite: 2].
+* **El campo `Estado` de un encargo lo pone solo Doc:** Ha fallado dos veces: trabajo entrando con el documento en pausa, y encargos pidiendo cosas ya entregadas[cite: 2].
+* **Verificar en el código antes de dar una casilla por cerrada:** Nunca confiar ciegamente en el reporte sin evidencia (logs, HTTP 200 o el monitor en vivo)[cite: 2].

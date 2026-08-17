@@ -33,7 +33,12 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
     super();
   }
 
-  catch(exception: unknown, host: ArgumentsHost): void {
+  /**
+   * **Es `async` para poder esperar a la alerta, pero la espera va al final**,
+   * después de que `super.catch` haya respondido. Esperar antes de responder
+   * sumaría el viaje al webhook al tiempo de un 500 que ya fue mal.
+   */
+  async catch(exception: unknown, host: ArgumentsHost): Promise<void> {
     // Solo tiene sentido para HTTP. Un fallo en un procesador de BullMQ o en el
     // gateway de sockets llega por otro contexto y no trae ni petición ni
     // respuesta que mirar; se deja pasar al comportamiento de siempre.
@@ -73,6 +78,9 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
      */
     const esFalloDeSonda = status >= 500 && esSondaDeSalud(httpRequest.requestUrl);
 
+    /** El aviso en vuelo, si esta excepción lo merece. Se espera al final. */
+    let alerta: Promise<void> | undefined;
+
     if (status >= 500 && !esFalloDeSonda) {
       const error =
         exception instanceof Error ? exception : new Error(String(exception));
@@ -105,7 +113,14 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
       // El freno agrupa por ruta y no por mensaje: una ruta rota falla en
       // bucle, y lo que hay que saber es que esa ruta está caída, no leerlo
       // trescientas veces.
-      void this.alertas.avisar(
+      //
+      // No se lanza y se olvida: se guarda la promesa y se espera al final,
+      // ya con la respuesta enviada. Con la CPU de Cloud Run estrangulada al
+      // terminar la petición, un `fetch` sin dueño puede quedarse congelado a
+      // mitad de vuelo mientras su plazo de 5 s sigue corriendo — y la alerta
+      // se pierde en silencio, que es justo lo que esta capa existe para
+      // evitar.
+      alerta = this.alertas.avisar(
         `Error 500 en ${request.method} ${httpRequest.requestUrl}`,
         error,
         `http-5xx:${request.method}:${httpRequest.requestUrl}`,
@@ -133,10 +148,12 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
      */
     if (response.headersSent) {
       response.end();
+      await alerta;
       return;
     }
 
     super.catch(exception, host);
+    await alerta;
   }
 }
 

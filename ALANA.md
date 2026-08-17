@@ -1046,6 +1046,17 @@ de Vercel. Detalle y comprobación en **§14**.
 
 | Fecha | Qué revisó | Corte de git |
 |---|---|---|
+| 2026-08-14 (7) | **🔴 La clasificación está rota en producción (§28).** Lo que en §27.4 escribí como riesgo ocurrió: `22:45:52 ERROR Falló la clasificación … HTTP 404 · {"type":"not_found_error","message":"model: claude-3-sonnet-20240229"}`. **Anthropic no sirve ese modelo**: la función que decide qué es accionable y crea tareas **no funciona** sobre la revisión viva `00046-64q`. Desde las 22:15 no hay ni un `Resultado de IA`; cuatro correos han entrado a clasificarse y ninguno ha salido. El último éxito es de las 21:32, con `claude-sonnet-5`, antes de que la variable existiera. La cadena entera: yo señalé la variable como **ruido de arranque** (§19.4-E) → se «limpió» a un modelo de junio de 2024 (§26.4) → se «revirtió» a uno de febrero de 2024 (§27.4) → **404**. **Y la alerta estaba muda**: trece minutos antes, `ALERT_WEBHOOK_URL no está configurada: las alertas se registrarán en el log pero no se enviarán a ningún sitio`. La Capa 1 **sí llegó a producción** —`adf2efe` incluye `a23202d`, resuelto §27.2— pero sin URL, porque `ALERT_WEBHOOK_SECRET` sigue sin existir y `deploy.yml` toma el `else`. Así que **el primer fallo real que el sistema de alertas tenía que contar no se lo contó a nadie**: es la demostración que pedía §27.8 y llegó sola. **Dos cambios de un minuto, ninguno de código**: `CLAUDE_MODEL_CLASSIFY` → `claude-sonnet-5` (el valor que funcionaba y el que el código trae por defecto), y crear `ALERT_WEBHOOK_SECRET` con el nombre del secreto que existe desde las 21:49. Y una lección mía: **señalar algo como ruido invita a callarlo, no a arreglarlo** — enumerar molestias sin decir cuál es el arreglo correcto es repartir trabajo mal definido. Añadida la sección 28. | `adf2efe` · revisión `00046-64q` |
+| 2026-08-15 | **Despertar 12. La Capa 1 y la Capa 2, contrastadas (§27).** **Arreglado de §26 y bien arreglado**: la política de errores desapareció y en su sitio hay una de **ausencia** —`conditionAbsent` sobre `push_request_count` de `gmail-ingest-push`, 23,5 h—, que es exactamente la alerta por silencio que faltaba y que **sí** habría visto la avería del día 20; `retryPolicy` puesta a `10s/600s`; y **597 pruebas en 29 suites, ejecutadas por mí**, con las cuatro suites nuevas —`alert.service`, `cron.controller`, `cron-auth.guard`, `overdue.cron-purge`— que **cierran §19.4-D**, abierto desde hacía seis despertares. La Capa 1 está bien diseñada y sus cuatro enganches existen de verdad en el árbol. **🔴 Pero la Capa 1 no está en producción**: busqué en el log el aviso de arranque de `AlertService`, **no aparece ninguno**, y esa ausencia era el hallazgo — `a23202d` está commiteado en local **y sin empujar**, `origin/master` sigue en `4de9236` y la revisión viva `00045-ndn` corre `4de9236`. **🔴 Y cuando se empuje seguirá muda**: `deploy.yml` condiciona el secreto a `vars.ALERT_WEBHOOK_SECRET`, **esa variable no existe**, así que se ejecuta el `else` y solo queda un aviso amarillo en un run que nadie mira. **🔴 El modelo de clasificación ha ido hacia atrás dos veces**: `21:47 claude-sonnet-5` → `21:48 claude-3-5-sonnet-20240620` → `22:15 claude-3-sonnet-20240229`; `TASKS.md` lo llama «revertida», y revertir habría sido volver a `claude-sonnet-5` — esto es un segundo salto atrás, a un modelo de febrero de 2024 que además está **retirado**, y **no se ha clasificado ni un correo desde las 21:32**, así que ninguno de los dos valores nuevos ha funcionado nunca. **🟠 El canal se llama «Google Chat Webhook (Pendiente)»**, es un webhook genérico y nadie ha demostrado que llegue un mensaje. **Dos correcciones al parte**: `GCP_SETUP.md` **no** está congelado (+84 líneas sin commitear, de otro), y `alert_policy_v2.json` **coincide exactamente con la política ya aplicada** — es el archivo origen, no un pendiente. **El patrón, una capa más arriba**: escrito, probado y commiteado ≠ en producción; y un sistema de alertas es donde ese error se paga doble. Se cierra provocando un fallo y esperando el mensaje en Chat. Añadida la sección 27. | `a23202d` (local) · `4de9236` (origin) · revisión `00045-ndn` |
+| 2026-08-14 (6) | **La infraestructura de la Fase 4, auditada (§26).** Levantada en consola entre 21:47 y 21:51; comprobada con `gcloud` y con la API de Monitoring. **Bien hecho**: la cola de mensajes fallidos está **completa** —tema `gmail-ingest-dlq`, `maxDeliveryAttempts: 5`, suscripción propia, y **las dos concesiones de IAM** que hacen falta (`publisher` sobre el tema, `subscriber` sobre la suscripción de origen), que es justo donde esto falla en silencio—. Cierra §19.4-C. **🔴 La alerta no avisa a nadie**: la política `[Capa 2] Fallo Critico en Infraestructura` está activa con `notificationChannels` **vacío**, y en el proyecto entero **no existe ni un canal de notificación** — abre el incidente y no se lo cuenta a nadie. **🔴 Y esa «Capa 2» es por error, no por silencio**: su filtro es `severity>=ERROR` sobre Cloud Run y Scheduler, así que **no habría visto el fallo que motivó la fase** — el `watch` dejaba un `WARNING` y el apagón del día 20 no habría dejado nada. **🔴 «Limpiar» `CLAUDE_MODEL_CLASSIFY` cambió el modelo del producto**: `21:47 claude-sonnet-5` → `21:48 claude-3-5-sonnet-20240620`, un modelo de junio de 2024, como efecto secundario de una tarea de higiene; y no se ha clasificado ni un correo desde entonces, así que ni se sabe si ese id sigue vivo. **🟠 Además**: `ALERT_WEBHOOK_URL` existe en Secret Manager pero **no está en el entorno de la revisión**, y la suscripción sigue **sin `retryPolicy`** —cinco intentos inmediatos contra un contenedor dormido acaban en la cola de fallidos, que nadie lee y que no genera ninguna línea que la alerta pueda ver—. Sigue abierto: cobertura cero en los tres del cron, Neon rechazando conexiones en frío (`P1001` a las 21:32) y la deduplicación nunca vista disparar. **El patrón: la infraestructura quedó puesta y desconectada** — cada pieza existe y el sistema sigue igual de ciego. Añadida la sección 26. | `4de9236` · revisión `00044-k8n` |
+| 2026-08-14 (5) | **N=1 por decisión de producto, y la Fase 4 definida (§25).** El Product Owner fija el alcance: desarrollo personal a medida, **no se escala a multiusuario**. Retiro mi recomendación de §24.5 — y conviene decir lo que la decisión **resuelve**: el bucle que llama a `stop` y `watch` usuario por usuario no puede tropezar con el «one push client per developer» si nunca hay un segundo buzón. Un límite que no se toca no es una deuda. Para mí cambia una cosa: **`1 de 1` deja de ser una muestra pequeña y pasa a ser el universo entero**. Fase 4: alertas como prioridad alta, más cola de mensajes fallidos en Pub/Sub, `CLAUDE_MODEL_CLASSIFY` y las pruebas de los crones; el reparto vive en `TASKS.md`. **Dos condiciones que sostiene mi propia auditoría**: (1) **la alerta tiene que dispararse por silencio, no solo por error** — el `watch` fallando dejaba un `WARNING` que nadie leyó, pero la ingesta apagándose el 20 no habría producido **ninguna línea**, y ningún aviso construido sobre errores puede ver eso; hace falta algo que avise cuando *deja de pasar* lo que debe pasar. (2) **el canal no puede depender de lo que vigila**: una alerta por correo viaja por la misma cuenta y la misma API de Google cuya caída notifica, así que falla justo cuando hace falta. Y una anotación sobre mí: en §24 presenté como hueco técnico lo que era una pregunta de alcance que no me correspondía responder. Añadida la sección 25. | `4de9236` · revisión `00042-5rm` |
+| 2026-08-14 (4) | **Las pruebas del hotfix y la clausura de la Fase 3 (§24).** `4de9236`: **385 líneas en tres archivos** y **569 pruebas en 25 suites, ejecutadas por mí** —eran 547 en 22—. Y lo que importa no es el número: **las aserciones muerden**. El orden se fija con `invocationCallOrder`, así que invertirlo hace fallar la prueba **por construcción** —un «se llamaron los dos» habría pasado con el fallo dentro—; la liberación de la clave se prueba **simulando Redis de verdad** con un `Set`, comprobando que tras un encolado fallido la segunda entrega sí encola; y `describirError` usa el error literal de Google con su `response.data.error` anidado. Cubren además cosas que no pedí: que un tropiezo de la base después del `watch` no lo invalide, y que un duplicado real no borre una clave ajena. **La reversión no la he repetido** —revertir código no me toca—, pero las aserciones son sensibles a la mutación por construcción, comprobado leyéndolas una a una. **Donde me equivoqué yo**: propuse «escribir la clave después de encolar **o** borrarla en el `catch`», y la primera mitad era mala —el `SET NX` tiene que ir delante o pasan las dos entregas concurrentes—; se implementó la segunda, que era la correcta. Diagnosticar bien y recetar de más es el error típico del que audita. **Fase 3 clausurada** con nueve puntos comprobados uno a uno, y con la palabra que se sostiene: **estable**, no *blindada*. **Sin cubrir**: Pub/Sub sin cola de fallidos (abierto desde §19.4-C), `CLAUDE_MODEL_CLASSIFY`, cobertura cero en `CronAuthGuard`/`CronController`/`OverdueCronPurge`, la deduplicación nunca vista disparar en vivo, **nadie vigila** —nada de estos dos días disparó un solo aviso— y **todo verificado con un único usuario**, cuando el error que costó la ingesta decía «per developer». Añadida la sección 24. | `4de9236` · revisión `00042-5rm` |
+| 2026-08-14 (3) | **El `watch` arreglado y la causa por fin leída (§23).** `a09d05d` no arregla el `watch`: arregla **poder leerlo**, y en cuanto se desplegó el registro dijo lo que llevaba dos días callado — `HTTP 400 · Only one user push notification client allowed per developer (call /stop then try again)`. **Gmail admite un solo cliente push y exige parar el anterior**, así que el `watch` del 08-13 entró porque no había ninguno y todas las renovaciones chocaron contra el que aquel dejó: **falla solo a partir de la segunda ejecución**. Descartado mi candidato (b) de §21.3 — el rechazo venía de Gmail, no del `findUnique`. `b8f9a4f` llama a `users.stop` antes de `users.watch`; vivo en **`pmo-api-00042-5rm`**. **Forcé el cron dos veces, con permiso expreso**: `17:46:22` y `17:56:03`, las dos con `Bandeja de entrada observada` y `1 de 1 usuario(s)`, sin un solo aviso de fallo del `stop`. **La segunda importa más que la primera**: una sola habría reproducido el estado del 08-13 y no habría probado nada. **La caducidad del 2026-08-20 queda cancelada.** También liberada la clave de deduplicación en el `catch` —estuvo mal escrita 46 minutos y no llegó a costar ningún correo— y arreglados los nueve registros mudos con un helper que saca el cuerpo de la respuesta de Google. **Lo que no doy por bueno**: **cero pruebas nuevas** —547 en 22 suites, las mismas que antes; el diff de `*.spec.ts` está **vacío** y el módulo `gmail` no tiene ni un archivo de pruebas—, así que el orden `stop` → `watch` no lo protege nada; y el push sobre el registro nuevo quedó comprobado a las 18:06 con un correo real de punta a punta (§23.6), aunque la deduplicación sigue sin verse porque Google entregó una sola vez. Añadida la sección 23. | `b8f9a4f` · revisión `00042-5rm` |
+| 2026-08-14 (2) | **La Fase 4 no existe: la app es Interna (§22).** Comprobado en la consola con el navegador, en lectura: **Google Auth Platform → Público → Tipo de usuario: `Interno`**, y el Centro de verificación lo dice él mismo — «No se requiere la verificación porque tu app está configurada con un tipo de usuario interno». De ahí: **la app nunca estuvo en «Testing»** —las Internas no tienen estado de publicación—, **la caducidad de siete días de los refresh tokens no aplica**, y **la verificación de Google no hay que pedirla** aunque `gmail.modify` y `gmail.send` sean permisos restringidos. Tercer camino independiente que confirma §21.3: el token del 12 de agosto no está revocado y no va a caducar el 19. **La Fase 4, tal como estaba planteada, no tenía contenido**: no era urgente por el motivo equivocado, es que el trabajo entero sobraba — semanas de trámites con Google sobre una suposición que una página desmiente en cinco segundos. Anotado por si algún día se marca como externa: las tres tablas de «Acceso a los datos» están **vacías** mientras la app pide dos permisos restringidos en ejecución. **Lo de §21 no cambia**: el `watch` sigue fallando a diario, el motivo sigue sin registrarse y **la ingesta se apaga sola el 2026-08-20 hacia las 02:41 UTC**. Añadida la sección 22. | `8c5642d` · revisión `00040-t94` |
+| 2026-08-14 | **Despertar 11. La retrospectiva del 14, contrastada (§21).** Dos commits nuevos y un parte de cinco puntos. **Lo que se sostiene**: las pruebas del `GoogleOidcVerifier` pagan la deuda de §20.5 y la que importa es la correcta —token impecable, rechazado por falta de variable, sin llegar a verificar la firma—, **547 pruebas en 22 suites ejecutadas por mí**; los plazos de Prisma corrigen un fallo medido de verdad (`5289 ms` y `5503 ms` contra `5000`), aunque desplegados a las 16:42 y todavía sin horas de vuelo; y el diagnóstico del `historyId` está medido —dos avisos con `historyId 6578238` separados por **4 ms**—. **Lo que la retrospectiva no vio**: hay **27 errores de encolado en dos días**, todos desde la revisión `00038`, y **la entrega doble de Google llevaba dos días siendo su red de seguridad** (14:43: falla la primera entrega, entra la segunda, el correo se sincroniza; 15:02: fallan las dos y no hay sincronización detrás). La clave `SET NX` se escribe **antes** del `add()` y no se borra si el `add()` falla, así que el parche cambia «recuperado a los 4 ms» por «sin encolar, diez minutos en silencio». **Y el hallazgo crítico no cuadra con los registros**: la última concesión de OAuth es del **12-08 a las 22:13 UTC**, el `watch` se renovó bien nueve horas después y falló a las siguientes; y **el token está vivo hoy** —a las 16:25 leyó Gmail, `historyId 6578667 → 6578770`—, luego no hay revocación a los siete días. Falla `users.watch` **y solo eso**, y **no se puede saber por qué**: `logger.error(mensaje, err)` deja el motivo en la ranura del *stack* y el formateador lo tira — la trampa está documentada en `all-exceptions.filter.ts` y hay **nueve llamadas** con esa forma. **Lo urgente sí tiene fecha**: el único `watch` aceptado en diez días es el del 13-08 a las 02:41:45, caduca a los siete días, y si la renovación diaria sigue fallando **la ingesta se apaga sola el 2026-08-20 hacia las 02:41 UTC**. Fase 3 cerrable; Fase 4 con el motivo mal puesto, y una comprobación de un minuto —si la pantalla de consentimiento puede ser **Interna** en el Workspace de `zepto.com.mx`— que decidiría la fase entera. Añadida la sección 21. | `8c5642d` · revisión `00040-t94` |
+| 2026-08-13 (2) | **Verificación del parche de urgencia `679b3c3` (§20).** Claude respondió a los tres hallazgos de §19.4 y los tres están bien resueltos, comprobados en código, en pruebas y en producción. **El sondeo de Redis, medido con el monitor en vivo**: tres ciclos consecutivos separados por **60,08 s exactos** y los valores nuevos **literalmente en el cable** —`BZPOPMIN … "60"` y `XREAD BLOCK 60000`—, con `overdue-sweep` ausente porque el worker huérfano se borró. Coste actual: **~19 comandos/min ≈ 1 140/h despierto y en reposo**, cifra que **cuadra con el contador medido por separado** (+90 en 4,5 min), lo que además resuelve que Upstash cobra los subcomandos `lua`. **Lo que casi me hace medir mal**: a las 04:58 el monitor no mostraba ni un comando, y eso no probaba que el parche funcionara sino que el contenedor estaba dormido — tuve que despertarlo con `/health/live`. Sin medición limpia de antes, el efecto es grande pero **no tiene múltiplo exacto**. **El fail-closed, probado contra el llamante real**: el cron de las 05:05 dejó `Ejecución de cron autorizada para pmo-scheduler@…` y `POST /cron/overdue 200` sobre la revisión parcheada — un fail-closed no está verificado hasta que el legítimo pasa por él. **536 pruebas en 21 suites**, una más, la del turno mixto del copiloto. **Y tres términos corregidos del parte antes de que se hagan historia**: no había «workers fantasma» —el fantasma lo mató la purga de la Fase 3 y lo que se quitó fue un worker legítimo sin productor—, la cuota estaba al **37 %** y no al borde, y **no se cerró ninguna brecha activa** sino la posibilidad de una, porque las variables estaban puestas. Nuevo a cambio: un fallo de configuración ahora **para el producto** en vez de abrirlo, y `deploy.yml` sigue avisando sin bloquear; y el cambio más consecuente —el `GoogleOidcVerifier` que puede tumbar los dos crones— **entró sin una sola prueba**. Añadida la sección 20. | `679b3c3` · revisión `00038-kwr` |
+| 2026-08-13 | **Despertar 10. Auditoría de la Fase 3 ya ejecutada (§19).** Primera vez que un aviso previo evita trabajo perdido: **los seis puntos de §18 llegaron al código** —rutas `/cron` sin prefijo, `CronAuthGuard` propio con `GoogleOidcVerifier` compartido, la cuenta firmante y su `serviceAccountTokenCreator`, la purga explícita del repetible y la renovación del `watch` pasada a diaria—. Comprobado en vivo con `gcloud`, no en el parte: los dos jobs de Scheduler `ENABLED` en `America/Cancun` con la audiencia idéntica a `CRON_OIDC_AUDIENCE`, `/cron/overdue` **200** a las 03:05:02 UTC y `/cron/gmail-watch` **200**. **La purga, por dos caminos**: el log a las 02:29:11 y la última entrada de `bull:overdue-sweep:completed` en Upstash en ese mismo segundo exacto, ninguna después. **Pero el error del prefijo se cometió igual**: `POST /api/cron/overdue 404` a las 02:30:04, cuarta vez — un comentario en el código protege a quien lee el archivo, no a quien teclea en la consola de GCP. **Hallazgo nuevo que no está en ninguna memoria: el copiloto se rompe con dos herramientas en el mismo turno** — `anthropic.strategy.ts:183` empuja el `content` entero del asistente con todos los `tool_use` y responde solo por los `ejecutables`, así que una herramienta que espera confirmación humana viaja sin su `tool_result` y la API devuelve 400 (visto a las 02:56:23). **Y el siguiente límite que se agota es Redis**, no la clave de Anthropic: Upstash va por **177 k de 500 k** comandos del mes, y `CLAUDE_MEMORY.md` todavía dice 108 k. Abiertos además: la suscripción sin cola de mensajes fallidos, **cero pruebas para todo el código nuevo** (535/21, las mismas de antes de la Fase 3) y `CLAUDE_MODEL_CLASSIFY` que el pipeline cree inyectar y no existe. El fail-open de §18-3 quedó a medias: sin audiencia ya falla cerrado, pero la cuenta sigue en `if (cuentaEsperada && …)` — tapado por configuración, no eliminado del diseño. Memorias ajenas repasadas: `CLAUDE_MEMORY.md` exacta salvo la cifra de Upstash, `TASKS.md` cierta en lo que afirma, `GRAVITY_MEMORY.md` recoge por fin el 409 del Inbox, `DOC.md` cuadra. Añadida la sección 19. | `34d75d1` · revisión `00037-ztk` (`SERVICE_VERSION=c8c87f0`) |
+| 2026-08-12 (3) | **Verificación de las Fases 1 y 2 de la estabilización (§16 y §17).** El día en que el producto funcionó por primera vez de extremo a extremo: entré yo a la aplicación desplegada y **el tablero carga con sesión viva, socket conectado y las columnas vacías de verdad** —sin `MOCK_TASKS`—. Confirmado que el bucle de login que veía Doc era **incógnito bloqueando cookies de terceros**, no el backend. Encontré un defecto que no estaba en ninguna lista: `useDashboardMetrics.ts` llamaba con `fetch` **sin `credentials`**, el único de todo `apps/web`, así que Métricas daba **401** en producción y solo ahí —en local el proxy de Vite lo tapa—. De la Fase 2 tuve que corregir tres cosas del parte: **nunca se llegó a servir una revisión sin el `mock`** (la salvó `cancel-in-progress` por ~18 segundos, no el diseño condicional, que avisa pero no bloquea); **el arreglo de Métricas no estaba en producción** porque Vercel seguía con Branch Tracking en `main` y el build —ya sano tras borrar `vercel.json`, 25 s en verde— caía en Preview. Cerradas las dos: revisión **`pmo-api-00034-68q`** con `SERVICE_VERSION=c836d1f` y **`COPILOT_EMAIL_TRANSPORT=mock` puesto ya por el pipeline**, y frontend en **`index-DqcH8EI6.js`** con `/dashboard/metrics` en **200**. Anotado como decisión tomada y no implementada: invertir el valor por defecto del transporte de correo, porque hoy la ausencia de una variable significa enviar de verdad. | `c836d1f` · revisión `00034-68q` |
 | 2026-08-12 (2) | **Barrido de los entornos externos, con el navegador y en modo lectura (§15).** Y lo primero es una corrección mía: **el frontend sí es público y sí es el nuestro** —`pmo-frontend-ten.vercel.app` da 200 con la pantalla de login—; lo que probé en §14 era el alias protegido porque es el que dice `WEB_URL`, y de ahí saqué una conclusión falsa. **El fallo real es de una variable**: `WEB_URL` apunta al alias del equipo, así que la API autoriza por CORS un origen distinto del que sirve la página, y ejecutado dentro de la propia página el `fetch` con credenciales sale **`TypeError: Failed to fetch`** mientras el mismo servidor responde en `no-cors`. La API está intacta; el navegador tira todas las respuestas. **Y en Vercel hay dos cosas más:** la rama de producción es **`main`** y el repo trabaja en `master` —el mismo fallo que ya tuvo el CI, repetido en otra herramienta—, así que los pushes caen en Preview; y **`vercel.json` no arregló la compilación, la rompió** (`Missing script: "build:shared"`, porque el comando se ejecuta dentro de `apps/web`). Lo que sostiene producción es un **redespliegue a mano**, y lo que sirve es el código de `dbeb4d5`, no el de HEAD. **En Google:** la URI de redirección está autorizada y exacta ✅ —duda cerrada desde el 08-07—, pero la pantalla de consentimiento está en **«Prueba», con cero usuarios de prueba** y pidiendo ámbitos **restringidos** (`gmail.modify`, `gmail.send`): el refresco caduca a los 7 días, nadie externo puede autorizar, y publicar exige verificación de Google. Anotado también que la consola dice «última fecha de uso: 29 de julio», que apunta en contra del «login verificado» del árbol. Confirmado por CLI: 8 secretos, un servicio y un job, y **Pub/Sub completamente vacío**. Sin revisar por pedir sesión: Neon, Upstash, Anthropic y AI Studio. | `ccbd498`, sin cambios en el repo |
 | 2026-08-12 | **Despertar 9. El corte en que el hallazgo rojo cambia de forma en vez de desaparecer.** Dos commits, los dos del 08-10 y los dos respuesta a mi diagnóstico de §13. **La causa del 404 del login está corregida**: `WEB_URL` dejó de apuntar a la aplicación ajena el 08-10 a las 22:08 UTC, y no me quedé en la variable del repositorio —**lo leí de la revisión que sirve**, por el `access-control-allow-origin` de un preflight, que además devuelve el dominio nuevo aunque le mande el viejo, que es lo correcto—. **Pero el dominio nuevo responde 302 hacia `vercel.com/sso-api`**: está detrás de la protección de despliegue de Vercel y solo atiende a quien tenga sesión en esa cuenta. De ahí las tres cosas que dejo dichas: que **no puedo verificar desde aquí que ese dominio sirva nuestro código** —lo digo en vez de suponerlo—, que el «funciona» del usuario y el mío no son el mismo experimento, y que para cualquier otra persona el login sigue acabando en una puerta que parece un fallo de OAuth y no lo es. **Cerradas y verificadas en el código las cuatro roturas del frontend**: `API_BASE` sin `/api`, ni una llamada relativa, el socket ya no apunta al `localhost` de quien mire la página, y la cookie a `none`+`secure` en producción — con el `lax` del `state` de OAuth **conservado a propósito y razonado en el propio archivo**, que es la clase de distinción que se pierde cuando se arregla a golpe de buscar y reemplazar. Nuevo y bueno: `/health/ready` **comprueba el esquema**, y en vivo devuelve `aplicadas: 9, aMedias: 0, revertidas: 0`. Reconfirmado que el dominio viejo sirve otra aplicación, ahora con la prueba barata que faltaba: el HTML servido es `lang="en"` / «Vite + React» con PWA y el del repo es `lang="es"` / «PMO Dashboard». **Sigue apagada la ingesta de Gmail** —`deploy.yml` no inyecta una sola `GMAIL_PUBSUB_*`, van dos cortes— y **`WEB_URL` sigue sin guardarraíl**, que era la lección del corte anterior. `TASKS.md` ya no solo va atrasado: tiene marcada `[x]` una casilla que dice que el pipeline despliega el frontend, y no lo despliega. Ejecutado, no leído: **535 pruebas en 21 suites y lint a 0/0**. Actualizadas las secciones 5, 9, 10, 13 y añadida la 14. | `ccbd498` + `GRAVITY_MEMORY.md` sin commitear (3 líneas) |
 | 2026-08-10 | **Despertar 8.** Encargo puntual: diagnóstico del `404 DEPLOYMENT_NOT_FOUND` al entrar con Google. **La sospecha del usuario —que el backend redirigía a un despliegue muerto— es razonable y es falsa: el backend no participa en ese 404.** Descartado con cinco comprobaciones, entre ellas que la cadena `manejo-org` no ha existido nunca en el repo y que las 26 revisiones de Cloud Run llevan la misma `WEB_URL`. Lo que sí pasa: **`https://pmo-frontend.vercel.app` no es el frontend de este proyecto** — sirve «PMO Digital / Gestão de Planos de Manejo Orgânico», una aplicación en portugués con Supabase, y quien redirige tras el consentimiento es Supabase hacia el despliegue hermano de *esa* aplicación, que ya no existe. Causa de fondo en una frase: **el frontend de este proyecto no estaba desplegado en ninguna parte**, y `WEB_URL` se rellenó con un dominio que «parecía el nuestro» porque los dos proyectos se llaman PMO. Registrado en §13. | `dbeb4d5` |
@@ -1841,3 +1852,1534 @@ demás de este proyecto: **solo existe en producción**.
 
 _Se arregla llamando por `apiFetch`, que da las dos cosas a la vez. Es
 `apps/web`, o sea dominio de Gravity._
+
+---
+
+## 17. Verificación de la Fase 2 (`c836d1f`) — y tres correcciones al parte
+
+Doc reportó la Fase 2 y pidió que registrara. Comprobé antes de registrar, y el
+parte tiene tres cosas que no se sostienen contra el estado real.
+
+### ✅ Lo que sí está, verificado
+
+- **`workflow_dispatch` está bien hecho.** Era mi aviso nº 2 al revisar el plan:
+  añadirlo a `ci.yml` sin tocar el `if` de `deploy.yml` habría dejado un botón
+  que corre y no despliega. **Se hizo bien**, con el `if` reagrupado:
+  `vars.GCP_PROJECT_ID != '' && ( event_name == 'workflow_dispatch' || ( … ) )`,
+  y el `ref`/`SHA` con respaldo `workflow_run.head_sha || github.sha`, que es el
+  detalle que se olvida y deja la imagen etiquetada con la cadena vacía. El
+  comentario del propio archivo describe el fallo del que avisé.
+- **`COPILOT_EMAIL_TRANSPORT` y las cuatro `GMAIL_PUBSUB_*` ya están en
+  `deploy.yml`**, leídas de `vars`, con aviso si faltan. Era mi aviso nº 1.
+- **`vercel.json` eliminado** y **el arreglo de Métricas es el correcto**:
+  `apiFetch<DashboardMetrics>(…)`, que da credenciales **y** el reintento.
+
+### ❌ Corrección 1: nunca se reactivó el envío de correos reales
+
+El parte dice que se desplegó una revisión sin el mock. **No llegó a existir.**
+
+| Comprobación | Resultado |
+|---|---|
+| `latestReadyRevisionName` | **`pmo-api-00033-g6g`** |
+| Creada | **21:58**, o sea la de la Fase 1 |
+| `SERVICE_VERSION` de esa revisión | `ccbd498…` — **no** `c836d1f` |
+| `COPILOT_EMAIL_TRANSPORT` en ella | **`mock`**, presente |
+| Revisiones posteriores a las 21:58 | **ninguna** |
+
+El despliegue por `workflow_run` (`31647146749`, 22:29) figura como
+**`cancelled`** a los 2 m 21 s. Lo canceló el `concurrency: cancel-in-progress`
+cuando entró el despliegue manual (`31647295146`) a las **22:31:15** — es decir,
+**unos 18 segundos antes de que el otro terminara**. La ventana de riesgo no
+llegó a abrirse.
+
+### ⚠️ Corrección 2: lo que salvó la situación no fue el diseño condicional
+
+El parte concluye que «el error humano demostró que el diseño condicional de
+`ENV_VARS` funciona». **A medias.** Demostró que el **aviso salta**; no impidió
+nada, porque por diseño avisa y sigue. Lo que impidió el incidente fue
+`concurrency: cancel-in-progress`, que es un ajuste sin relación con esto y que
+funcionó por un margen de segundos.
+
+**Y eso deja una pregunta de diseño abierta**, que no me toca decidir pero sí
+señalar: para una variable cuyo modo de fallo es *mandar un correo auténtico a
+una persona real*, un aviso no es un guardarraíl. `GOOGLE_REDIRECT_URI` **para**
+el despliegue cuando está mal; esta no. Las dos salidas razonables son
+equipararla —que pare— o quitarle el filo en el código: hoy
+`copilot.module.ts:66` trata **cualquier valor distinto de `mock`, y la ausencia,
+como envío real**, así que el estado peligroso es el que sale por defecto.
+Invertirlo —real solo si alguien lo pide explícitamente— elimina la clase entera
+de fallo en vez de vigilarla.
+
+### ⚠️ Corrección 3: el arreglo de Métricas no está en producción
+
+El código está en `master`; **el frontend servido no ha cambiado**. El bundle de
+`pmo-frontend-ten.vercel.app` sigue siendo **`index-CFVaNA44.js`**, el mismo de
+antes del push. Es decir, **se sigue sirviendo el `fetch` sin credenciales y la
+vista de Métricas sigue dando 401 a cualquiera que la abra**.
+
+La causa más probable es que la **alineación de ramas en Vercel** —punto 1 de la
+Fase 2— no se ha hecho: con la rama de producción en `main`, el push a `master`
+produce una vista previa y producción no se entera. El parte no lo menciona.
+
+### ✅ El despliegue manual, verificado
+
+`31647295146` (`workflow_dispatch`) terminó en **success** a las 22:35:36 y
+publicó **`pmo-api-00034-68q`**, que es la que sirve. Variables leídas de la
+revisión, no del parte:
+
+| Variable | Valor |
+|---|---|
+| `SERVICE_VERSION` | **`c836d1f…`** — el código de la Fase 2 |
+| `COPILOT_EMAIL_TRANSPORT` | **`mock`** |
+| `WEB_URL` | `https://pmo-frontend-ten.vercel.app` |
+| `GMAIL_PUBSUB_*` | ausentes, como se esperaba (Fase 3) |
+
+**Lo importante es de dónde sale ahora el `mock`:** ya no de una inyección
+manual, sino de `deploy.yml` leyendo `vars`. Sobrevive al siguiente despliegue,
+que es lo que no pasaba esta mañana. Aviso nº 1 cerrado del todo.
+
+Sondas en vivo contra esa revisión: `/health/ready` **200** (base 93 ms, esquema
+con 9 aplicadas y 0 a medias, Redis 47 ms) · `/auth/me` **401** sin cookie ·
+`/auth/google` **302** · CORS devolviendo el dominio público. Las cuatro
+correctas.
+
+_Y queda dicho, porque el propio archivo lo advierte:_ **el botón manual se salta
+el CI a propósito**. Aquí no hubo riesgo —el SHA desplegado es el mismo que el CI
+puso en verde cuatro minutos antes— pero el botón conserva la capacidad de
+publicar código sin probar, y eso hay que saberlo al pulsarlo.
+
+### El frontend, diagnosticado en el panel de Vercel
+
+Doc pidió entender por qué no se actualizó el bundle. **La respuesta es limpia y
+son dos hechos separados, uno bueno y uno pendiente:**
+
+| Hecho | Estado |
+|---|---|
+| Compilación de `c836d1f` | ✅ **Ready en 25 s** |
+| Entorno en que quedó | ❌ **Preview** |
+| Producción sigue siendo | «Redeploy of 58vizb3ke», de hace dos días |
+| Branch Tracking (Settings → Environments → Production) | **`main`**, sin cambiar |
+
+**Borrar `vercel.json` arregló la compilación.** Es un resultado de verdad y
+conviene no perderlo: el despliegue de `ccbd498` moría en 9 s con
+`Missing script: "build:shared"`, y este pasa en 25 s. La configuración de la
+interfaz —directorio raíz vacío, `apps/web/dist`, comando propio— es la que
+funciona, y el archivo en el repositorio era el que estorbaba.
+
+**Y no llegó a producción por una sola razón:** el punto 1 de la Fase 2 —alinear
+la rama— no se ejecutó. Con Branch Tracking en `main` y el repositorio trabajando
+en `master`, un push produce una vista previa y producción no se entera. No es un
+fallo del build ni del commit: es un ajuste que se quedó sin tocar.
+
+Consecuencia vigente: **Métricas sigue rota para cualquiera que abra la
+aplicación**, porque se sirve el bundle viejo con el `fetch` sin credenciales,
+aunque el arreglo lleve horas en `master`.
+
+**Lo que la cierra son dos gestos**, y ninguno es mío: poner `master` en Branch
+Tracking, y **promover a producción la vista previa de `c836d1f`** que ya está
+construida y en verde —promover evita reconstruir—. Con
+`Auto-assign Custom Production Domains` activado, el dominio se reasigna solo.
+
+Es media fase: la parte de Claude está hecha y verificada; la de Gravity, no.
+
+### ✅ Cierre de la Fase 2: verificado en producción
+
+Doc alineó la rama y promovió `c836d1f`. Comprobado por mí, entrando:
+
+| Comprobación | Resultado |
+|---|---|
+| Bundle servido | **`index-DqcH8EI6.js`** — era `index-CFVaNA44.js` |
+| `GET /dashboard/metrics?tz=America/Cancun` | **200** — estaba en **401** |
+| `/auth/me` · `/tags` · `/emails` · `/health` | 200 los cuatro |
+| WebSocket | conectado, desde el bundle nuevo |
+| Consola | sin errores |
+
+**La vista de Métricas pinta.** Ventana 6/8 – 12/8, las cuatro tarjetas (WIP,
+atrasadas, completadas, bandeja) y las dos gráficas. Todo a cero, que es la
+verdad: no hay datos porque no hay ingesta ni tareas. Es exactamente lo que
+tenía que pasar — **una pantalla vacía y honesta en vez de números inventados**,
+que es donde empezó todo esto en el corte del 2026-07-29.
+
+Dos detalles que aprovecho para dar por buenos, porque solo se ven con la vista
+funcionando:
+
+- **El eje X va de `06-ago` a `12-ago` y termina hoy**, en hora local. La trampa
+  del `new Date()` interpretando `YYYY-MM-DD` como UTC —que corría cada barra un
+  día— está resuelta también en producción.
+- La nota «las tareas completadas antes del último despliegue no tienen registro
+  de fecha y no aparecerán aquí» sale en pantalla. Es el comportamiento
+  documentado de `completedAt`, no un fallo, y **está bien que el producto lo
+  diga en vez de callárselo**.
+
+**Con esto la Fase 2 queda cerrada entera**, backend y frontend, y con ella el
+último resto del hallazgo rojo que abrí el 2026-08-07.
+
+### ✅ El fail-safe del transporte de correo, implementado y verificado (`00af5ef`)
+
+Era «decisión tomada y no implementada» hace unas horas. Ya no. Y **es el primer
+parte del día que no necesita una sola corrección**: comprobé los cuatro puntos y
+los cuatro se sostienen.
+
+**El código está bien hecho, y el detalle importa.** `copilot.module.ts` compara
+contra una lista cerrada de **valores que encienden** el envío
+(`TRANSPORTES_REALES = ['real', 'smtp']`) en vez de contra los que lo apagan.
+Ausente, vacío o irreconocible → simulado. Un `=reall` con un dedazo se queda en
+simulado **y lo dice en el log**, en vez de salir a la calle. Es la forma
+correcta del guardarraíl: la lista de lo que envía de verdad es corta y cerrada;
+la de lo que no, infinita.
+
+| Comprobación | Resultado |
+|---|---|
+| Revisión viva | **`pmo-api-00035-45f`** |
+| `SERVICE_VERSION` | `00af5ef…` |
+| `COPILOT_EMAIL_TRANSPORT` en la revisión | **ausente** |
+| Log de ejecución | **`Transporte de correo: SIMULADO (no se envía nada)`** ×2 |
+| Origen del despliegue | `workflow_run` — pasó por CI, no por el botón manual |
+
+Esa última fila importa: el despliegue **no** usó el atajo manual, así que el
+código desplegado está probado.
+
+**Y los guardarraíles nuevos corrieron de verdad**, leído en el log del run
+`31649348661`:
+
+```
+Comprobando WEB_URL: https://pmo-frontend-ten.vercel.app
+WEB_URL sirve este frontend y responde sin credenciales.
+```
+
+La comprobación busca **`<title>PMO Dashboard`** en el HTML servido — que es
+exactamente lo que propuse en §13 y §14 tras el episodio del dominio ajeno.
+Existe además un paso aparte, «Comprobar que el CORS de la revisión admite
+`WEB_URL`», separado a propósito porque **en el momento de validar la variable la
+revisión que sirve todavía lleva la anterior**. Ese razonamiento es correcto y no
+es obvio.
+
+**Higiene de git respetada por primera vez:** `00af5ef` toca cinco archivos y
+**`ALANA.md` no está entre ellos**.
+
+### ⚠️ Un punto de la Fase 4 que ya no es lo que dice
+
+El parte anuncia como pendiente «la clave de Anthropic, que vence el 17 de
+agosto». **Eso quedó atrás en la Fase 1 y arrastrarlo puede hacer daño.** Hoy hay
+dos claves:
+
+| Clave | Vence | Último uso |
+|---|---|---|
+| **`pmo-api-produccion`** (12 ago) | **10 nov 2026** | **— nunca** |
+| `Make Consciente` (18 jul) | 17 ago 2026 | 4 ago · $0,31 |
+
+La que está en producción es la nueva: `pmo-anthropic-api-key` tiene **versión 2
+desde las 21:43 de hoy** y la revisión lee `:latest`. **La urgencia del día 17
+desapareció**; quedan casi tres meses.
+
+Dos cosas que sí quedan, y ninguna es la que dice el parte:
+
+1. **La clave nueva no se ha usado nunca.** «Último uso: —». Está cableada, que
+   no es lo mismo que probada: un pegado con un carácter de más daría un 401 en
+   el primer uso del copiloto, y hoy nadie lo ha ejercitado porque no hay
+   clasificación de correos ni se ha abierto el chat. **Se comprueba en un
+   minuto**: un mensaje en el copiloto.
+2. **`Make Consciente` sigue viva y sigue caducando el 17.** Ya no la usa el PMO,
+   pero presumiblemente sí el escenario de Make. El riesgo ahora es el inverso al
+   de esta mañana: que alguien la borre creyendo que es la vieja del PMO y tumbe
+   la automatización de al lado.
+
+### ✅ La clave nueva está probada, no solo cableada
+
+Doc hizo la prueba de humo en el copiloto. **Comprobado en la consola:**
+`pmo-api-produccion` pasó de `Costo: —` a **`$0.01`**, y el saldo de la
+organización bajó de **$12,50 a $12,49**. La cadena entera —Secret Manager →
+revisión → llamada real a Anthropic— funciona.
+
+_El campo «Último uso» sigue en `—`, pero eso es el retraso que la propia consola
+declara. El coste es la señal fiable, y se movió._
+
+Con eso queda cerrado el único pendiente real que le quedaba a la clave, y
+`Make Consciente` se deja en paz por decisión de Doc, que es lo correcto: es de
+otro sistema.
+
+---
+
+## 18. Fase 3 — foto de partida (2026-08-12)
+
+Doc anuncia la entrada en la Fase 3. Tomo la medida **antes** de que se toque
+nada, para poder decir después qué cambió de verdad y no fiarme del parte.
+
+| Elemento | Estado hoy |
+|---|---|
+| Temas de Pub/Sub | **ninguno** |
+| Suscripciones de Pub/Sub | **ninguna** |
+| Trabajos de Cloud Scheduler (`us-central1`) | **ninguno** |
+| Revisión viva | `pmo-api-00035-45f` (`SERVICE_VERSION=00af5ef`) |
+| `GMAIL_PUBSUB_*` en la revisión | ausentes las cuatro |
+| Barrido de vencidas | la cita de las 01:05 del 08-11 se ejecutó **39,5 h tarde** |
+| Bandeja de la aplicación | **0 correos · 0 conversaciones** |
+| Upstash | **108 k / 500 k** comandos del mes |
+
+### Lo que comprobaré cuando la Fase 3 diga estar hecha
+
+Y lo dejo escrito ahora, antes de tener el parte delante, para que la lista no se
+adapte al resultado:
+
+1. Que existan **tema y suscripción push**, y que la suscripción apunte a
+   `/webhooks/gmail` con OIDC y la audiencia que el guard verifica.
+2. Que las **`GMAIL_PUBSUB_*` estén en la revisión**, no solo en `vars`.
+3. Que **desaparezca del log de arranque** la línea «no está configurado.
+   Omitiendo» de `gmail.service.ts:354`. Mientras esa línea salga, no está hecho,
+   por muy verde que vaya todo lo demás.
+4. Que **un correo real recorra la cadena** —push recibido → trabajo encolado →
+   tarea creada— y aparezca en la bandeja, que hoy está a cero.
+5. Que el **barrido de vencidas se ejecute con retrasos de segundos**, no de
+   horas, y que la cita venga de Cloud Scheduler y no de un temporizador dentro
+   del contenedor.
+6. Que el **consumo de Upstash no se dispare**: es el efecto colateral esperado
+   de reactivar el trabajo de fondo, y el plan gratuito tiene tope mensual.
+
+_Y una que no es técnica:_ que el escalado siga en cero instancias. Si aparece un
+`--min-instances`, la decisión de arquitectura habrá cambiado sin decirlo, y eso
+cuesta dinero todos los meses.
+
+### Auditoría de la arquitectura propuesta (antes de escribir código)
+
+Doc pidió revisar el diseño de la Fase 3 antes de encargarlo. **La forma es
+correcta** —Cloud Scheduler en vez de `--min-instances`, y el push de Pub/Sub
+despierta el contenedor solo, así que la ingesta no necesita instancia
+encendida—. Y la **renovación del `users.watch` cada 5 días** es un acierto que
+yo no tenía anotado: sin ella la ingesta muere a los 7 días sin decir nada.
+
+Lo que encontré, comprobado en el código de HEAD:
+
+**🔴 1. El prefijo `/api` no existe. Sería la cuarta vez.** `main.ts` **no llama
+a `setGlobalPrefix`** —verificado directamente—, así que `/api/cron/overdue` y
+`/api/cron/gmail-watch` darían **404**. Las rutas son `/cron/…`. Este error ya se
+cometió tres veces (§12) y `deploy.yml` tiene una validación escrita a propósito
+contra él para `GOOGLE_REDIRECT_URI`. La audiencia del webhook, en cambio, está
+bien: `/webhooks/gmail` sí existe.
+
+**🔴 2. Las variables ya están cableadas, y son cuatro, no tres.** `deploy.yml`
+las lee de `vars` desde `c836d1f`, con aviso si faltan. **El trabajo pendiente es
+`gh variable set`, no tocar el workflow**; si Claude las «inyecta» otra vez,
+duplicará o pisará el bloque que ya avisa. La cuarta es
+`GMAIL_PUBSUB_ALLOW_UNSIGNED` y **no hace falta ponerla**: el guard la ignora en
+producción (`!isProduction && …`), así que no es una puerta abierta.
+
+**🟠 3. Falta una cuenta de servicio, y una variable vacía desarma el guard.**
+`gmail-api-push@system.gserviceaccount.com` es quien **publica en el tema**;
+quien **firma el OIDC del push** es otra cuenta, la que se designa en la
+suscripción, y el agente de Pub/Sub necesita `serviceAccountTokenCreator` sobre
+ella. Sin ese paso la suscripción no puede firmar. Y `GMAIL_PUBSUB_SERVICE_ACCOUNT`
+debe llevar **ese** correo: el guard hace `if (expectedAccount && …)`, así que
+**vacía se salta la comprobación** y bastaría cualquier token de Google con el
+`aud` correcto. El servicio es `--allow-unauthenticated`: esa es la única puerta.
+
+**🟠 4. Reusar `PubSubAuthGuard` en el cron dará 401.** Compara `payload.email`
+contra `GMAIL_PUBSUB_SERVICE_ACCOUNT`, y Cloud Scheduler firma con **su propia**
+cuenta. Hace falta guard propio o lista de cuentas admitidas, cada una con su
+audiencia.
+
+**🟠 5. Problema de estado: quitar el job de BullMQ del código no lo apaga.**
+`overdue.scheduler.ts` usa `upsertJobScheduler(OVERDUE_SCHEDULER_ID, …)` y **la
+programación vive en Redis**. Sin un `removeJobScheduler` explícito, la clave se
+queda en Upstash —la vi: `bull:overdue-sweep:*` con 29 completados— y el barrido
+**puede seguir disparándose** cuando haya instancia viva, duplicando el de
+Scheduler.
+
+**🟠 6. La renovación de 5 días choca con el token de 7 días.** `users.watch` es
+por usuario y usa su token de Google; con la pantalla de consentimiento en
+«Prueba», **el refresco caduca cada 7 días**. La cadencia de 5 ayuda, pero si el
+usuario no vuelve a entrar, el token muere y la renovación falla en silencio. Es
+la primera dependencia dura entre la Fase 3 y la verificación de Google que está
+aparcada en la Fase 4.
+
+**🟡 Menores:** quién dispara el **primer** `watch` (que la ruta B sirva también
+para eso y se llame a mano tras desplegar, en vez de esperar 5 días) ·
+reintentos de Scheduler ante no-2xx, que con arranque en frío pueden solapar dos
+barridos · `@SkipThrottle()` en las rutas nuevas, como ya lo llevan sondas y
+webhook · el tema en la variable con **nombre completo**
+(`projects/…/topics/gmail-ingest`), que es lo que exige `users.watch`.
+
+_Apunte de siempre:_ `c836d1f` volvió a llevarse `ALANA.md` dentro —644 líneas—
+sin mencionarlo en el mensaje. Van tres.
+
+---
+
+## 19. Auditoría de la Fase 3 **ejecutada** (2026-08-13)
+
+Contrastado contra `HEAD` = `34d75d1` y la revisión viva `pmo-api-00037-ztk`
+(`SERVICE_VERSION` = `c8c87f0`). Los tres commits posteriores a `c8c87f0` tocan
+solo `.md`, que `ci.yml` ignora por `paths-ignore`: **la producción va al día**,
+no atrasada.
+
+### 19.1 Los seis hallazgos de §18, uno a uno
+
+| # | Hallazgo de §18 | Estado | Prueba |
+|---|---|---|---|
+| 🔴1 | `/api/cron/...` daría 404 | **Corregido** | `@Controller('cron')`; en el log, `Mapped {/cron/overdue, POST}` |
+| 🔴2 | Variables ya cableadas, y son cuatro | **Corregido** | `gh variable list`: las `GMAIL_PUBSUB_*` (menos `ALLOW_UNSIGNED`, que no hace falta) + 2 `CRON_*` |
+| 🟠3 | Falta cuenta firmante; variable vacía desarma el guard | **Corregido a medias** | ver 19.5 |
+| 🟠4 | Reusar `PubSubAuthGuard` en `/cron` daría 401 | **Corregido** | `CronAuthGuard` propio; `GoogleOidcVerifier` comparte solo la verificación |
+| 🟠5 | El repetible de BullMQ sigue en Redis | **Corregido y verificado dos veces** | ver 19.3 |
+| 🟠6 | Renovar cada 5 días con token de 7 | **Mejorado**, no resuelto | pasa a diario; la dependencia con la verificación de Google sigue en pie |
+
+Los cuatro menores también: la misma ruta registra y renueva, `@SkipThrottle()`
+está puesto, y el tema viaja con nombre completo
+(`projects/pmo-dashboard-503418/topics/gmail-ingest`).
+
+**El error del prefijo se cometió igual.** En el log de las 02:30:04 UTC está
+`POST /api/cron/overdue 404`. Se detectó dentro del mismo minuto porque el 404
+salió en la consola de Cloud Run, no en la de Scheduler. La advertencia sirvió
+para el código, no para la mano que configuró el job.
+
+### 19.2 La infraestructura, tal como está
+
+Todo comprobado con `gcloud`, no con el parte de nadie:
+
+- **Scheduler** — `pmo-overdue-sweep` (`5 * * * *`) y `pmo-gmail-watch-renew`
+  (`30 2 * * *`), los dos en `America/Cancun`, `ENABLED`, firmando con
+  `pmo-scheduler@…` y con `aud` = `https://pmo-api-mlpuuasqka-uc.a.run.app/cron`,
+  **idéntica a `CRON_OIDC_AUDIENCE`**. Una sola audiencia para los dos jobs, que
+  es lo que exige una única variable.
+- **Pub/Sub** — tema `gmail-ingest` con `roles/pubsub.publisher` para
+  `gmail-api-push@system.gserviceaccount.com`; suscripción `gmail-ingest-push`
+  contra `/webhooks/gmail` con OIDC de `pmo-pubsub-push@…`; y el agente
+  `service-614812477499@gcp-sa-pubsub` tiene `serviceAccountTokenCreator` sobre
+  esa cuenta. **Las tres piezas que faltaban en §18, puestas.**
+- **Cloud Run** — `--allow-unauthenticated` sigue (`allUsers` → `run.invoker`),
+  que es correcto: el navegador llama a esta API. Por eso los guards son la
+  única puerta y por eso importa el 19.5.
+- **Ejecuciones reales** — `/cron/gmail-watch` **200** a las 02:41:51 y
+  `/cron/overdue` **200** a las 03:05:02 UTC (= 22:05 en Tulum, que cuadra con
+  `5 * * * *` en `America/Cancun`).
+
+### 19.3 La purga de BullMQ, comprobada por dos caminos
+
+1. **En el log**: `Purgado el planificador BullMQ "overdue-sweep-cron"` a las
+   02:29:11, y en el arranque siguiente (03:21:48) ya `Sin crones BullMQ
+   pendientes de purgar`.
+2. **En Upstash**: `bull:overdue-sweep:completed` conserva 37 entradas y la más
+   reciente es `1786588151721` → **02:29:11 UTC exactas**. Ni una después. El
+   repetible dejó de dispararse en el instante de la purga, y el barrido de las
+   03:05 vino de Scheduler.
+
+En las tres horas siguientes hay **una sola** línea de barrido. No hay cron
+fantasma.
+
+### 19.4 Lo que queda abierto
+
+**🔴 A. Fallo nuevo, sin registrar en ninguna memoria: el copiloto se rompe con
+dos herramientas en el mismo turno.**
+
+En el log de las 02:56:23 UTC:
+
+> `Copiloto interrumpido (anthropic/pro, hilo cmsqxb46m0007hnyt20aozwu4): 400
+> … tool_use ids were found without tool_result blocks immediately after:
+> toolu_01MNYF3RDhDwiEjCJqHhZVuL, toolu_01Wb7sNhidZ7ftNZg7iynXd6`
+
+**Dos ids en un mismo mensaje.** El mecanismo está en
+`llm/anthropic.strategy.ts:183-198`: se empuja
+`{ role: 'assistant', content: final.content }` —el contenido **entero**, con
+todos los `tool_use`— y a continuación un mensaje de resultados construido solo
+sobre `ejecutables`. Todo `tool_use` que **no** sea ejecutable —una herramienta
+que espera confirmación humana, como redactar un correo, o un nombre que no está
+en `NOMBRES`— viaja sin su `tool_result`, y la API lo rechaza con 400.
+
+Se dispara cuando el modelo pide en un mismo turno algo que se ejecuta y algo
+que se propone. No lo cubre ninguna prueba: `copilot.spec.ts` ejercita los dos
+casos por separado, nunca mezclados.
+
+**🟠 B. El siguiente límite que se agota es Redis, no la clave de Anthropic.**
+
+Upstash marca **177 k de 500 k comandos** del mes (79.884 escrituras / 97.216
+lecturas), con 107 KB de almacenamiento. `CLAUDE_MEMORY.md` anotó 108 k; **la
+cifra ya no es esa**. Entre dos lecturas de la consola separadas por un par de
+minutos subió de 174 k a 177 k, con el contenedor caliente — son cifras
+redondeadas y no sirven para extrapolar, pero apuntan a que quien consume no son
+los correos sino **los workers de BullMQ sondeando mientras hay instancia viva**.
+Merece una medición seria: si el cubo se agota, se cae la cola, y con la cola se
+cae la ingesta entera.
+
+**🟠 C. La suscripción no tiene cola de mensajes fallidos.**
+`deadLetterPolicy` está vacío y `retryPolicy` también. Un aviso que el webhook
+no consiga procesar se reintenta contra el servicio hasta agotar la retención
+—siete días— sin que nadie lo vea. Hay `DeadLetterModule` para BullMQ, pero eso
+es la capa de abajo: lo que falta es del lado de Pub/Sub.
+
+**🟡 D. El código nuevo no tiene ni una prueba.** 535 pruebas en 21 suites, las
+mismas que antes de la Fase 3. `CronController`, `CronAuthGuard`,
+`GoogleOidcVerifier` y `OverdueCronPurge` entraron con cobertura **cero**, y son
+justamente las piezas que deciden quién puede disparar trabajo en producción.
+Lo único que hay bajo `common/security/` con prueba es `throttle.config.spec.ts`.
+
+**🟡 E. `CLAUDE_MODEL_CLASSIFY` no está definida.** Está en la lista de
+`deploy.yml` y en `.env.example`, pero no en `gh variable list`, así que en cada
+arranque se registra el aviso y se clasifica con el valor por defecto. Da igual
+—coincide con el que se quiere— pero es ruido en cada arranque y una variable
+que el pipeline cree que inyecta.
+
+**🟡 F. Pub/Sub entrega cada aviso dos veces.** Confirmado en el log: a las
+03:26:22 y 03:27:05 hay pares de jobs, uno encuentra 1 correo y el otro 0. El
+`jobId = messageId` no deduplica porque son `messageId` distintos. Inofensivo
+para los datos, pero es el trabajo que alimenta el punto B. Doc ya lo tiene en
+su backlog.
+
+### 19.5 Sobre el fail-open que quedó a medias (§18-3)
+
+`GoogleOidcVerifier` **sí** falla cerrado cuando falta la audiencia —lo dice y lo
+hace, líneas 53-59—, que era la mitad grave. Pero la comprobación de la cuenta
+sigue siendo `if (cuentaEsperada && …)`: **con la variable vacía no se comprueba
+nada**. Hoy no hay agujero porque las dos variables están puestas y `deploy.yml`
+grita si faltan. El riesgo no está eliminado del diseño, está tapado por la
+configuración — que es exactamente la distinción que sí se hizo bien con
+`COPILOT_EMAIL_TRANSPORT`.
+
+### 19.6 Repaso de las memorias ajenas
+
+- **`CLAUDE_MEMORY.md`** — la sección «Estado a 2026-08-13» es exacta en todo lo
+  que he podido contrastar: el prefijo, los dos guards, la audiencia única, la
+  purga, `--set-env-vars`, el `passthrough` y el `try` demasiado ancho. **Un solo
+  dato desfasado**: los 108 k de Upstash son ya 177 k.
+- **`TASKS.md`** — la afirmación «Scheduler llamó a las 03:05:00 UTC con 200, y
+  en las 3 h siguientes hay una sola línea `Barriendo`» es **cierta**,
+  comprobada. La corrección de 497/18 → 535/21 también, aunque conviene decir
+  que ese salto es **anterior** a la Fase 3.
+- **`GRAVITY_MEMORY.md`** — dos líneas nuevas, correctas, y por fin recoge la
+  deuda del 409 al convertir un correo, que yo venía viendo en los logs
+  (`POST /emails/…/to-task 409`, dos veces seguidas a las 02:52).
+- **`DOC.md`** — el estado y el backlog cuadran con lo que hay. Nada que
+  corregir.
+- **Higiene**: `c681a00` y `34d75d1` llevan **el mismo mensaje de commit** con
+  contenidos distintos. Sin consecuencia técnica, pero el historial deja de
+  poder leerse.
+
+### 19.7 Lo que esta fase enseña
+
+La Fase 3 es la primera en la que un aviso previo evitó trabajo perdido: los seis
+puntos de §18 llegaron al código. Lo que **no** evitó fue el mismo error en la
+mano —`/api/cron/overdue`, 404, cuarta vez—, porque una advertencia escrita en un
+comentario protege al que lee el archivo, no al que teclea en la consola de GCP.
+
+Y se repite el patrón de siempre: **lo que falló no dejó rastro donde se mira**.
+El 400 del copiloto está en Cloud Logging y en ninguna bitácora; el cubo de
+Upstash está en la consola de Upstash y en ninguna alerta; la suscripción sin
+cola de fallidos no produce ningún error hasta el día que lo produce.
+
+---
+
+## 20. El parche de urgencia `679b3c3`, verificado (2026-08-13)
+
+Respuesta de Claude a los tres hallazgos de §19.4. Commit `679b3c3`, revisión
+`pmo-api-00038-kwr` publicada a las **04:36:14 UTC**. Verificado por mí en el
+código, en las pruebas y en producción.
+
+### 20.1 Los tres puntos
+
+**1. El sondeo de Redis.** `common/bullmq/polling.config.ts` sube `drainDelay`
+de 5 a 60 s, `stalledInterval` de 30 a 300 s y el `blockingTimeout` de los
+`QueueEvents` de 10 a 60 s, aplicado a los dos workers vivos (`gmail-sync`,
+`classify-email`) y a los dos oyentes. Y **se borra `OverdueProcessor`**: desde
+que el barrido lo dispara Cloud Scheduler nadie encola en `overdue-sweep`, así
+que ese worker mantenía su llamada bloqueante esperando un trabajo que no podía
+llegar. La cola sigue registrada porque `OverdueCronPurge` necesita el objeto
+`Queue`; un `Queue` no sondea.
+
+**2. El 400 del copiloto.** `anthropic.strategy.ts` ahora contesta a **todos**
+los `tool_use` del turno: a los ejecutables con su resultado y a los manuales con
+`estado: pendiente_de_confirmacion`, que además evita que el modelo dé la acción
+por hecha. Prueba nueva del turno mixto —`SEARCH_EMAILS` + `CREATE_TASK` en la
+misma respuesta— que comprueba que el turno devuelto lleva los dos
+`tool_use_id`. **536 pruebas en 21 suites, ejecutadas por mí**: una más que
+antes, exactamente la que dice el parte.
+
+**3. El fail-open.** `GoogleOidcVerifier` pasa de `if (cuentaEsperada && …)` a
+rechazar con 401 cuando la variable no está. Arregla las dos puertas a la vez,
+porque la verificación es compartida.
+
+### 20.2 La medición del sondeo, con el método
+
+**Primero, lo que casi me hace medir mal.** A las 04:58 arranqué el monitor de
+Upstash y no llegaba **ni un comando**. Eso no probaba que el parche funcionara:
+probaba que el contenedor estaba dormido. Tuve que despertarlo con
+`GET /health/live` para poder medir nada.
+
+Con el contenedor despierto y en reposo, tres ciclos consecutivos:
+
+| Cliente | Ciclo 1 | Ciclo 2 | Ciclo 3 |
+|---|---|---|---|
+| `classify-email` | 04:59:31.940 | 05:00:32.023 | 05:01:32.9 |
+| `gmail-sync` | 04:59:32.753 | 05:00:32.836 | 05:01:32.919 |
+
+**60,08 s exactos** entre ciclos. Y los valores nuevos **están literalmente en el
+cable**, no inferidos:
+
+```
+BZPOPMIN "bull:classify-email:marker" "60"
+XREAD "BLOCK" "60000" "STREAMS" "bull:classify-email:events" "$"
+```
+
+`overdue-sweep` no aparece ni una vez: el worker huérfano está muerto de verdad.
+
+**Coste**: 19 comandos por ciclo de 60 s → **~19/min ≈ 1 140/h despierto y sin
+trabajo**. Contrastado con el contador por separado —04:53 → 04:57:30, +90
+comandos en 4,5 min = 20/min—: **dos métodos independientes, el mismo número**.
+De paso queda resuelto que Upstash cobra los subcomandos `lua`, no solo el
+`EVALSHA`.
+
+**Lo que no se puede afirmar.** No hay medición limpia de antes del parche —solo
+la estimación de ~4 000/h del propio archivo y mi ventana de 04:00→04:53, que dio
+~7 000/h pero incluía el despliegue, dos arranques y uso real del copiloto—, así
+que **el efecto es grande y no tiene múltiplo exacto**. Son además cinco minutos
+de observación. Y la variable que más manda no es el intervalo de sondeo sino
+**cuánto rato pasa el contenedor despierto**: con Cloud Run escalando a cero, el
+gasto en reposo tiende a cero solo.
+
+Estado: **183 k de 500 k** comandos del mes.
+
+### 20.3 El fail-closed, probado contra el llamante real
+
+El cron de las 05:05, ya sobre la revisión parcheada:
+
+```
+05:05:07.642  Ejecución de cron autorizada para pmo-scheduler@pmo-dashboard-503418.iam.gserviceaccount.com
+05:05:08.648  Barrido de vencidas ejecutado por Cloud Scheduler
+05:05:08.650  POST /cron/overdue 200
+05:05:13.282  Scheduler registra 200
+```
+
+El guard estricto **comprueba la cuenta por nombre y deja pasar**. Era la pieza
+que faltaba: un fail-closed no está verificado hasta que el llamante legítimo
+pasa por él.
+
+### 20.4 Los términos exactos, porque el parte los infló
+
+Tres cosas que **no** ocurrieron, y conviene que queden escritas antes de que se
+conviertan en historia del proyecto:
+
+- **No había «workers fantasma».** El cron fantasma lo había matado la purga de
+  la Fase 3 y quedó comprobado en §19.3. Lo que quitó este parche fue un worker
+  **legítimo y registrado** que se había quedado sin productor, más los valores
+  por defecto de los dos workers buenos. Configuración corriente, no residuo.
+- **La cuota no estaba a punto de quemarse.** Estaba al **37 %**. Iba en mala
+  dirección; no al borde.
+- **No se cerró ninguna brecha activa.** Las dos variables estaban puestas, y así
+  lo dije en §19.5. Lo que había era un diseño que se abría si alguien las
+  borraba. El parche elimina esa posibilidad, que es un arreglo real — pero
+  prevenir la posibilidad de una brecha y cerrar una brecha no son lo mismo.
+
+Lo que sí merece constar sin rebaja: **el 400 del copiloto estaba bien
+diagnosticado**, el parche lo corrige por el mecanismo correcto —contestar a
+todos los `tool_use`— y trae la prueba que lo fija.
+
+### 20.5 Lo que este parche abre
+
+**Un fallo de configuración ahora para el producto en vez de abrirlo.** Es la
+elección correcta, pero cambia las consecuencias: si algún día falta
+`CRON_SERVICE_ACCOUNT` o `GMAIL_PUBSUB_SERVICE_ACCOUNT`, los crones y la ingesta
+se paran en seco. Y `deploy.yml` **avisa pero no bloquea** —lo dice él mismo: «No
+se bloquea el despliegue»—. El aviso pasa a valer bastante más que antes.
+
+**Y el cambio más consecuente entró sin prueba.** La única prueba nueva es la del
+turno mixto del copiloto. `GoogleOidcVerifier` —el que ahora puede tumbar los dos
+crones y la ingesta si una variable falta—, `CronAuthGuard`, `CronController` y
+`OverdueCronPurge` siguen con cobertura **cero**. Lo que verificó el fail-closed
+fue el cron de las 05:05, es decir producción, no la batería.
+
+Sigue abierto de §19.4, sin tocar: la suscripción de Pub/Sub **sin cola de
+mensajes fallidos**, la **entrega doble** de cada aviso y
+`CLAUDE_MODEL_CLASSIFY`, que el pipeline cree inyectar y no existe.
+
+---
+
+## 21. La retrospectiva del 14 de agosto, contrastada (2026-08-14)
+
+Dos commits nuevos, `8bf9c8b` y `8c5642d`, y un parte de sesión con cinco
+puntos. Contrastado contra el código, contra la suite y contra los registros de
+producción de hoy. Revisión viva al escribir esto: **`pmo-api-00040-t94`**,
+publicada a las **16:42:24 UTC**, con `8c5642d` dentro.
+
+### 21.1 Lo que está y funciona
+
+**Las pruebas del `GoogleOidcVerifier` (`8bf9c8b`).** Es la deuda que dejé
+señalada en §20.5 y está bien pagada: 183 líneas, y la prueba que importa es la
+que tenía que ser — token **perfectamente válido**, firma buena y audiencia
+correcta, y aun así rechaza porque falta la variable, sin llegar siquiera a
+verificar la firma. Cubre además que la cuenta de Pub/Sub no abre `/cron` y al
+revés. **547 pruebas en 22 suites, ejecutadas por mí**: exactamente lo que dice
+el parte.
+
+Sigue **sin una sola prueba** lo demás de aquella lista: `CronAuthGuard`,
+`CronController` y `OverdueCronPurge`.
+
+**Los plazos de Prisma (`8c5642d`).** El fallo estaba medido de verdad, no
+supuesto: en el registro de hoy hay `5289 ms` y `5503 ms` contra un plazo de
+`5000 ms`. Se corrige en el constructor del cliente, que cubre las nueve
+transacciones de una vez. Los últimos `Transaction already closed` son de las
+**15:11**, anteriores al despliegue de las 16:42 — así que el arreglo aún no
+tiene ninguna hora de vuelo. No es una objeción; es que todavía no está
+comprobado.
+
+**El diagnóstico del `historyId` es correcto y está medido.** Lo confirmo en el
+registro, dos veces:
+
+```
+14:43:27.214  Webhook de Gmail recibido … (historyId 6578238)
+14:43:27.218  Webhook de Gmail recibido … (historyId 6578238)
+```
+
+Cuatro milisegundos, el mismo `historyId`. Deduplicar por `messageId` no habría
+servido. Ese punto del parte se sostiene entero.
+
+### 21.2 Lo que la retrospectiva no vio: la deduplicación tapa un fallo vivo
+
+En dos días hay **27 errores** `No se pudo encolar la sincronización de … (¿Redis
+caído?)`, todos sobre `pmo-api-00038-kwr`. Ninguno antes. Y esto es lo que pasa
+alrededor de ellos:
+
+```
+14:43:27.214  ERROR  No se pudo encolar la sincronización …   ← primera entrega
+14:43:27.218  Webhook de Gmail recibido … (historyId 6578238) ← segunda entrega
+14:43:27.282  Procesando tarea de sincronización …
+14:43:31.782  Sincronización completada: 1 correo(s)
+```
+
+**La entrega doble de Google llevaba dos días siendo la red de seguridad de este
+fallo.** El primer aviso no consigue encolar, el segundo sí, y el correo entra.
+Nadie lo ha notado porque el resultado final era correcto.
+
+A las **15:02:06** fallaron **las dos** (`historyId 6578446`) y detrás no hay
+ninguna sincronización. Ese correo entró más tarde, cuando otro aviso disparó una
+sincronización incremental que arrastra desde el `historyId` guardado. Se salva
+solo, pero por una propiedad del diseño que nadie eligió para esto.
+
+**Y ahí está el problema del parche.** La clave `SET NX` se escribe **antes** del
+`add()`, en su propio bloque, y **no se borra si el `add()` falla**. Desde el
+despliegue de las 16:42, cuando el primer encolado falle, el segundo aviso —el
+que hoy salva el correo— se descartará por duplicado durante diez minutos. El
+fallo no desaparece: cambia de «recuperado a los 4 ms» a «sin encolar, en
+silencio».
+
+Mientras siga llegando correo después, la sincronización incremental lo arrastra.
+El caso que no se arrastra es **el último correo antes de una pausa**.
+
+Se arregla en un sitio: escribir la clave **después** de encolar con éxito, o
+borrarla en el `catch`.
+
+Del porqué del fallo no puedo decir nada: **el error no se registra** (ver 21.3).
+No es la cuota de Upstash —iba por 183 k de 500 k el día 13, con un gasto medido
+de ~1 140/h, que no llega ni de lejos al tope—, y la conexión funciona un
+milisegundo después. Sin el texto del error no hay diagnóstico.
+
+### 21.3 El hallazgo crítico: la causa que se da no cuadra con los registros
+
+El parte afirma que Google revoca los refresh tokens **a los siete días exactos**
+por estar la app en «Testing», y que eso explica el fallo de las 02:30.
+
+**No cuadra, y conviene saberlo antes de construir una fase encima.**
+
+- **La última concesión de OAuth es del `2026-08-12 22:13:16 UTC`**, con
+  `prompt=consent`. No hay ninguna otra en los registros. El `watch` se renovó
+  **bien** el 08-13 a las `02:41:45`, y falló el 08-13 y el 08-14 a las `07:30`.
+  Eso son **nueve horas** después de la concesión, no siete días.
+- **El token está vivo hoy.** A las `16:25:51` de hoy la sincronización
+  incremental leyó Gmail con esas mismas credenciales:
+  `1 correo(s) desde historyId 6578667 → 6578770`. Un refresh token revocado no
+  lee correo.
+
+Lo que falla es **`users.watch`, y solo eso**. La ingesta, la lectura y el
+refresco del access token funcionan.
+
+**Por qué nadie puede saber la causa.** El registro de las 07:30 dice
+`Error configurando watchInbox para cmsntcsn8…` y **nada más**: ni `err`, ni
+`stack`, ni código. El motivo está en `gmail.service.ts:393` —
+`this.logger.error(mensaje, err)`—: Nest coloca el segundo argumento en la
+ranura del *stack*, que espera una cadena, y el formateador no escribe el objeto.
+**El proyecto ya conoce esta trampa**: está documentada palabra por palabra en
+`all-exceptions.filter.ts`, donde se explica que el serializador de pino
+«esperaba un `Error` de verdad». Hay **nueve llamadas** con esa forma, y dos de
+ellas son justo los dos fallos importantes de hoy.
+
+Sobre las «02:30 AM»: `07:30 UTC` son las `02:30` en Tulum, así que la hora citada
+es la del cron de renovación. Coincide la hora; eso no acredita la causa.
+
+Dos candidatos me parecen posibles y **ninguno demostrable sin el texto del
+error**: que Gmail rechace la llamada `watch` por sí misma, o que reviente la
+consulta a Prisma que va **dentro** del mismo `try`, después de que Gmail haya
+aceptado —en cuyo caso el `watch` habría funcionado y lo estaríamos contando como
+fallo—. Un solo registro bien hecho lo resuelve.
+
+### 21.4 Lo urgente tiene fecha, y no es la que se ha dicho
+
+El **único** `watch` que Gmail ha aceptado en diez días es el del
+**2026-08-13 a las 02:41:45 UTC**. `users.watch` caduca a los siete días, y esa
+caducidad no avisa: simplemente dejan de llegar avisos.
+
+> **Si la renovación diaria sigue fallando, la ingesta de correo se apaga sola el
+> 2026-08-20, hacia las 02:41 UTC** — las 21:41 del día 19 en Tulum.
+
+Eso es lo urgente de esta semana. No la verificación de Google.
+
+### 21.5 Sobre cerrar la Fase 3 y abrir la Fase 4
+
+**La Fase 3 se puede cerrar** en todo lo que he podido comprobar: rutas, guards,
+cuentas firmantes, purga del repetible, sondeo de Redis, el 400 del copiloto, el
+fail-closed y ahora sus pruebas. Queda registrado en §18, §19, §20 y aquí.
+
+**La Fase 4 tiene sentido, pero el motivo que se le ha puesto no se sostiene**, y
+una fase que arranca con un diagnóstico equivocado gasta el esfuerzo en el sitio
+equivocado. Antes de preparar nada para Google hay **una comprobación de un
+minuto que decide la fase entera**: todos los inicios de sesión traen
+`hd=zepto.com.mx`. Si la pantalla de consentimiento puede declararse de tipo
+**Interno** dentro del Workspace del dominio, **no hay verificación que pedir**,
+no existe la caducidad de siete días y la Fase 4 se reduce a cambiar un ajuste.
+No lo he comprobado —no tengo esa consola— y no está en ninguna memoria.
+
+Sigue abierto de §19 y §20, sin tocar: la suscripción de Pub/Sub **sin cola de
+mensajes fallidos**; `CLAUDE_MODEL_CLASSIFY`, que sigue avisando en cada arranque
+y **no aparece en el entorno de la revisión desplegada** —y el aviso ahora dice
+que llega «desde Secret Manager», que es una afirmación distinta de la de
+`deploy.yml`—; y la cobertura cero de `CronAuthGuard`, `CronController` y
+`OverdueCronPurge`.
+
+### 21.6 Lo que enseña
+
+Otra vez lo mismo, y ya van demasiadas: **lo que falla no deja rastro donde se
+mira**. El fallo de encolado se ve solo si uno cuenta los errores de dos días
+seguidos; el motivo del `watch` está en un objeto que el registro tira a la
+basura; y la caducidad del 20 de agosto no la va a anunciar nadie.
+
+Y una nueva: **la entrega doble de Google no era solo ruido, era una red**.
+Quitar una redundancia accidental sin mirar qué estaba sosteniendo es cómo un
+arreglo correcto se convierte en una avería nueva.
+
+---
+
+## 22. La Fase 4 no existe: la app es Interna (2026-08-14)
+
+Comprobado en la consola de Google Cloud, proyecto `pmo-dashboard-503418`, con el
+navegador y en modo lectura. Resuelve lo que dejé como pregunta abierta en §21.5.
+
+**Google Auth Platform → Público → Tipo de usuario: `Interno`.**
+
+Y el propio **Centro de verificación** lo dice sin margen de interpretación:
+
+> «No se requiere la verificación porque tu app está configurada con un tipo de
+> usuario interno.»
+
+De ahí se sigue todo lo demás:
+
+- **La app nunca estuvo en «Testing».** Las apps Internas no tienen estado de
+  publicación: la pantalla de «Descripción general» no ofrece ninguno, porque no
+  hay nada que publicar.
+- **La caducidad de siete días de los refresh tokens no aplica.** Es una regla de
+  las apps **Externas en pruebas**. Esta no lo es y nunca lo fue. Confirma por
+  tercer camino lo de §21.3: el token del 12 de agosto no ha sido revocado, y no
+  va a serlo el día 19.
+- **La verificación de Google —política de privacidad, dominio verificado, vídeo
+  del flujo, evaluación de seguridad— no hay que pedirla.** `gmail.modify` y
+  `gmail.send` son permisos restringidos, pero una app Interna los usa dentro de
+  su Workspace sin pasar por ahí.
+
+**La Fase 4, tal como estaba planteada, no tiene contenido.** No es que fuera
+urgente por el motivo equivocado: es que el trabajo entero sobraba.
+
+Un detalle que anoto por si algún día se marca como externa: en «Acceso a los
+datos» las tres tablas —no sensibles, sensibles y restringidos— están **vacías**.
+La pantalla de consentimiento no declara ni un permiso, mientras la aplicación
+pide dos restringidos en tiempo de ejecución. Para una app Interna es normal y no
+molesta a nadie. El día que alguien pulse «Marcar como externo», ese botón está a
+un clic del que mira el tipo de usuario, y esa lista vacía pasa de ser un detalle
+a ser el primer trámite de un proceso de semanas.
+
+**Lo que queda en pie de §21 no cambia ni una coma**: el `watch` sigue fallando
+todos los días, el motivo sigue sin registrarse, y **la ingesta se apaga sola el
+2026-08-20 hacia las 02:41 UTC** si nadie lo arregla. Se ha ido el trabajo
+imaginario; el real sigue entero.
+
+### 22.1 Lo que enseña
+
+Dos veces en el mismo día, el mismo error de método: **el diagnóstico se dedujo
+de un síntoma en vez de leerse de la fuente**. La app «estaba en Testing» sin que
+nadie hubiera abierto la pantalla que lo dice, igual que el fallo del `watch`
+«era el token» sin que nadie hubiera leído el error — que además nadie puede
+leer, porque el código lo tira.
+
+Una fase entera de trabajo —semanas de trámites con Google— iba a arrancar sobre
+una suposición que una página de la consola desmiente en cinco segundos. Mirar
+primero no es prudencia: es la parte barata del trabajo.
+
+---
+
+## 23. El `watch` arreglado, y la causa por fin leída (2026-08-14)
+
+Dos commits, `a09d05d` y `b8f9a4f`, en respuesta a §21. Verificado por mí en el
+código, en la suite y en producción, con el cron forzado **dos veces**.
+
+### 23.1 La causa, dicha por Gmail
+
+El primer commit no arregla el `watch`: arregla **poder leerlo**. En cuanto se
+desplegó, el registro de las **17:29:54** dijo lo que llevaba dos días callado:
+
+```
+Gmail rechazó el watch de cmsntcsn8…: code=400 · HTTP 400 ·
+Only one user push notification client allowed per developer
+(call /stop then try again)   ·   status=INVALID_ARGUMENT
+```
+
+**Gmail admite un solo cliente de notificaciones push y exige parar el anterior
+antes de poner otro.** De ahí la forma exacta del fallo, que era lo que no me
+cuadraba: el `watch` del 08-13 entró **porque no había ninguno puesto**, y todas
+las renovaciones posteriores chocaron contra el que aquel mismo dejó. Falla solo
+**a partir de la segunda ejecución**. Un cron que se estrena bien y se rompe para
+siempre a la segunda vuelta.
+
+Queda descartado mi candidato (b) de §21.3: el rechazo venía de Gmail, no del
+`findUnique`. La separación de aquel `try` se hizo igual, y sigue valiendo — un
+tropiezo de Postgres no debe poder disfrazarse de `watch` fallido.
+
+### 23.2 Lo comprobado en producción
+
+`b8f9a4f` llama a `users.stop` antes de `users.watch`, con captura aparte para no
+confundir un fallo del `stop` con un rechazo del `watch`. Vivo en
+**`pmo-api-00042-5rm`** (`SERVICE_VERSION=b8f9a4f`).
+
+Forcé `pmo-gmail-watch-renew` **dos veces**, con permiso expreso:
+
+```
+17:46:22  Bandeja de entrada observada (watch) para el usuario cmsntcsn8…
+17:46:22  Watch de Gmail renovado: 1 de 1 usuario(s)
+
+17:56:03  Bandeja de entrada observada (watch) para el usuario cmsntcsn8…
+17:56:03  Watch de Gmail renovado: 1 de 1 usuario(s)
+```
+
+**Las dos veces importan, y la segunda más que la primera.** El fallo original
+era «funciona una vez y falla a partir de la segunda»: una sola ejecución buena
+habría reproducido exactamente el estado del 08-13 y no habría probado nada. Con
+dos seguidas, lo que se demuestra es que el ciclo se sostiene.
+
+**La caducidad del 2026-08-20 queda cancelada.** El `watch` vigente es el de las
+17:56 de hoy y la renovación diaria ya sabe reemplazarlo.
+
+Ni un aviso de `No se pudo parar el watch anterior`: el `stop` funcionó limpio
+las dos veces.
+
+### 23.3 La regresión que se corrigió sin haber llegado a morder
+
+`a09d05d` libera la clave de deduplicación en el `catch` del encolado. Es el
+punto de §21.2, y el razonamiento que trae el commit es el correcto:
+**deduplicar lo hecho es correcto; deduplicar lo intentado pierde correos.**
+Estuvo mal escrita desde las 16:42 hasta las 17:28 — poco más de una hora, y sin
+ningún fallo de encolado en medio, así que no llegó a costar ningún correo.
+
+El helper `describir-error.ts` arregla los nueve sitios de una vez y saca el
+cuerpo de la respuesta de Google, que es donde vivía el motivo. Documentado con
+la trampa entera, que es lo que hacía falta: **estaba ya documentada en
+`all-exceptions.filter.ts` y aun así se repitió nueve veces**, porque estaba
+escrita en el archivo equivocado — en el que la sufrió, no en el que se copia.
+
+### 23.4 Lo que sigo sin poder dar por bueno
+
+**Cero pruebas nuevas.** 547 en 22 suites, **las mismas que antes de los dos
+commits**: el diff de `*.spec.ts` entre `8c5642d` y `b8f9a4f` está **vacío**, y el
+módulo `gmail` no tiene ni un archivo de pruebas. Han entrado sin cobertura el
+arreglo de una caída de dos días, el orden de la clave de deduplicación y un
+helper que ahora usan nueve sitios. Que la causa se leyera en producción no
+sustituye a una prueba de que `stop` se llama **antes** que `watch`: eso es
+exactamente el tipo de orden que una refactorización futura invierte sin darse
+cuenta, y el fallo vuelve a tardar dos días en verse.
+
+**Y no he visto un push entrar después del ciclo.** El `watch` está registrado y
+Gmail lo acepta; que los avisos sigan llegando sobre el registro nuevo se
+comprobará con el primer correo que entre. Comprobado a las 18:06 con un correo
+real: ver 23.6.
+
+Sigue abierto de §19–§22: la suscripción de Pub/Sub **sin cola de mensajes
+fallidos**, `CLAUDE_MODEL_CLASSIFY` —que sigue sin estar en el entorno de la
+revisión desplegada—, y la cobertura cero de `CronAuthGuard`, `CronController` y
+`OverdueCronPurge`.
+
+### 23.5 Lo que enseña
+
+**El arreglo entero cabía en treinta líneas; lo caro fue no poder leer el error.**
+Dos días de ingesta condenada, una fase de trabajo inventada sobre una causa
+falsa y una fecha de apagado a seis días vista — todo por un segundo argumento
+que el formateador tiraba a la basura. Lo primero que hizo Claude fue lo correcto
+y lo aburrido: hacer legible el fallo antes de tocarlo. La causa apareció en la
+primera ejecución.
+
+Y una que ya es de método: **un fallo que se estrena bien miente sobre sí mismo**.
+El `watch` del 08-13 funcionó, se anotó como éxito y esa anotación —mía, en
+§19.2— es la que dejó la avería fuera del radar dos días. Una sola muestra buena
+no dice que algo funcione; dice que ha funcionado una vez. Por eso hoy lo he
+forzado dos.
+
+### 23.6 Un correo real, de punta a punta (18:06 UTC)
+
+Envié un correo de verdad desde `zepto.soluciones@gmail.com` —cuenta externa, en
+el Chrome del usuario y con permiso expreso— a `antonio.sanchez@zepto.com.mx`,
+asunto `prueba alana 14ago`. La cadena completa, sin un solo error:
+
+```
+18:06:25.440  Webhook de Gmail recibido para: antonio.sanchez@… (historyId 6579583)
+18:06:25.525  POST /webhooks/gmail 200
+18:06:25.562  Procesando tarea de sincronización para el job 21012378828370433
+18:06:29.479  Sync incremental: 1 correo(s) desde historyId 6579495 → 6579583
+18:06:29.879  Sincronización completada: 1 correo(s)
+18:06:31.079  Procesando clasificación de email cmst9dnoc0007148pexs2q41u
+18:06:38.980  Resultado de IA: isActionable=false
+```
+
+**Trece segundos del envío al veredicto de la IA.** Y con esto queda cerrado lo
+que dejé abierto en 23.4: **los push llegan sobre el `watch` que registré a las
+17:56**. La ingesta está viva sobre el registro nuevo, no solo aceptada por
+Gmail.
+
+Ni un fallo de encolado, esta vez con el contenedor caliente.
+
+**Lo que este correo NO prueba, y conviene no apuntarse:** Google entregó el
+aviso **una sola vez**. No hay segunda entrega, así que **no aparece
+`Aviso duplicado de Gmail ignorado`** y **la deduplicación sigue sin haberse
+visto funcionar en producción** — ni la de `8c5642d` ni la liberación de la clave
+de `a09d05d`. Una prueba que no dispara el caso no dice nada sobre el caso.
+Aparecerá sola el día que Google vuelva a entregar doble; hasta entonces, ese
+punto sigue apoyado únicamente en las pruebas unitarias que Claude está
+escribiendo ahora.
+
+---
+
+## 24. Las pruebas del hotfix, y la Fase 3 clausurada (2026-08-14)
+
+`4de9236`. **385 líneas en tres archivos**, exactamente lo que dice el parte, y
+**569 pruebas en 25 suites ejecutadas por mí** —eran 547 en 22—.
+
+### 24.1 Lo que importa no es el número, sino si las aserciones muerden
+
+Las tres pruebas que pedí están, y están escritas de la única forma que sirve:
+
+**El orden `stop` → `watch`.** No se conforma con que se llamen los dos:
+
+```ts
+expect(stop.mock.invocationCallOrder[0]).toBeLessThan(watch.mock.invocationCallOrder[0]);
+```
+
+Invertir el orden **hace fallar la prueba por construcción**. Un
+`expect(stop).toHaveBeenCalled()` habría pasado con el fallo dentro; esto no
+puede.
+
+**La liberación de la clave.** La tercera prueba **simula Redis de verdad** —un
+`Set` que guarda al reservar y borra al liberar— y comprueba que, tras un
+encolado fallido, la segunda entrega **sí encola**: `add` llamado dos veces. Es
+exactamente la regresión de §21.2 puesta en una aserción.
+
+**`describirError`.** Usa el error literal de Google, con el
+`response.data.error` anidado tal cual llega de `googleapis`, y exige que el
+motivo salga. Si algún día alguien simplifica el helper y se deja el nivel de
+dentro, la prueba cae.
+
+Y cubren además cosas que yo no había pedido y que hacen falta: que un tropiezo
+de la base **después** del `watch` no lo invalide, que el motivo del rechazo
+viaje hasta el resultado del cron, y que un duplicado real **no borre** una clave
+ajena.
+
+**Sobre la validación por reversión**: no la he repetido: revertir un arreglo en
+el árbol de trabajo es tocar código y eso no me toca a mí. Lo que sí afirmo, y es
+lo que importa, es que **las aserciones son sensibles a la mutación por
+construcción** — comprobado leyéndolas una a una, no por el parte.
+
+### 24.2 Donde me equivoqué yo
+
+En el mensaje que pasé al equipo propuse arreglar la deduplicación «escribiendo
+la clave **después** de encolar, o borrándola en el `catch`». **La primera mitad
+era mala**: escribir después deja pasar las dos entregas concurrentes, que es
+justo lo que la deduplicación existe para impedir — el `SET NX` es lo único
+atómico y tiene que ir delante. Se implementó la segunda, que era la correcta, y
+la prueba lo explica mejor de lo que lo expliqué yo.
+
+Queda anotado porque es la clase de error que un auditor comete con facilidad:
+**diagnosticar bien y recetar de más**. El diagnóstico era mío y era correcto; una
+de las dos recetas habría abierto un fallo nuevo.
+
+### 24.3 La Fase 3 queda clausurada
+
+Con lo verificado en §18 a §24, y no por acuerdo sino por comprobación:
+
+| Qué | Cómo quedó comprobado |
+|---|---|
+| Rutas `/cron` sin prefijo, dos guards separados | Log de arranque y `200` reales |
+| Cuenta firmante y OIDC fail-closed | Cron de las 05:05 con `200` + 14 pruebas |
+| Purga del repetible de BullMQ | Log y marca de tiempo en Upstash, dos caminos |
+| Sondeo de Redis | Monitor en vivo: 60,08 s por ciclo, ~1 140/h |
+| El 400 del copiloto | Prueba del turno mixto |
+| Plazos de Prisma para Neon | Medido `5289/5503 ms` contra `5000` |
+| Renovación del `watch` | **Dos** ejecuciones forzadas, `1 de 1` las dos |
+| Ingesta completa | Correo real, 13 s de extremo a extremo (§23.6) |
+| Los tres arreglos del hotfix | 569 pruebas en 25 suites |
+
+**La arquitectura base está estable.** Lo digo con la palabra que se sostiene:
+*estable*, no *blindada*. Blindado es lo que resiste lo que no ha pasado todavía,
+y de eso no tengo ninguna prueba.
+
+### 24.4 Lo que la clausura no cubre
+
+Nada de esto bloquea cerrar la fase. Todo esto sigue abierto:
+
+- **La suscripción de Pub/Sub no tiene cola de mensajes fallidos.** Abierto desde
+  §19.4-C, sin tocar en cuatro despertares.
+- **`CLAUDE_MODEL_CLASSIFY` sigue sin existir** en el entorno de la revisión
+  desplegada, avisando en cada arranque.
+- **`CronAuthGuard`, `CronController` y `OverdueCronPurge` siguen con cobertura
+  cero.** Se cubrió el `GoogleOidcVerifier`, que era el grave; estos tres no.
+- **La deduplicación nunca se ha visto disparar en producción** (§23.6). Está
+  probada en la suite y no observada en vivo.
+- **Nadie vigila.** Todo lo de estos dos días lo encontré mirando. Ni la ingesta
+  condenada, ni los 27 fallos de encolado, ni el 400 del copiloto, ni el cubo de
+  Upstash dispararon **ningún aviso a nadie**. El sistema no sabe pedir ayuda.
+- **Todo está verificado con un solo usuario.** Cada `1 de 1` de esta bitácora es
+  literalmente un usuario. El error que costó la ingesta decía «per **developer**»,
+  y el bucle de renovación llama a `stop` y `watch` usuario por usuario. Con dos
+  buzones eso vuelve a ser territorio sin explorar.
+
+### 24.5 Lo que enseña
+
+La Fase 3 se cierra con el mismo patrón con el que se abrió: **los seis avisos
+previos llegaron al código, y aun así la avería más cara del período no estaba en
+la lista de nadie**. No apareció por revisar mejor el plan, sino por leer lo que
+producción estaba diciendo — cuando por fin se pudo leer.
+
+Y la lección que me llevo yo: **una muestra buena no es una prueba**. Anoté el
+`watch` del 08-13 como éxito y esa anotación tapó la avería dos días. Hoy el
+mismo cron lo he forzado dos veces, y el correo lo mandé de verdad en vez de
+darlo por bueno. Esa es toda la diferencia.
+
+---
+
+## 25. N=1 por decisión de producto, y la Fase 4 (2026-08-14)
+
+Decisión del Product Owner, registrada aquí porque **cambia lo que hay que
+auditar**, no solo lo que hay que construir.
+
+### 25.1 El alcance: un solo usuario, a propósito
+
+El PMO es un desarrollo personal a medida. **No se escala a multiusuario**, y la
+razón dada es buena: no meter complejidad ni pelearse con los límites de la API
+de Gmail sin una necesidad de negocio.
+
+Retiro por tanto mi recomendación de §24.5. Y conviene decir lo que la decisión
+resuelve, no solo lo que renuncia: **el riesgo que yo señalaba desaparece con
+ella**. El bucle que llama a `stop` y `watch` usuario por usuario dentro del mismo
+proyecto no puede tropezar con el «one push client per developer» si nunca hay un
+segundo buzón. Un límite que no se toca no es una deuda.
+
+Lo que sí cambia para mí: **`1 de 1` deja de ser una muestra pequeña y pasa a ser
+el universo entero**. Cuando escriba «verificado con un usuario» ya no es una
+reserva; es la cobertura completa.
+
+### 25.2 La Fase 4, tal como queda definida
+
+Sistema de alertas como prioridad alta, y el resto de la deuda: cola de mensajes
+fallidos en Pub/Sub, `CLAUDE_MODEL_CLASSIFY` y las pruebas de los crones. El
+reparto y el detalle viven en `TASKS.md`, que es donde va el trabajo; aquí queda
+solo lo que tendré que comprobar.
+
+**Dos cosas que mi propia auditoría sostiene, y que decidirán si esto sirve:**
+
+**1. La alerta tiene que dispararse por silencio, no solo por error.** Es la
+lección de estos dos días y es estructural. El `watch` fallando **sí** dejaba un
+`WARNING` —que nadie leyó—, pero la avería de verdad, la ingesta apagándose el
+2026-08-20, no habría producido **ninguna línea de ningún color**: los push
+sencillamente dejan de llegar. Ningún aviso construido sobre errores puede ver
+eso. Hace falta lo contrario: algo que avise cuando **deja de pasar** lo que debe
+pasar —un cron que no reportó hoy, un buzón sin un solo correo en X horas—. Las
+dos formas hacen falta; la segunda es la que faltaba.
+
+**2. El canal no puede depender de lo que vigila.** Si la alerta viaja por correo
+a través de la misma cuenta y la misma API de Google cuya caída se está
+notificando, falla exactamente cuando hace falta. Cualquier canal fuera de esa
+cadena —Discord, Slack, Telegram— cumple esa condición; el correo simple, no. Es
+la única objeción que tengo sobre la elección del canal, y es la que importa.
+
+### 25.3 Lo que enseña
+
+El alcance se define, no se descubre. Yo puedo decir qué está sin probar; **qué
+merece probarse es una decisión de producto**, y esta la ha tomado quien debía con
+un motivo dicho en voz alta. Anoto la diferencia porque en §24 la crucé: presenté
+como hueco técnico —«todo verificado con un único usuario»— algo que era en
+realidad una pregunta de alcance que no me correspondía responder.
+
+---
+
+## 26. La infraestructura de la Fase 4, auditada (2026-08-14)
+
+Levantada por el usuario en la consola entre las 21:47 y las 21:51. Comprobada
+por mí con `gcloud` y con la API de Monitoring, no con el parte. Revisión viva
+`pmo-api-00044-k8n`.
+
+### 26.1 Lo que está bien hecho
+
+**La cola de mensajes fallidos, completa.** Tema `gmail-ingest-dlq`, y
+`gmail-ingest-push` con `deadLetterTopic` y `maxDeliveryAttempts: 5`. Las dos
+concesiones de IAM que hacen falta **están puestas**, que es donde esto suele
+fallar en silencio:
+
+- `roles/pubsub.publisher` sobre el tema de fallidos, y
+- `roles/pubsub.subscriber` sobre la suscripción de origen,
+
+las dos para `service-614812477499@gcp-sa-pubsub`. Sin cualquiera de las dos, el
+reenvío a la cola falla **sin error visible** y el mensaje se pierde igual. Y hay
+`gmail-ingest-dlq-sub` sobre el tema: un tema de fallidos sin suscripción tira los
+mensajes según llegan, así que ese detalle también está cubierto.
+
+Cierra §19.4-C, abierto desde hace cinco despertares.
+
+### 26.2 🔴 La alerta no avisa a nadie
+
+La política existe, se llama **`[Capa 2] Fallo Critico en Infraestructura`**, está
+`enabled: true`… y su campo `notificationChannels` está **vacío**. No es que
+apunte a un canal mal configurado: **en el proyecto entero no existe ni un solo
+canal de notificación**. Comprobado contra
+`monitoring.googleapis.com/v3/projects/…/notificationChannels`: la lista vuelve
+vacía.
+
+Una política sin canal **evalúa la condición, abre el incidente y no se lo cuenta
+a nadie**. Aparece en la consola de Monitoring si alguien entra a mirarla — que es
+exactamente la postura que la Fase 4 existe para eliminar.
+
+Es el punto entero de la fase, y ahora mismo no está conectado.
+
+### 26.3 🔴 La «Capa 2 por silencio» es en realidad una alerta por error
+
+La condición de esa misma política, tal cual:
+
+```
+conditionMatchedLog.filter =
+  resource.type=("cloud_run_revision" OR "cloud_scheduler_job") AND severity>=ERROR
+```
+
+Eso es un aviso **por error registrado**, es decir Capa 1 con otro nombre. La
+Capa 2 que se definió —y que el propio nombre promete— era **por silencio**, y
+esa no existe: no hay condición de ausencia, ni comprobación de actividad, ni
+nada que mire lo que *deja* de pasar.
+
+**Y esa distinción no es teórica en este proyecto**: es literalmente la avería de
+ayer. La ingesta camino de apagarse el 2026-08-20 no habría producido **ni una
+línea de severidad ERROR**; el `watch` fallido dejaba un `WARNING`, que este
+filtro tampoco recoge, y el apagón final no habría dejado nada en absoluto. Esta
+política, tal como está, **no habría visto el fallo que motivó la fase**.
+
+Falta lo contrario: un vigía fuera del proceso que se queje cuando el cron no
+reporta o cuando no entra un correo en N horas.
+
+### 26.4 🔴 «Limpiar» `CLAUDE_MODEL_CLASSIFY` cambió el modelo del producto
+
+La variable ya existe. Su valor es **`claude-3-5-sonnet-20240620`**.
+
+En el log, con quince segundos de diferencia:
+
+```
+21:47:37  pmo-api-00043-4zn  Modelo de clasificación: claude-sonnet-5
+21:48:22  pmo-api-00044-k8n  Modelo de clasificación: claude-3-5-sonnet-20240620
+```
+
+El aviso de arranque desapareció, y con él el modelo. Lo que estaba corriendo por
+defecto era **Claude Sonnet 5**; lo que corre ahora es un modelo de **junio de
+2024**. La clasificación de correo —que es la función central del producto:
+decide qué es accionable y crea tareas— pasó a un modelo dos generaciones más
+viejo **como efecto secundario de una tarea de limpieza**.
+
+Yo señalé esa variable como ruido en cada arranque (§19.4-E). Ruido era el aviso.
+La respuesta correcta era fijarla al valor que ya se estaba usando, o borrar el
+aviso; no cambiar el modelo.
+
+**Y no se sabe siquiera si ese identificador sigue vivo**: desde las 21:48 no se
+ha clasificado ni un correo, así que la primera clasificación que llegue es la
+que lo dirá. Si el modelo está retirado, la clasificación no se degrada: falla.
+
+### 26.5 🟠 Dos detalles del despliegue
+
+**El secreto no está enchufado.** `ALERT_WEBHOOK_URL` existe en Secret Manager
+—creado a las 21:49:18, y no he mirado su valor— pero **no aparece en el entorno
+de la revisión desplegada**. La Capa 1 no podrá enviar nada aunque Claude escriba
+el código: falta cablearlo en `deploy.yml` como los demás secretos.
+
+**La suscripción sigue sin `retryPolicy`.** Con `maxDeliveryAttempts: 5` y sin
+política de reintento, Pub/Sub reintenta *lo antes posible*. En un servicio que
+escala a cero y con una base que tarda ~5 s en despertar, cinco intentos se
+pueden quemar en segundos y mandar a la cola de fallidos un aviso que habría
+entrado a la sexta. Un `minimumBackoff` de unos segundos lo evita.
+
+Y lo que hace eso peor: **un mensaje que cae en la cola de fallidos no genera
+ninguna línea en Cloud Run**, así que la política de 26.3 tampoco lo vería. La
+`gmail-ingest-dlq-sub` es de extracción y no tiene a nadie leyéndola: lo que caiga
+ahí se queda siete días y caduca.
+
+### 26.6 Lo que sigue abierto de antes
+
+- **`CronAuthGuard`, `CronController` y `OverdueCronPurge`: cobertura cero.** Sin
+  cambios.
+- **Neon sigue rechazando conexiones en frío.** Hoy a las 21:32:
+  `code=P1001 · Can't reach database server`. El arreglo de `8c5642d` sube el
+  plazo de las **transacciones**; esto es otra cosa —no llegar a conectar— y no
+  lo toca.
+- **La deduplicación sigue sin verse disparar en producción** (§23.6).
+
+### 26.7 Lo que enseña
+
+Tres de los cuatro hallazgos son de la misma familia y merece decirlo junto:
+**la infraestructura quedó puesta y desconectada**. La cola de fallidos existe
+pero nadie la lee; la política de alertas existe pero no tiene canal; el secreto
+existe pero no llega al contenedor. Cada pieza pasa su propia comprobación —está
+creada, está activa, está guardada— y el sistema sigue exactamente igual de ciego
+que ayer.
+
+Es la versión de infraestructura del mismo error que llevo cuatro días
+persiguiendo: **algo que parece hecho porque existe**. El `watch` estaba
+registrado y no se renovaba; el error se registraba y no se leía; ahora la alerta
+se dispara y no llega. Lo que hay que comprobar nunca es si la pieza está: es si
+**el mensaje llega al otro extremo**.
+
+Y una que es solo para el que limpia: **una tarea de higiene que cambia el
+comportamiento del producto no es higiene**. Fijar una variable al valor que ya
+estaba en uso cuesta lo mismo que fijarla a otro.
+
+---
+
+## 27. La Capa 1 y la Capa 2, contrastadas (2026-08-14/15)
+
+Parte de Claude con cuatro documentos y la Capa 1 escrita, más el trabajo de
+Gravity en la infraestructura. Comprobado contra el árbol, la suite, `gcloud` y
+la API de Monitoring.
+
+### 27.1 Lo que quedó arreglado de §26, y está bien arreglado
+
+**La alerta por silencio existe y es la correcta.** La política de errores que
+señalé en §26.3 **ha desaparecido**, y en su lugar hay
+`[Capa 2] Fallo Critico: Apagon del Watcher de Gmail`, con esto dentro:
+
+```
+conditionAbsent.filter   = metric.type="pubsub.googleapis.com/subscription/push_request_count"
+                           AND resource.type="pubsub_subscription"
+                           AND resource.labels.subscription_id="gmail-ingest-push"
+conditionAbsent.duration = 84600s   (23,5 h)
+```
+
+Es exactamente lo que argumenté que faltaba: **vigila la ausencia, no el error**.
+Y mide en el sitio correcto — las invocaciones que Pub/Sub hace al webhook—, que
+es la señal que se apaga cuando el `watch` caduca sin dejar ni una línea de log.
+Habría visto la avería del día 20. Y ya **tiene canal asignado**, que era el otro
+agujero de §26.2.
+
+**La política de reintentos, puesta**: `minimumBackoff 10s`, `maximumBackoff
+600s`, con `maxDeliveryAttempts: 5`. Cierra §26.5: ya no se pueden quemar cinco
+intentos inmediatos contra un contenedor dormido.
+
+**Las pruebas de los crones, hechas.** **597 pruebas en 29 suites, ejecutadas por
+mí** —eran 569 en 25—. Las cuatro suites nuevas son `alert.service`,
+`cron.controller`, `cron-auth.guard` y `overdue.cron-purge`: **cierra §19.4-D**,
+abierto desde hace seis despertares.
+
+**Y la Capa 1 está bien diseñada.** `AlertModule` importado en `app.module.ts`, y
+los cuatro enganches existen de verdad —comprobado en el árbol, no en el parte—:
+`dead-letter.listener.ts`, `all-exceptions.filter.ts`, `gmail.controller.ts` y
+`gmail.service.ts`. Las tres reglas se sostienen: nunca lanza, freno en Redis,
+lleva la causa.
+
+### 27.2 🔴 La Capa 1 no está en producción
+
+Me puse a buscar en el log el aviso de arranque de `AlertService` y **no aparece
+ninguno**. Esa ausencia es el hallazgo:
+
+```
+origin/master     → 4de9236   (las pruebas del hotfix)
+HEAD local        → a23202d   (feat(alerts): la aplicación aprende a pedir ayuda)
+revisión viva     → pmo-api-00045-ndn, SERVICE_VERSION = 4de9236
+```
+
+**`a23202d` está commiteado en local y sin empujar.** Lo que corre en producción
+es el código de antes: no hay `AlertService`, no hay enganches, y la revisión
+`00045` —desplegada a las 22:14— se construyó desde `4de9236`, disparada por el
+cambio de variable, no por el commit.
+
+No es un fallo: Claude dijo expresamente que no empujaba. Lo anoto porque **el
+parte y el estado de producción no dicen lo mismo**, y porque cualquiera que lea
+«la aplicación aprende a pedir ayuda» dará por hecho que ya lo hace.
+
+### 27.3 🔴 Y cuando se empuje, seguirá muda
+
+`deploy.yml` inyecta el secreto **condicionado** a que exista la variable de
+repositorio `ALERT_WEBHOOK_SECRET`:
+
+```bash
+if [ -n "${{ vars.ALERT_WEBHOOK_SECRET }}" ]; then
+  SECRETS="${SECRETS},ALERT_WEBHOOK_URL=${{ vars.ALERT_WEBHOOK_SECRET }}:latest"
+else
+  echo "::warning::ALERT_WEBHOOK_SECRET no está definida; la API no podrá enviar alertas."
+fi
+```
+
+**Esa variable no existe.** `gh variable list` no la trae. El secreto sí está en
+Secret Manager desde las 21:49:18, pero **nada lo nombra**, así que la rama que
+se ejecuta es el `else` y lo único que pasa es un aviso amarillo en un run que
+nadie mira.
+
+El razonamiento de por qué va condicionada es correcto —un `--set-secrets` que
+nombre un secreto inexistente tumba el despliegue entero—, y el servicio avisa al
+arrancar si le falta la URL. Pero el resultado neto, hoy, es que **la Capa 1 se
+desplegará muda y el único aviso de que está muda es del mismo tipo que los que
+nadie ha leído estos cuatro días**. Falta un paso de un minuto: crear la variable
+con el nombre del secreto.
+
+### 27.4 🔴 El modelo de clasificación ha ido hacia atrás dos veces
+
+En el log, con las tres revisiones:
+
+```
+21:47:37  pmo-api-00043-4zn  Modelo de clasificación: claude-sonnet-5
+21:48:22  pmo-api-00044-k8n  Modelo de clasificación: claude-3-5-sonnet-20240620
+22:15:09  pmo-api-00045-ndn  Modelo de clasificación: claude-3-sonnet-20240229
+```
+
+`TASKS.md` lo llama «**variable revertida** a `claude-3-sonnet-20240229` tras
+corrección arquitectónica». **No es una reversión**: revertir habría sido volver
+a `claude-sonnet-5`, que es lo que estaba corriendo y lo que el código trae por
+defecto. Lo que ha ocurrido es un **segundo salto hacia atrás** — de un modelo de
+junio de 2024 a uno de **febrero de 2024**.
+
+Y `claude-3-sonnet-20240229` es Claude 3 Sonnet, un modelo **retirado**. Si ese
+identificador ya no se sirve, la clasificación no se degrada: **falla entera**.
+
+**No se ha clasificado ni un correo desde las 21:32**, así que ninguno de los dos
+valores nuevos ha llegado a funcionar nunca. La única evidencia de que la
+clasificación funciona es de cuando la variable no existía.
+
+El valor correcto es el que ya se estaba usando: `claude-sonnet-5`.
+
+### 27.5 🟠 El canal de notificación dice de sí mismo que está pendiente
+
+```
+CANAL: "Google Chat Webhook (Pendiente)"  ·  tipo=webhook_tokenauth  ·  enabled=true
+```
+
+La política apunta a él, así que la Capa 2 está formalmente completa. Pero su
+propio nombre dice que no lo está, es un webhook genérico y no el canal nativo de
+Chat, y **nadie ha demostrado que llegue un mensaje al otro extremo**. Conviene
+saber además que el cuerpo que manda Cloud Monitoring no tiene la forma que un
+webhook entrante de Google Chat espera —Chat quiere un `text`—, así que esto es
+justo lo que hay que probar disparándolo, no leyéndolo.
+
+### 27.6 Dos correcciones al parte
+
+- **`GCP_SETUP.md` no está congelado**: tiene **+84 líneas** sin commitear. El
+  parte dice «no lo toqué… congelado el 24 de julio»; lo ha tocado otro.
+- **`alert_policy_v2.json` no es un pendiente de nadie**: su contenido
+  —`displayName`, filtro, duración y canal— **coincide exactamente con la política
+  que ya está aplicada** en el proyecto. Es el archivo desde el que se creó. Lo
+  que hay que decidir es si se versiona (la infraestructura escrita es lo único
+  que sobrevive a quien la configuró) o se borra, no si se aplica.
+
+### 27.7 Lo que sigue abierto
+
+- **Neon sigue rechazando conexiones en frío**: `P1001` a las 21:32. El arreglo
+  de los plazos sube el tiempo de las transacciones; esto es no llegar a
+  conectar. La política de reintentos de Pub/Sub lo amortigua ahora, que es más
+  de lo que había.
+- **La deduplicación sigue sin verse disparar en producción** (§23.6).
+
+### 27.8 Lo que enseña
+
+Es el patrón de §26.7 una capa más arriba, y por eso lo repito en vez de darlo
+por dicho: **la Capa 1 está escrita, probada, revisada y commiteada — y no está
+en producción**. La Capa 2 está aplicada y apunta a un canal que se llama a sí
+mismo «Pendiente». El secreto existe y nada lo nombra.
+
+Cada pieza pasa su propia comprobación. Nadie ha comprobado la única que importa,
+que es la misma de siempre: **que el mensaje llegue al otro extremo**. Un sistema
+de alertas es exactamente el sitio donde ese error se paga doble, porque cuando
+falle no habrá nada que avise de que la alerta no avisó.
+
+La forma de cerrarlo es una sola: **provocar un fallo a propósito y esperar el
+mensaje en Chat**. Mientras eso no ocurra, la Fase 4 está escrita, no terminada.
+
+---
+
+## 28. La clasificación está rota en producción (2026-08-14, 22:45 UTC)
+
+Lo que en §27.4 escribí como riesgo —«si ese identificador está retirado, la
+clasificación no se degrada: falla entera»— ha ocurrido. No es una previsión: está
+en el log.
+
+```
+22:45:52  ERROR  Falló la clasificación del email cmstjc7g50001h7p0xafrfq3o:
+                 HTTP 404 · {"type":"error","error":{"type":"not_found_error",
+                 "message":"model: claude-3-sonnet-20240229"}}
+```
+
+**Anthropic devuelve 404 `not_found_error`: ese modelo ya no se sirve.** La
+clasificación de correo —la función que decide qué es accionable y crea tareas—
+**no funciona**, sobre la revisión viva `pmo-api-00046-64q`.
+
+**Alcance**: desde las 22:15, cuando la variable entró en producción, no hay ni
+un solo `Resultado de IA` en el log. Cuatro correos han entrado a clasificarse
+—`cmstjc7g5`, `cmstjc92i`, `cmstjxvdx`, `cmstjxwut`— y ninguno ha salido. El
+último éxito es de las **21:32**, con `claude-sonnet-5`, antes de que la variable
+existiera.
+
+La cadena, en tres pasos y por escrito, porque conviene verla entera:
+
+1. Yo señalé `CLAUDE_MODEL_CLASSIFY` como **ruido en el arranque** (§19.4-E).
+2. Se «limpió» fijándola a `claude-3-5-sonnet-20240620` (§26.4) y luego a
+   `claude-3-sonnet-20240229`, anotado en `TASKS.md` como «revertida» (§27.4).
+3. El modelo estaba retirado. **404 en producción.**
+
+Ninguno de los tres pasos fue descuidado por separado. El resultado es que una
+tarea de higiene apagó la función central del producto.
+
+### 28.1 Y la alerta estaba muda
+
+En el arranque de esa misma revisión, trece minutos antes del 404:
+
+```
+22:32:47  WARNING  ALERT_WEBHOOK_URL no está configurada: las alertas se
+                   registrarán en el log pero no se enviarán a ningún sitio.
+```
+
+La Capa 1 **sí llegó a producción** —`adf2efe` incluye `a23202d`, y la revisión
+`00046-64q` la lleva dentro—, así que §27.2 queda resuelto. Pero llegó **sin la
+URL**, porque la variable de repositorio `ALERT_WEBHOOK_SECRET` sigue sin existir
+y `deploy.yml` toma la rama del `else`.
+
+De modo que **el primer fallo real que el sistema de alertas tenía que contar
+—este— no se lo ha contado a nadie**. Los fallos de clasificación acaban en los
+oyentes de la cola de fallidos de BullMQ, que es uno de los cuatro enganches: el
+aviso se generó y se quedó en el log, que es exactamente el sitio donde nadie
+mira.
+
+Es la demostración que pedía §27.8, y ha llegado sola: un sistema de alertas que
+no se prueba de punta a punta falla la primera vez que hace falta, y falla en
+silencio por definición.
+
+### 28.2 Lo que hay que hacer, y es corto
+
+Dos cambios de un minuto, ninguno de código:
+
+1. **`CLAUDE_MODEL_CLASSIFY` → `claude-sonnet-5`.** Es el valor que estaba
+   funcionando hasta las 21:47 y el que el código trae por defecto. No es una
+   elección de modelo: es volver al que ya se estaba usando.
+2. **Crear la variable de repositorio `ALERT_WEBHOOK_SECRET`** con el nombre del
+   secreto que ya existe en Secret Manager desde las 21:49. Sin ella, la Capa 1
+   se despliega muda cada vez.
+
+Y después, la comprobación que cierra la fase de verdad: **provocar un fallo y
+esperar el mensaje en Chat**. Hoy había uno servido y no llegó.
+
+### 28.3 Lo que enseña
+
+Tres veces en dos días, la misma forma: **algo que parece hecho porque existe**.
+La variable existía y apuntaba a un modelo muerto; la alerta existía y no tenía
+URL; el canal existe y se llama «Pendiente».
+
+Y una nueva, que es mía y me la apunto: **señalar algo como ruido invita a
+callarlo, no a arreglarlo**. Escribí que `CLAUDE_MODEL_CLASSIFY` era «ruido en
+cada arranque». Era cierto y era incompleto: lo que había que decir es que el
+aviso protegía un valor por defecto correcto, y que fijar la variable **sin
+comprobar el modelo** cambiaba el producto. Un auditor que enumera molestias sin
+decir cuál es el arreglo correcto está repartiendo trabajo mal definido, y el
+trabajo mal definido se hace mal.
