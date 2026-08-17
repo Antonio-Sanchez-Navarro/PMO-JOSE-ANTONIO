@@ -65,6 +65,49 @@ describe('GmailController · webhook de Gmail', () => {
     expect(del).not.toHaveBeenCalled();
   });
 
+  // El messageId real de Pub/Sub son solo dígitos. El helper de arriba usa
+  // «msg-1», que no lo es, y por eso los tests pasaban mientras producción
+  // rechazaba **todos** los avisos con `Custom Id cannot be integers`.
+  const MESSAGE_ID_REAL = '15481022266393333';
+
+  /** La comprobación literal de BullMQ (job.js): forma, no tipo. */
+  function bullmqLoRechaza(jobId?: string) {
+    return jobId !== undefined && `${parseInt(jobId, 10)}` === jobId;
+  }
+
+  it('el jobId no tiene forma de entero, o BullMQ rechaza el encolado', async () => {
+    const { controller, add } = crear();
+
+    await controller.handleGmailWebhook(avisoDeGmail(MESSAGE_ID_REAL));
+
+    const { jobId } = add.mock.calls[0][2];
+    expect(jobId).toBe(`gmail-sync-${MESSAGE_ID_REAL}`);
+    expect(bullmqLoRechaza(jobId)).toBe(false);
+    // BullMQ solo admite `:` en jobId de tres partes; el prefijo usa guiones.
+    expect(jobId).not.toContain(':');
+  });
+
+  it('sigue deduplicando: dos avisos con el mismo messageId dan el mismo jobId', async () => {
+    const { controller, add } = crear();
+
+    await controller.handleGmailWebhook(avisoDeGmail(MESSAGE_ID_REAL));
+    await controller.handleGmailWebhook(avisoDeGmail(MESSAGE_ID_REAL));
+
+    expect(add.mock.calls[0][2].jobId).toBe(add.mock.calls[1][2].jobId);
+  });
+
+  it('sin messageId deja que BullMQ genere el id, en vez de colapsarlos en uno', async () => {
+    const { controller, add } = crear();
+
+    const aviso = avisoDeGmail();
+    delete (aviso.message as { messageId?: string }).messageId;
+    await controller.handleGmailWebhook(aviso);
+
+    // «gmail-sync-undefined» sería el mismo id para avisos distintos: el
+    // segundo correo se descartaría como duplicado del primero.
+    expect(add.mock.calls[0][2].jobId).toBeUndefined();
+  });
+
   it('LIBERA la clave si el encolado falla, para que la segunda entrega lo salve', async () => {
     const add = jest.fn().mockRejectedValue(new Error('Redis caído'));
     const { controller, del } = crear({ add });

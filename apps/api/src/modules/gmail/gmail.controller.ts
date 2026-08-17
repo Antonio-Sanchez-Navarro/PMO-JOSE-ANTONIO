@@ -206,7 +206,20 @@ export class GmailController {
         },
         {
           // Un mismo aviso reintentado por Pub/Sub no debe encolar dos veces.
-          jobId: body.message.messageId,
+          //
+          // El prefijo no es cosmético. BullMQ rechaza el jobId comprobando su
+          // **forma**, no su tipo: `${parseInt(jobId, 10)} === jobId` lanza
+          // `Custom Id cannot be integers`. El `messageId` de Pub/Sub ya es un
+          // string, pero de dígitos («15481022266393333»), así que encajaba en
+          // esa comparación y **todo aviso entrante era rechazado al encolar**.
+          // Convertirlo con String() no arregla nada: sigue siendo dígitos.
+          //
+          // Sin `:` — BullMQ solo los admite en jobId de tres partes.
+          //
+          // Y el ternario importa: `messageId` es opcional, y sin él el
+          // template daría «gmail-sync-undefined» para todos, colapsando avisos
+          // distintos en un único job. Sin id, que BullMQ genere el suyo.
+          jobId: body.message.messageId ? `gmail-sync-${body.message.messageId}` : undefined,
           attempts: 3,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: 100,
