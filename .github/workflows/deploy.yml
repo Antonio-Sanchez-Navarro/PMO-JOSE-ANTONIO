@@ -551,12 +551,36 @@ jobs:
           # webhook. Lo que queda público a propósito es lo que tiene que
           # serlo: `/health/*` y el callback de OAuth.
           # ───────────────────────────────────────────────────────────────
+          # ───────────────────────────────────────────────────────────────
+          # `--no-cpu-throttling`: la CPU sigue asignada entre peticiones.
+          #
+          # No es una optimización, es un requisito: los workers de BullMQ
+          # —sincronización de Gmail y clasificación— hacen su trabajo **fuera**
+          # del ciclo de una petición HTTP. Con el estrangulamiento por defecto,
+          # Cloud Run le quita la CPU al contenedor en cuanto contesta, así que
+          # un job encolado se queda a medias hasta que otra petición despierte
+          # la instancia. El aviso del webhook se responde en milisegundos; lo
+          # que tarda es lo de después.
+          #
+          # Se pone aquí porque **estaba aplicado a mano en el servicio**
+          # (`run.googleapis.com/cpu-throttling=false`, revisión `00057-ksl`,
+          # creada desde una consola y no por este pipeline). Una configuración
+          # que solo vive en la consola sobrevive mientras nadie recree el
+          # servicio: escrita aquí, se vuelve a poner sola en cada despliegue y
+          # se puede leer sin abrir Google Cloud.
+          #
+          # ⚠️ **Tiene precio**: se factura CPU durante toda la vida de la
+          # instancia, no solo mientras atiende. Con `maxScale=20` y escalado a
+          # cero el gasto sigue siendo pequeño, pero si algún día la factura de
+          # Cloud Run sorprende, este flag es el primer sitio donde mirar.
+          # ───────────────────────────────────────────────────────────────
           gcloud run deploy "${SERVICE}" \
             --image "${IMAGE}:${SHA}" \
             --region "${REGION}" \
             --platform managed \
             --port 8080 \
             --allow-unauthenticated \
+            --no-cpu-throttling \
             --set-env-vars "${ENV_VARS}" \
             --set-secrets "${SECRETS}" \
             --quiet
