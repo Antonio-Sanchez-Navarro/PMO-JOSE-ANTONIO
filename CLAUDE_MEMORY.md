@@ -9,6 +9,86 @@
 
 ---
 
+## Sondeo de Redis, segunda vuelta · y el `.gitignore` que tapaba todo (2026-08-18)
+
+### 🔴 El ajuste del 08-13 se quedó corto, y el error estaba en la aritmética
+
+Medido en la consola de Upstash: **297 k de 500 k** comandos, frente a 177 k el
+08-14. Unos **30 k al día**, que agotan la cuota gratuita en menos de una semana.
+
+La primera estimación contaba **un comando por ciclo de sondeo**. No lo es: cada
+vencimiento de `drainDelay` arrastra el `BZPOPMIN` **más toda la contabilidad**
+que BullMQ hace alrededor, del orden de cinco comandos. Con cuatro clientes que
+sondean —dos workers y dos `QueueEvents`, verificados uno a uno— salen
+**~1 250/hora**, no los ~264 que decía la tabla original.
+
+Eso hace el arreglo **más** eficaz, no menos: subir el plazo divide el ciclo
+entero, no una sola llamada.
+
+```
+drainDelay        60 → 240 s
+blockingTimeout   60 → 240 s
+stalledInterval  300 → 600 s
+```
+
+### ⚠️ Y hay un techo: Upstash corta a los 5 minutos
+
+**Esta es la parte que no es obvia y por la que el número no es redondo.**
+Upstash cierra las conexiones ociosas alrededor de los 300 s. Un bloqueo puesto
+justo ahí se queda en la frontera y provoca reconexiones —cada una con su
+`AUTH`, su `INFO` y su reenganche— que **gastan más que el ciclo que se quería
+evitar**. Subir por encima de ese punto no ahorra: empeora.
+
+240 s deja un minuto de margen. La constante `CORTE_DE_OCIOSIDAD_UPSTASH_MS`
+está en el archivo para que la prueba pueda comprobarlo, y no como ajuste.
+
+No toca la latencia de ninguna cola: **son llamadas bloqueantes, no encuestas**.
+Redis responde en cuanto entra trabajo; el plazo solo decide cada cuánto se
+rehace la llamada mientras no hay nada. `stalledInterval` sube solo el doble
+porque es el único cuyo aumento cuesta algo real —un trabajo huérfano tarda más
+en reclamarse—, y aun así no es una pérdida: sigue en la cola.
+
+_Cuatro pruebas nuevas verificadas por reversión. Fijan el techo del proveedor y
+**la trampa de unidades**, que es el error fácil de este archivo: `drainDelay`
+va en segundos y `blockingTimeout` en milisegundos. Poner 240_000 en el primero
+daría un bloqueo de 66 horas y el worker parecería colgado._
+
+⚠️ **Falta medir.** El cambio no surte efecto hasta desplegar, y luego hay que
+mirar el contador: si en 24 h no baja de ~30 k/día a ~8 k, la causa está en otro
+sitio y toca el Monitor en vivo de Upstash.
+
+### 🔴 El `.gitignore` ignoraba el repositorio entero, y parecía que protegía
+
+Salió al rechazar `git add apps/...` con «paths are ignored». El patrón
+`*db_url*` se había escrito en **UTF-16LE dentro de un archivo UTF-8**, con BOM
+y bytes nulos al final — el `Set-Content` de PowerShell sin `-Encoding utf8`.
+**Git corta el patrón en el primer byte nulo**, así que quedaba un `*` suelto.
+
+**Lo grave no es que ignorara `apps`: es que yo lo había dado por bueno.**
+Comprobé que `new_db_url.txt` y `dump.sql` estaban ignorados, salió que sí, y lo
+reporté como cerrado. Era un falso positivo: no los protegía su regla, los
+tapaba el catch-all. **La protección de credenciales que dimos por hecha no
+existía.**
+
+Es el mismo patrón que llevamos toda la semana: una comprobación que da verde
+por una razón distinta de la que uno cree. `git check-ignore` respondía la
+pregunta que le hice —«¿está ignorado?»— y no la que importaba —«¿por qué?». La
+bandera `-v`, que dice **qué regla** lo caza, es la diferencia entre las dos.
+
+Reescrito en UTF-8 sin BOM, con dos añadidos y un rescate:
+
+```
+*db_url*                                ahora sí es un patrón válido
+*.sql                                   cubre los volcados sueltos
+!apps/api/prisma/migrations/**/*.sql    ← sin esto, `*.sql` se lleva por
+                                          delante las migraciones de Prisma
+```
+
+_Si hay que tocar ese archivo desde PowerShell: `-Encoding utf8` siempre, y
+comprobar después que `git diff` lo muestra como texto y no como `Bin`._
+
+---
+
 ## La base ya no es Neon: Cloud SQL (2026-08-18)
 
 Migración de Gravity. **Todo lo que este archivo dice de Neon queda como
