@@ -9,6 +9,48 @@
 
 ---
 
+## `change_email_status`: el copiloto mueve la bandeja (2026-08-18)
+
+Quinta herramienta del copiloto, en `llm/tools.ts`. Propone mover un correo por
+el triage (`PENDING`, `IN_PROGRESS`, `COMPLETED`, `DISMISSED`) y **la confirma
+una persona, siempre**.
+
+La regla de seguridad no hizo falta escribirla: ya estaba en la arquitectura.
+`kind: 'propose'` hace que la llamada salga como evento `tool_call` y **ahí
+termine el turno**; solo las `execute` las corre el backend. Lo que sí hacía
+falta era **fijarla con pruebas**, porque un día alguien puede cambiar una
+palabra en el catálogo y nadie lo notaría en una revisión. Cinco pruebas fallan
+si esa palabra pasa a `execute`, y una de ellas cuenta las llamadas al SDK: una
+sola vuelta significa que el backend no la ejecutó.
+
+### 🔴 `force` NO está en el esquema, y es la decisión que importa
+
+`PATCH /emails/:id/status` responde **409 al reabrir** un correo ya despachado y
+solo cede con `force: true` — «la excepción del dueño». Meter ese campo en el
+esquema le daría al modelo la llave de una barrera que existe precisamente para
+que la cruce una persona a sabiendas. El frontend puede añadirlo al confirmar,
+después de ver el 409; el modelo no lo ve nunca.
+
+### 🔴 Un estado desconocido cae a `null`, no a un valor por defecto
+
+Y aquí se rompe a propósito la simetría con `parseCreateTask`, donde una
+prioridad inventada baja a `MEDIUM`. Allí el recurso es correcto: equivocarse de
+prioridad es barato y perder la propuesta entera es peor.
+
+**Aquí no hay ningún estado inocente al que caer.** Elegir uno convertiría una
+respuesta ininteligible del modelo en una acción concreta sobre la bandeja de
+alguien — `DISMISSED` por descarte descartaría correos de verdad. Con `null`, la
+tarjeta sabe que la propuesta no es confirmable y no ofrece el botón.
+
+Es la misma regla que el guard de OIDC y el filtro de excepciones: **ante la
+duda, no actuar**. Un valor por defecto es una decisión disfrazada de detalle de
+implementación.
+
+_No se tocó `emails.controller.ts`: el frontend llama a `PATCH
+/emails/:id/status` al confirmar. 601 → 610 pruebas._
+
+---
+
 ## Respaldo diario de la base de datos (2026-08-18)
 
 `infra/backup/` — Cloud Run Job disparado por Cloud Scheduler, volcado a Cloud
