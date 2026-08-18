@@ -9,6 +9,77 @@
 
 ---
 
+## Respaldo diario de la base de datos (2026-08-18)
+
+`infra/backup/` — Cloud Run Job disparado por Cloud Scheduler, volcado a Cloud
+Storage. **Paso 1 del plan de migración a Cloud SQL, y deliberadamente
+independiente de él**: vale aunque la migración no llegue nunca.
+
+Existe porque **Neon en plan gratuito conserva 6 horas de historial** —
+confirmado en la consola del proyecto `pmo-db` el 08-18 — y el tablero es el
+único sitio donde viven las tareas y los fichajes. Los correos están en Gmail;
+las tareas no están en ninguna parte.
+
+⚠️ **Lo que esto NO arregla: los `P1001`.** 22 apariciones en 7 días, y vienen
+de que Neon se suspende sin tráfico. Eso lo resuelve Cloud SQL, que no se
+duerme. Un volcado no. Conviene tenerlo escrito para que nadie dé el problema
+por cerrado con esto.
+
+### 🔴 `PG_MAJOR` estaba en 17 y el servidor es 18
+
+Comprobado contra la consola de Neon: **Postgres 18**. `pg_dump` se niega a
+volcar una base más nueva que él (`server version mismatch`), y **ese error solo
+aparece en la primera ejecución, no al construir la imagen** — habría dejado el
+job en rojo con todo lo demás correcto. Hay que subirlo cada vez que Neon o
+Cloud SQL actualicen; no hay aviso.
+
+### Las cuatro decisiones de diseño
+
+**`set -o pipefail`, y es la línea más importante del script.** En
+`pg_dump | gcloud storage cp` el código de salida es el del **último** comando.
+Si `pg_dump` revienta a mitad —la base dormida, un `P1001`—, `gcloud` sube
+tranquilamente lo que le llegó y termina con 0: **el job sale en verde con un
+archivo truncado**. Un bucket lleno de respaldos correctos a la vista e
+inservibles, que se descubre el día que hay que restaurar. Es la forma de fallo
+favorita de este proyecto: una pieza que parece hecha porque existe.
+
+⚠️ Por eso el `ENTRYPOINT` es **`bash` y no `sh`**: el `dash` de Debian no
+implementa `pipefail` y lo ignoraría sin error. La protección se caería sola al
+cambiar de intérprete.
+
+**Comprobar el archivo, no solo escribirlo.** Dos verificaciones baratas que
+cierran el mismo fallo por el otro lado: que pese por encima de un mínimo, y que
+`pg_restore --list` sepa leer su índice — lo único que demuestra que el volcado
+está completo. Un respaldo que nadie ha leído es un archivo, no un respaldo.
+
+**Avisar al fallar, reutilizando el webhook de la Capa 1.** Un respaldo
+silencioso que lleva tres semanas roto es peor que no tener respaldo, porque
+encima da tranquilidad. Si `ALERT_WEBHOOK_URL` no está, el aviso se omite pero
+el job **sigue saliendo con error**, que es lo que ve Cloud Scheduler.
+
+**IAM: `objectCreator` + `objectViewer`, nunca `objectAdmin`.** Si el job se
+vuelve loco o alguien se cuela en él, **no puede borrar los respaldos
+antiguos**. El borrado lo hace la regla de ciclo de vida del bucket (30 días),
+que no depende del job. Más el `soft-delete` de 7 días como última red. La
+cuenta de servicio lee **solo los dos secretos que necesita**, no todos.
+
+`DATABASE_URL` no sale de Google Cloud: va de Secret Manager al contenedor y de
+ahí a Neon. No se registra, no se imprime y **no viaja como argumento**, que
+sería visible en la lista de procesos.
+
+### Lo que hay que aceptar, y está escrito a propósito
+
+Una copia al día significa **hasta 24 h de pérdida** en el peor caso. Se pasa de
+«6 h de historial» a «hasta 24 h de trabajo perdido, pero recuperable». Duplicar
+la frecuencia es cambiar una línea del Scheduler.
+
+⚠️ **Y queda una prueba sin hacer: restaurar.** Un respaldo sin una restauración
+probada es una suposición — exactamente lo que era la Capa 1 hasta el 08-17. El
+procedimiento está al final de `infra/backup/README.md`; hay que ejecutarlo una
+vez sobre una base vacía, ahora, no el día que haga falta.
+
+---
+
 ## Estado a 2026-08-17 — **Capa 1 PROBADA en fuego real**
 
 > Lo que el 08-15 quedó como suposición ya no lo es. **La aplicación pidió
