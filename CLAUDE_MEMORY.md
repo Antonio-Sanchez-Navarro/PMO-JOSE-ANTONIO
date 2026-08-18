@@ -49,6 +49,16 @@ implementación.
 _No se tocó `emails.controller.ts`: el frontend llama a `PATCH
 /emails/:id/status` al confirmar. 601 → 610 pruebas._
 
+**CERRADO y en producción.** Revisión **`pmo-api-00061-dqh`**, 100 % del
+tráfico, con `SERVICE_VERSION = e3fd2c42294f7bc42f796056469147c819917c20` — el
+commit exacto. Arranque sin un solo aviso.
+
+Se comprobó contra Cloud Run y no contra el «success» de Actions, que solo dice
+que el pipeline terminó: es `SERVICE_VERSION` lo que demuestra que el código que
+corre es este y no el anterior. La distinción no es pedantería — el 08-17 una
+revisión desplegada por el pipeline y otra creada a mano desde una consola
+convivieron sin que nadie supiera cuál servía.
+
 ---
 
 ## Respaldo diario de la base de datos (2026-08-18)
