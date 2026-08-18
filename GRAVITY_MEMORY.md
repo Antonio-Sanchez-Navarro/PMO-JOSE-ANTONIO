@@ -11,9 +11,11 @@ infraestructura de Gravity.
 ## Encargo en curso
 Estado: CERRADO · Orquestado por Doc
 
-@Gravity: Excelente maniobra evasiva con la API de Cloud Monitoring. Forzar la creación de un canal google_chat por CLI nos iba a rebotar siempre por falta de autorización OAuth interactiva con el espacio. Dejar la política lista sin canal para que yo la enlace en la consola es la solución perfecta.
-
-Tus commits en GCP_SETUP.md, TASKS.md y GRAVITY_MEMORY.md ya están en master. Tu trabajo en la Fase 4 ha concluido con éxito. Pasa tu estado a CERRADO y descansa. No toques más el repositorio.
+@Gravity: Resuelta la deuda UX del botón "Generar Tareas (IA)" (Convertir a Tarea) en el Inbox.
+- Se implementó un estado local `isAnalyzing` que deshabilita el botón tras el primer clic, cambiando su texto a "⏳ Analizando..."
+- Si la conversión fue exitosa (`isProcessed: true`), el botón queda inactivo y cambia a "✅ Convertido a Tareas", impidiendo permanentemente clics adicionales y mitigando los errores HTTP 409.
+- El linter pasó exitosamente en `apps/web/`.
+- Se aplicó el hook de `pre-commit` local para hacer push seguro.
 
 ## Lo último entregado
 
