@@ -9,6 +9,60 @@
 
 ---
 
+## La base ya no es Neon: Cloud SQL (2026-08-18)
+
+Migración de Gravity. **Todo lo que este archivo dice de Neon queda como
+historia**, no como descripción de lo que corre. Lo que hay ahora:
+
+```
+Instancia   pmo-postgres-db · us-central1 · db-f1-micro · RUNNABLE
+Versión     POSTGRES_16   (Neon corría 18)
+Conexión    socket del Cloud SQL Auth Proxy, no IP pública
+Secreto     pmo-database-url versión 5 (verificado: contiene /cloudsql/, ya no neon.tech)
+```
+
+El servicio `pmo-api` lleva adjunta la instancia
+(`run.googleapis.com/cloudsql-instances`) y el pipeline la inyecta con
+`--set-cloudsql-instances`, así que **esto ya no es estado manual**.
+
+**Esto sí cierra los `P1001`**, que es lo que el respaldo no podía cerrar:
+Cloud SQL no se suspende sin tráfico. La sección del respaldo diario decía que
+haría falta esta migración; ya está hecha.
+
+⚠️ Los plazos de transacción subidos por Neon (`maxWait` 10 s, `timeout` 15 s en
+el constructor de `PrismaService`) **se quedan como están**. Se pusieron porque
+despertar Neon tardaba ~5,3 s; con Cloud SQL despierto sobran, pero un plazo
+generoso no cuesta nada y bajarlo ahora sería tocar lo que funciona para ganar
+un margen que nadie ha pedido.
+
+### 🔴 El respaldo diario dejó de alcanzar la base, y nadie lo sabía
+
+**Detectado el 08-18 revisando `TASKS.md`, no por un fallo.** El job
+`pmo-respaldo-db` lee `pmo-database-url:latest`, que ahora es la versión 5 con
+el socket `/cloudsql/…` — pero **el job no tiene la instancia adjunta** (sin
+anotación `cloudsql-instances`) y su cuenta `pmo-respaldos` **no tiene ningún
+rol de proyecto**, así que le falta `roles/cloudsql.client`. `pg_dump` va a
+buscar un socket que nadie ha montado.
+
+El Scheduler está **ENABLED a las 03:30**, así que fallará esta noche. Los dos
+comandos que lo arreglan están en `TASKS.md`.
+
+**Y esto es exactamente la clase de junta que este proyecto rompe una y otra
+vez**: dos piezas correctas por separado —la migración está bien hecha, el
+respaldo está bien hecho— y nadie miró el punto donde se tocan. Rotar un secreto
+compartido cambia el contrato de **todos** sus consumidores, no solo del que
+motivó la rotación.
+
+Lo único que sale bien de esto: **fallará ruidosamente**. `pipefail` lo caza, el
+script sale con error y avisa por el webhook de la Capa 1. La alerta que
+construimos el 08-17 va a cazar el fallo del respaldo que construimos el 08-18.
+
+_`PG_MAJOR=18` en el `Dockerfile` **sigue siendo correcto** aunque el servidor
+sea 16: la regla es que el cliente no sea más viejo que el servidor, y uno más
+nuevo vuelca sin problema._
+
+---
+
 ## `change_email_status`: el copiloto mueve la bandeja (2026-08-18)
 
 Quinta herramienta del copiloto, en `llm/tools.ts`. Propone mover un correo por
