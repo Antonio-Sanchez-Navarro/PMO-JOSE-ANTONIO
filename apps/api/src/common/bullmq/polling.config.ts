@@ -27,8 +27,30 @@
  * multiplicarlo por doce divide el gasto por doce y **deja la latencia igual**.
  *
  * Lo único que sí se alarga es la reclamación de un trabajo atascado —el de un
- * worker que murió a media faena—, que pasa de ~30 s a ~5 min. Es un caso raro
- * y su coste es un retraso, no una pérdida: el trabajo sigue en la cola.
+ * worker que murió a media faena—. Es un caso raro y su coste es un retraso, no
+ * una pérdida: el trabajo sigue en la cola.
+ *
+ * ---
+ *
+ * **Segunda vuelta (2026-08-18): no bastó.** Medido en la consola de Upstash,
+ * **297 k de 500 k** comandos, frente a 177 k el 08-14: unos **30 k al día**,
+ * que agotan la cuota en menos de una semana.
+ *
+ * El error de la primera estimación fue contar **un comando por ciclo**. No lo
+ * es: cada vencimiento de `drainDelay` arrastra el `BZPOPMIN` **más toda la
+ * contabilidad** que BullMQ hace alrededor —del orden de cinco comandos—. Con
+ * cuatro clientes que sondean (dos workers y dos oyentes de eventos) salían
+ * ~1 250/hora, no los ~264 que decía la tabla de arriba.
+ *
+ * La buena noticia es que eso hace el arreglo **más** eficaz, no menos: subir el
+ * plazo divide el ciclo entero, no una sola llamada.
+ *
+ * ⚠️ **Y hay un techo, que es la razón de no poner un número redondo mayor:
+ * Upstash cierra las conexiones ociosas alrededor de los 5 minutos.** Un
+ * bloqueo de 300 s se quedaría justo en la frontera y provocaría reconexiones
+ * —cada una con su `AUTH`, su `INFO` y su reenganche— que gastarían más de lo
+ * ahorrado. Por eso los plazos son de **240 s**: cuatro veces menos sondeo, con
+ * un minuto de margen contra el corte.
  */
 
 /** Opciones para los `@Processor`. */
@@ -37,10 +59,17 @@ export const AJUSTE_WORKER = {
    * Segundos que el worker bloquea esperando trabajo. **En segundos**, no en
    * milisegundos, al contrario que el resto de plazos de BullMQ.
    */
-  drainDelay: 60,
+  drainDelay: 240,
 
-  /** Milisegundos entre revisiones de trabajos atascados. */
-  stalledInterval: 300_000,
+  /**
+   * Milisegundos entre revisiones de trabajos atascados.
+   *
+   * Sube de 5 a 10 min. Es el único parámetro de este archivo cuyo aumento
+   * **sí** tiene coste real —un trabajo huérfano tarda el doble en reclamarse—
+   * y por eso se mueve la mitad que los otros. Sigue sin ser una pérdida: el
+   * trabajo está en la cola y se recupera solo.
+   */
+  stalledInterval: 600_000,
 } as const;
 
 /**
@@ -53,6 +82,21 @@ export const AJUSTE_WORKER = {
  * publica— y recorta seis veces su coste de estar presentes.
  */
 export const AJUSTE_EVENTOS = {
-  /** Milisegundos que dura el `XREAD BLOCK` sobre el flujo de eventos. */
-  blockingTimeout: 60_000,
+  /**
+   * Milisegundos que dura el `XREAD BLOCK` sobre el flujo de eventos.
+   *
+   * Mismo valor que `drainDelay` a propósito —240 s, expresados aquí en
+   * milisegundos— para que los dos plazos bloqueantes suban y bajen juntos y
+   * ninguno se acerque solo al corte de conexión ociosa de Upstash.
+   */
+  blockingTimeout: 240_000,
 } as const;
+
+/**
+ * Cuándo corta Upstash una conexión ociosa, en milisegundos.
+ *
+ * No es un ajuste: es una restricción del proveedor y está aquí para que la
+ * prueba pueda comprobar que ningún plazo bloqueante la roza. Subir un plazo
+ * por encima de esto no ahorra — provoca reconexiones, que cuestan más.
+ */
+export const CORTE_DE_OCIOSIDAD_UPSTASH_MS = 300_000;
