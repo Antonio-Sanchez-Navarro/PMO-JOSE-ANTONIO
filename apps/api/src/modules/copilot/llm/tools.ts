@@ -89,6 +89,47 @@ export const CREATE_TASK_DESCRIPTION =
   'algo que haya que hacer. La tarea no se crea sola: se le enseña a la persona para que ' +
   'la confirme, así que propón en vez de preguntar si quiere que la crees.';
 
+/** El nombre viaja tal cual en el evento SSE, igual que las otras. */
+export const CHANGE_EMAIL_STATUS = 'change_email_status';
+
+/** El vocabulario de estados, que es el `EmailStatus` de Prisma y nada más. */
+export const ESTADOS_DE_CORREO = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'DISMISSED'] as const;
+
+/**
+ * Esquema de `change_email_status`.
+ *
+ * **No lleva `force`, y es a propósito.** Reabrir un correo ya despachado
+ * responde 409 salvo con `force: true` — «la excepción del dueño», dice
+ * `emails.controller.ts`. Poner ese campo en el esquema le daría al modelo la
+ * llave para saltarse una barrera que existe justamente para que la salte una
+ * persona a sabiendas. El frontend puede añadirlo al confirmar, después de ver
+ * el 409; el modelo no.
+ */
+export const CHANGE_EMAIL_STATUS_SCHEMA = {
+  type: 'object',
+  properties: {
+    emailId: {
+      type: 'string',
+      description: 'Id del correo. Cópialo del contexto o del resultado de una búsqueda.',
+    },
+    status: {
+      type: 'string',
+      enum: [...ESTADOS_DE_CORREO],
+      description:
+        'Estado propuesto: PENDING (por despachar), IN_PROGRESS (en ello), ' +
+        'COMPLETED (hecho) o DISMISSED (descartado).',
+    },
+  },
+  required: ['emailId', 'status'],
+  additionalProperties: false,
+} as const;
+
+export const CHANGE_EMAIL_STATUS_DESCRIPTION =
+  'Propone mover un correo por el triage de la bandeja. Úsala cuando de la conversación se ' +
+  'desprenda que un correo ya está atendido, descartado o en curso. El cambio no se aplica ' +
+  'solo: se le enseña a la persona para que lo confirme, así que propón en vez de preguntar ' +
+  'si quiere que lo cambies. Si no tienes el id del correo delante, búscalo antes.';
+
 export const SEARCH_EMAILS = 'search_emails';
 export const GET_METRICS = 'get_metrics';
 
@@ -158,6 +199,15 @@ export const COPILOT_TOOLS: readonly {
     name: CREATE_TASK,
     description: CREATE_TASK_DESCRIPTION,
     schema: CREATE_TASK_SCHEMA,
+    kind: 'propose',
+  },
+  {
+    name: CHANGE_EMAIL_STATUS,
+    description: CHANGE_EMAIL_STATUS_DESCRIPTION,
+    schema: CHANGE_EMAIL_STATUS_SCHEMA,
+    // `propose`, como todo lo que cambia algo. Ponerla en `execute` se saltaría
+    // la confirmación humana sin que nadie lo note: la prueba del catálogo
+    // existe para que ese cambio no pase desapercibido en una revisión.
     kind: 'propose',
   },
   {
@@ -257,6 +307,7 @@ function direcciones(valor: unknown): string[] {
 export function parseToolArgs(toolName: string, args: unknown): unknown {
   if (toolName === DRAFT_EMAIL) return parseDraftEmail(args);
   if (toolName === CREATE_TASK) return parseCreateTask(args);
+  if (toolName === CHANGE_EMAIL_STATUS) return parseChangeEmailStatus(args);
 
   // Una herramienta que no conocemos no debería llegar aquí —el catálogo lo
   // fijamos nosotros— pero devolver lo que vino es mejor que reventar el
@@ -274,5 +325,38 @@ export function parseDraftEmail(args: unknown): DraftEmailPayload {
     cc: typeof entrada.cc === 'string' ? direcciones([entrada.cc]) : direcciones(entrada.cc),
     subject: typeof entrada.subject === 'string' ? entrada.subject : '',
     body: typeof entrada.body === 'string' ? entrada.body : '',
+  };
+}
+
+/** Lo que viaja en `payload` del evento `tool_call`. */
+export interface ChangeEmailStatusPayload {
+  emailId: string;
+  /** `null` si el modelo propuso algo que no está en el vocabulario. */
+  status: (typeof ESTADOS_DE_CORREO)[number] | null;
+}
+
+/**
+ * Normaliza la propuesta de cambio de estado.
+ *
+ * ⚠️ **Un estado desconocido cae a `null`, NO a un valor por defecto**, y esta
+ * es la diferencia con `parseCreateTask`. Allí una prioridad inventada baja a
+ * `MEDIUM` porque equivocarse de prioridad es barato y perder la propuesta
+ * entera es peor. Aquí no hay ningún estado inocente al que caer: elegir uno
+ * convertiría una respuesta ininteligible del modelo en una acción concreta
+ * sobre la bandeja de alguien. `DISMISSED` por descarte descartaría correos.
+ *
+ * Con `null`, la tarjeta tiene cómo saber que la propuesta no es confirmable y
+ * no ofrecer el botón. Es la misma regla del filtro de excepciones y del guard
+ * de OIDC: ante la duda, no actuar.
+ */
+export function parseChangeEmailStatus(args: unknown): ChangeEmailStatusPayload {
+  const entrada = (args ?? {}) as Record<string, unknown>;
+  const estado = typeof entrada.status === 'string' ? entrada.status.trim().toUpperCase() : '';
+
+  return {
+    emailId: typeof entrada.emailId === 'string' ? entrada.emailId.trim() : '',
+    status: (ESTADOS_DE_CORREO as readonly string[]).includes(estado)
+      ? (estado as ChangeEmailStatusPayload['status'])
+      : null,
   };
 }

@@ -12,12 +12,15 @@ import { GoogleStrategy } from './llm/google.strategy';
 import { AnthropicStrategy } from './llm/anthropic.strategy';
 import { COPILOT_EVENTS } from './copilot.controller';
 import {
+  CHANGE_EMAIL_STATUS,
   COPILOT_TOOLS,
   CREATE_TASK,
   DRAFT_EMAIL,
+  ESTADOS_DE_CORREO,
   GET_METRICS,
   SEARCH_EMAILS,
   esEjecutable,
+  parseChangeEmailStatus,
   parseCreateTask,
   parseDraftEmail,
   parseToolArgs,
@@ -375,6 +378,7 @@ describe('create_task — la tarea que propone el copiloto', () => {
     expect(COPILOT_TOOLS.map((t) => `${t.name}:${t.kind}`)).toEqual([
       'draft_email:propose',
       'create_task:propose',
+      'change_email_status:propose',
       'search_emails:execute',
       'get_metrics:execute',
     ]);
@@ -385,6 +389,60 @@ describe('create_task — la tarea que propone el copiloto', () => {
     expect(esEjecutable(GET_METRICS)).toBe(true);
     expect(esEjecutable(DRAFT_EMAIL)).toBe(false);
     expect(esEjecutable(CREATE_TASK)).toBe(false);
+    expect(esEjecutable(CHANGE_EMAIL_STATUS)).toBe(false);
+  });
+});
+
+describe('change_email_status — mover un correo por el triage', () => {
+  it('NUNCA la ejecuta el backend: cambiar un estado lo confirma una persona', () => {
+    // Esta es la regla de seguridad de esta herramienta, y va primero porque es
+    // lo único que no puede cambiar. Si alguien la pasara a `execute`, el
+    // copiloto vaciaría bandejas por su cuenta.
+    expect(esEjecutable(CHANGE_EMAIL_STATUS)).toBe(false);
+    expect(COPILOT_TOOLS.find((t) => t.name === CHANGE_EMAIL_STATUS)?.kind).toBe('propose');
+  });
+
+  it('el esquema no expone `force`: reabrir es la excepción del dueño, no del modelo', () => {
+    // `PATCH /emails/:id/status` responde 409 al reabrir un correo despachado y
+    // solo cede con `force: true`. Dárselo al modelo sería regalarle la llave
+    // de una barrera puesta para que la salte alguien a sabiendas.
+    const propiedades = Object.keys(
+      (COPILOT_TOOLS.find((t) => t.name === CHANGE_EMAIL_STATUS)?.schema as {
+        properties: Record<string, unknown>;
+      }).properties,
+    );
+    expect(propiedades).toEqual(['emailId', 'status']);
+  });
+
+  it('el vocabulario es exactamente el enum EmailStatus de Prisma', () => {
+    expect([...ESTADOS_DE_CORREO]).toEqual(['PENDING', 'IN_PROGRESS', 'COMPLETED', 'DISMISSED']);
+  });
+
+  it('normaliza la propuesta a la forma que espera la tarjeta', () => {
+    expect(parseChangeEmailStatus({ emailId: '  cmr1  ', status: 'completed' })).toEqual({
+      emailId: 'cmr1',
+      status: 'COMPLETED',
+    });
+  });
+
+  it('un estado inventado cae a null, NO a un valor por defecto', () => {
+    // La diferencia con `create_task` es deliberada: allí una prioridad rara
+    // baja a MEDIUM porque equivocarse de prioridad es barato. Aquí no hay
+    // ningún estado inocente al que caer — elegir uno convertiría una respuesta
+    // ininteligible del modelo en una acción sobre la bandeja de alguien.
+    expect(parseChangeEmailStatus({ emailId: 'cmr1', status: 'ARCHIVADO' }).status).toBeNull();
+    expect(parseChangeEmailStatus({ emailId: 'cmr1', status: 'DELETED' }).status).toBeNull();
+  });
+
+  it('sobrevive a una respuesta vacía', () => {
+    expect(parseChangeEmailStatus(undefined)).toEqual({ emailId: '', status: null });
+  });
+
+  it('el despachador elige su parser por nombre', () => {
+    expect(parseToolArgs(CHANGE_EMAIL_STATUS, { emailId: 'x', status: 'dismissed' })).toEqual({
+      emailId: 'x',
+      status: 'DISMISSED',
+    });
   });
 });
 
@@ -559,6 +617,77 @@ describe('AnthropicStrategy — herramientas', () => {
       },
       expect.objectContaining({ type: 'done', model: 'claude-opus-5' }),
     ]);
+  });
+
+  it('change_email_status sale como tool_call y el turno TERMINA ahí', async () => {
+    // La prueba de la regla de seguridad en el sitio donde de verdad se decide.
+    // Se cuentan las llamadas al SDK: si la herramienta fuera ejecutable, la
+    // estrategia daría una segunda vuelta para devolverle el resultado al
+    // modelo. Una sola llamada = el backend no la ejecutó, se la pasó a la
+    // persona.
+    let vueltas = 0;
+    const strategy = new AnthropicStrategy({ get: () => 'clave' } as unknown as ConfigService);
+    (strategy as unknown as { client: unknown }).client = {
+      messages: {
+        stream: () => {
+          vueltas++;
+          return Object.assign(
+            (async function* () {
+              yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Lo marco' } };
+            })(),
+            {
+              finalMessage: async () => ({
+                model: 'claude-opus-5',
+                content: [
+                  { type: 'text', text: 'Lo marco' },
+                  {
+                    type: 'tool_use',
+                    id: 'tu-estado',
+                    name: CHANGE_EMAIL_STATUS,
+                    input: { emailId: 'cmr1', status: 'completed' },
+                  },
+                ],
+                usage: { input_tokens: 10, output_tokens: 5 },
+              }),
+            },
+          );
+        },
+      },
+    };
+
+    const trozos: LlmChunk[] = [];
+    for await (const chunk of strategy.stream({ messages: [], tier: LlmTier.PRO })) {
+      trozos.push(chunk);
+    }
+
+    expect(vueltas).toBe(1);
+    expect(trozos).toEqual([
+      { type: 'text', text: 'Lo marco' },
+      {
+        type: 'tool_call',
+        toolName: CHANGE_EMAIL_STATUS,
+        payload: { emailId: 'cmr1', status: 'COMPLETED' },
+      },
+      expect.objectContaining({ type: 'done', model: 'claude-opus-5' }),
+    ]);
+  });
+
+  it('un estado ininteligible llega al frontend como null, no como una acción', async () => {
+    const trozos = await recoger(
+      conRespuesta([
+        {
+          type: 'tool_use',
+          name: CHANGE_EMAIL_STATUS,
+          input: { emailId: 'cmr1', status: 'ARCHIVAR' },
+        },
+      ]),
+    );
+
+    expect(trozos).toContainEqual({
+      type: 'tool_call',
+      toolName: CHANGE_EMAIL_STATUS,
+      payload: { emailId: 'cmr1', status: null },
+    });
   });
 
   describe('bucle de herramientas de solo lectura', () => {
