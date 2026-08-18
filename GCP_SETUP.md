@@ -129,11 +129,36 @@ Si la API falla al procesar un webhook, Pub/Sub reintentará la entrega con paus
      --max-retry-delay=600s
    ```
 
-### Paso B: Secreto para el Webhook de Google Chat
-Crea el secreto en Secret Manager para almacenar la URL del Webhook de alertas (Capa 1 y Capa 2):
-```bash
-echo "URL_DEL_WEBHOOK" | gcloud secrets create ALERT_WEBHOOK_URL --data-file=-
-```
+### Paso C: Secreto para el Webhook de Google Chat (Capa 1)
+La URL del webhook **es una credencial**: lleva la clave dentro de la propia URL, así que quien la tenga puede escribir en tu espacio. Va a Secret Manager, nunca a una variable en claro.
+
+1. **Crear el secreto:**
+   ```bash
+   echo -n "URL_DEL_WEBHOOK" | gcloud secrets create ALERT_WEBHOOK_URL --data-file=-
+   ```
+   > ⚠️ **Pon la URL de verdad ya, no un texto de relleno.** El 2026-08-14 este secreto se creó con el valor `TO_BE_FILLED_BY_USER` y estuvo así tres días: las alertas se generaban, intentaban salir y morían con `Failed to parse URL from TO_BE_FILLED_BY_USER`, y lo único que constaba era una línea en el log. Un sistema de alertas roto no puede avisar de que está roto.
+
+2. **Crear la variable de repositorio en GitHub** — **este paso es obligatorio y es el que se olvidó**:
+   ```bash
+   gh variable set ALERT_WEBHOOK_SECRET --body "ALERT_WEBHOOK_URL"
+   ```
+   `deploy.yml` inyecta el secreto **condicionado** a esta variable, que guarda el *nombre* del secreto:
+   ```bash
+   if [ -n "${{ vars.ALERT_WEBHOOK_SECRET }}" ]; then
+     SECRETS="${SECRETS},ALERT_WEBHOOK_URL=${{ vars.ALERT_WEBHOOK_SECRET }}:latest"
+   else
+     echo "::warning::ALERT_WEBHOOK_SECRET no está definida; la API no podrá enviar alertas."
+   fi
+   ```
+   Va condicionado a propósito —un `--set-secrets` que nombre un secreto inexistente **falla el despliegue entero**, así que fijarlo antes de crear el secreto dejaría la API sin poder desplegarse—. El precio de esa prudencia es que **sin la variable el despliegue sale en verde y la API arranca muda**, avisando solo con un `::warning::` en el run y un `WARNING` al arrancar. Ambos son fáciles de no leer.
+
+3. **Comprobar que llegó al contenedor**, que es lo único que prueba que funciona:
+   ```bash
+   gcloud run revisions describe $(gcloud run services describe pmo-api \
+     --region us-central1 --format 'value(status.traffic[0].revisionName)') \
+     --region us-central1 --format 'value(spec.containers[0].env[].name)' | tr ';' '\n' | grep ALERT_WEBHOOK_URL
+   ```
+   Sin salida, la Capa 1 está desplegada y no puede enviar nada.
 
 ### Paso D: Alerta de Cloud Monitoring (Capa 2) por Ausencia
 Se configura una alerta para detectar si el *watch* de Gmail deja de enviar notificaciones (ausencia de tráfico).
@@ -145,34 +170,15 @@ Se configura una alerta para detectar si el *watch* de Gmail deja de enviar noti
    - Sigue el flujo de autorización para seleccionar tu Espacio de Chat.
    - Anota el ID generado (puedes verlo ejecutando `gcloud beta monitoring channels list`). Ej: `projects/.../notificationChannels/1234567`.
 
-2. **Crear la Política de Ausencia (JSON):**
-   Crea un archivo `alert_policy.json` (asegúrate de incluir el ID del canal nativo en `notificationChannels`):
-   ```json
-   {
-     "displayName": "[Capa 2] Fallo Critico: Apagon del Watcher de Gmail",
-     "combiner": "OR",
-     "conditions": [
-       {
-         "displayName": "Invocaciones al webhook caen a 0",
-         "conditionAbsent": {
-           "filter": "metric.type=\"pubsub.googleapis.com/subscription/push_request_count\" AND resource.type=\"pubsub_subscription\" AND resource.labels.subscription_id=\"gmail-ingest-push\"",
-           "duration": "84600s",
-           "aggregations": [
-             {
-               "alignmentPeriod": "300s",
-               "perSeriesAligner": "ALIGN_RATE"
-             }
-           ]
-         }
-       }
-     ],
-     "notificationChannels": [
-       "projects/TU_PROYECTO/notificationChannels/TU_CHANNEL_ID"
-     ]
-   }
-   ```
+2. **La política vive en el repositorio**: [`infra/alert_policy.json`](infra/alert_policy.json). Es el archivo con el que se creó la política que está aplicada hoy, no una copia de ejemplo — antes este manual llevaba el JSON transcrito aquí dentro y había además un `alert_policy_v2.json` suelto en la raíz, así que la misma política existía en tres sitios y ninguno era el bueno. Se edita ahí y se despliega desde ahí.
+
+   Lo que hay que entender de ella, que es lo que no se ve leyendo el JSON:
+   - **Vigila la ausencia, no el error** (`conditionAbsent`). Es lo único que detecta el fallo que motivó la fase: cuando el `watch` de Gmail caduca, los push **dejan de llegar** y no se registra ni una línea de ninguna severidad. Una alerta por `severity>=ERROR` no lo vería nunca.
+   - Mide `push_request_count` de la suscripción `gmail-ingest-push`, es decir **las invocaciones que Pub/Sub hace al webhook**: la señal que se apaga.
+   - `duration: 84600s` son **23,5 h**. El buzón recibe correo a diario, así que un día entero sin una sola invocación es una avería, no una racha tranquila. Si algún día el volumen baja, este número es lo primero que hay que revisar para no llenarlo de falsos avisos.
 
 3. **Desplegar la Política:**
    ```bash
-   gcloud beta monitoring policies create --policy-from-file=alert_policy.json
+   gcloud beta monitoring policies create --policy-from-file=infra/alert_policy.json
    ```
+   Sustituye antes el ID del canal por el tuyo si estás levantando el proyecto de cero.

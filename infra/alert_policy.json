@@ -1,0 +1,19 @@
+{
+  "displayName": "[Capa 2] Fallo Critico: Apagon del Watcher de Gmail",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Invocaciones al webhook caen a 0",
+      "conditionAbsent": {
+        "filter": "metric.type=\"pubsub.googleapis.com/subscription/push_request_count\" AND resource.type=\"pubsub_subscription\" AND resource.labels.subscription_id=\"gmail-ingest-push\"",
+        "duration": "84600s",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_RATE"
+          }
+        ]
+      }
+    }
+  ]
+}
