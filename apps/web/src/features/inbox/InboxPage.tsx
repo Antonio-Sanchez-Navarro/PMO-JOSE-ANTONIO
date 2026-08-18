@@ -211,7 +211,7 @@ function ThreadRow({
   onUpdateStatus,
 }: { 
   thread: EmailThread; 
-  onAnalyze: (id: string) => void; 
+  onAnalyze: (id: string) => Promise<void> | void; 
   onRead: (id: string) => void;
   onUpdateStatus: (id: string, status: string, force?: boolean) => void;
 }) {
@@ -264,7 +264,7 @@ function EmailRow({
   expanded?: boolean;
   onToggle?: () => void;
   nested?: boolean;
-  onAnalyze?: () => void;
+  onAnalyze?: () => Promise<void> | void;
   onRead?: () => void;
   onUpdateStatus?: (status: string, force?: boolean) => void;
 }) {
@@ -277,6 +277,7 @@ function EmailRow({
   const isProcessed = Boolean(email.isConverted);
   
   const { openCopilotWithContext } = useCopilot();
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const content = (
     <div 
@@ -404,19 +405,24 @@ function EmailRow({
               <span>Copiloto</span>
             </button>
             <button
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation();
-                onAnalyze();
+                setIsAnalyzing(true);
+                try {
+                  await onAnalyze();
+                } finally {
+                  setIsAnalyzing(false);
+                }
               }}
-              disabled={isProcessed}
+              disabled={isProcessed || isAnalyzing}
               className={`px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border
-                ${isProcessed 
+                ${(isProcessed || isAnalyzing)
                   ? 'bg-green-50 text-green-700 border-green-200 cursor-default' 
                   : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
                 }
               `}
             >
-              {isProcessed ? "✅ Convertido a Tareas" : "🪄 Generar Tareas (IA)"}
+              {isProcessed ? "✅ Convertido a Tareas" : isAnalyzing ? "⏳ Analizando..." : "🪄 Generar Tareas (IA)"}
             </button>
           </div>
         )}
