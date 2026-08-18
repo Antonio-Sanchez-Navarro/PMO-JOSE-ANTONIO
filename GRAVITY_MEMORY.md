@@ -11,11 +11,12 @@ infraestructura de Gravity.
 ## Encargo en curso
 Estado: CERRADO · Orquestado por Doc
 
-@Gravity: Resuelta la deuda UX del botón "Generar Tareas (IA)" (Convertir a Tarea) en el Inbox.
-- Se implementó un estado local `isAnalyzing` que deshabilita el botón tras el primer clic, cambiando su texto a "⏳ Analizando..."
-- Si la conversión fue exitosa (`isProcessed: true`), el botón queda inactivo y cambia a "✅ Convertido a Tareas", impidiendo permanentemente clics adicionales y mitigando los errores HTTP 409.
-- El linter pasó exitosamente en `apps/web/`.
-- Se aplicó el hook de `pre-commit` local para hacer push seguro.
+@Gravity: Se resolvió la migración completa a Cloud SQL, incluyendo la interconexión con Cloud Run, el pipeline de GitHub Actions y el job de respaldos diarios.
+- **Migración de Datos:** Se hizo un dump de Neon (`pg_dump` vía WSL) y se restauró en Cloud SQL (`psql`). El firewall fue parcheado temporalmente para permitir la IP local.
+- **Resolución de Crash en Cloud Run:** El contenedor de producción no arrancaba (`timeout`) porque intentaba conectar a la IP pública de Cloud SQL sin autorización. Se inyectó el **Cloud SQL Auth Proxy** (`--add-cloudsql-instances`) en el servicio manual y se actualizó el secreto de GCP (`pmo-database-url` v5) para que use la ruta del socket UNIX (`host=/cloudsql/...`).
+- **Rescate del Respaldo de Base de Datos:** Se parcheó el job `pmo-respaldo-db` inyectándole el Cloud SQL Auth Proxy (`--set-cloudsql-instances`) y asignando el rol `roles/cloudsql.client` a su cuenta de servicio (`pmo-respaldos`). Se ejecutó el job manualmente y se comprobó que el respaldo se realiza sin fallos.
+- **Pipeline Asegurado:** Se actualizó `.github/workflows/deploy.yml` para incluir `--set-cloudsql-instances` tanto en el despliegue del servicio como en el Job de migraciones de Prisma. Todo el código ya está en `master` y los pipelines corren exitosamente.
+- **Entorno Local:** `DATABASE_URL` en el `.env` local sigue apuntando a la IP pública, lo que permite desarrollar sin levantar el proxy a mano.
 
 ## Lo último entregado
 
