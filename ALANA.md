@@ -1046,6 +1046,7 @@ de Vercel. Detalle y comprobación en **§14**.
 
 | Fecha | Qué revisó | Corte de git |
 |---|---|---|
+| 2026-08-18 (4) | **El parche de Cloud SQL y el segundo barrido (§32).** **Los dos interruptores de §31, cerrados y comprobados**: respaldos `enabled: true` con **PITR**, archivado de registros a Cloud Storage, 7 copias y 7 días de logs; y `requireSsl: true` con `authorizedNetworks` **vacío**. Mi job de `pg_dump` deja de ser la única red. **Matiz**: `sslMode` quedó en `TRUSTED_CLIENT_CERTIFICATE_REQUIRED`, que no es «exige cifrado» sino **exige certificado de cliente** — el proxy no se entera, pero una conexión directa ya no entra ni con TLS; escrito para que nadie lo afloje el día que falle. `ipv4Enabled` sigue en `true`, aunque sin redes autorizadas no la alcanza nadie. **El parche costó un barrido**: la operación reinició la instancia (22:02:55→22:14:48) y a las 22:05:11 el cron de vencidas se llevó un `P1001` y devolvió 500. **Y la alerta sonó sola** — `ALERTA · Error 500 en POST /cron/overdue` —: **primera vez en esta bitácora que el sistema avisa de un incidente antes de que yo lo encuentre mirando**, y encima uno no provocado. A las 22:18 `/health/ready` da **200** con `database up`, 9 migraciones aplicadas y 0 a medias, `redis up`. **🟠 Upstash tiene fecha**: **297 k de 500 k** comandos al 18 de agosto (59 %), con un ritmo medido de **~18 k/día** (vie 21k, sáb 15k, dom 13k, lun 21k, mar 20k). Quedan 203 k y 13 días: **el tope se alcanza hacia el 29-30**, antes del corte mensual. Y el gasto **no es trabajo, es sondeo** —19 comandos/min en reposo, §20—, y con `--no-cpu-throttling` la instancia vive más rato, así que va a más. Falta confirmar qué hace Upstash al llegar al tope; si rechaza comandos, se cae la cola y con ella la ingesta. **🟡 Vercel sano pero redesplegando documentación**: plan Hobby, producción en verde, consumo ridículo (302 peticiones de 1 M en 30 días), y **el último despliegue es `cea0145`, un commit solo de `.md`** — Vercel no tiene el `paths-ignore` de `ci.yml`, así que «hay un despliegue nuevo» ha dejado de significar nada. Las 302 peticiones son además un dato de producto: el tablero apenas se abre. No pude abrir la lista completa de despliegues, la consola dejó de responder. **La lección**: hoy no hizo falta ir a mirar, el sistema lo contó solo — y aun así **los topes de los planes gratuitos no avisan, llegan**, y la alerta nueva no los ve porque vigila el silencio de los push, no el saldo de un cubo en la consola de otra empresa. Añadida la sección 32. | `cea0145` · revisión `00065-jsc` |
 | 2026-08-18 (3) | **Despertar 14. La migración a Cloud SQL, auditada (§31).** Catorce commits desde `4c564f2`; `HEAD` = `cea0145`, árbol limpio, revisión viva `00065-jsc`, **610 pruebas en 29 suites ejecutadas por mí**. Y **`ALANA.md` no aparece en el diff**: nadie se lo llevó de polizón, primera vez en cuatro. **Lo grande funcionó**: los `P1001` se acabaron — el último es del 17-08 a las 16:47 contra el host de Neon y desde la migración **ninguno**, de 22 en 7 días a cero. **Y el parte de Gravity sobre el respaldo es cierto pieza por pieza**: proxy montado en el job (`cloudsql-instances`), `roles/cloudsql.client` en su cuenta, **tres ejecuciones correctas** (17:16, 17:34, 19:11) con tres volcados reales de 203–211 KB e índice legible, y `--set-cloudsql-instances` escrito en `deploy.yml` en los **dos** sitios. El 🔴 que cazó Claude en `d226f00` estaba bien visto y bien cerrado. **🔴 Pero los respaldos automáticos de Cloud SQL están APAGADOS**: `backupConfiguration.enabled = false`, con la retención de 7 copias y la ventana de las 05:00 configuradas y la casilla en `false` — y **esa era la razón de la migración**. Lo único que respalda hoy la base es el job de `pg_dump` que diseñé como puente provisional para Neon. **🔴 Y la base tiene IP pública sin exigir cifrado**: `requireSsl=false`, `sslMode=ALLOW_UNENCRYPTED_AND_ENCRYPTED`, dos redes autorizadas —el «parche temporal» de la IP de casa sigue puesto y `34.24.236.30/32` no está documentada—, y el `.env` local sigue apuntando a la IP pública: la cadena de producción vive en un portátil y viaja por internet contra un servidor que acepta texto plano. **`DATABASE_URL` ya sale de Google Cloud**, y no por decisión sino por residuo. **🟠 Dos derivas**: el job de respaldo se configuró a mano y solo vive en la consola —la misma deriva de `--no-cpu-throttling`, otra vez—, y mi propio `README` de `infra/backup/` ya miente: dice que respalda Neon y fija `PG_MAJOR=18` cuando el servidor es Cloud SQL **POSTGRES_16**. Instancia `db-f1-micro` `ZONAL`, sin alta disponibilidad. **La lección**: ya no es una pieza puesta y desconectada, es una pieza puesta, conectada **y con el interruptor en `false`** — nada de lo que se mira dice que falte algo, hay que ir a buscar el booleano. Y una a mi cuenta: **un parche que nadie retira se convierte en la arquitectura** sin que nadie decida que lo sea. Añadida la sección 31. | `cea0145` · revisión `00065-jsc` |
 | 2026-08-18 (2) | **Veredicto de entrega: la alerta llegó (§30).** Entré al espacio «Alertas PMO» de Google Chat en modo estricto de lectura, que es la comprobación que venía pidiendo desde §27.8. **CONFIRMADA, y por identificador**: el mensaje está publicado por `Alertas API Capa 1` con marca **«Ayer 5:53 p.m.» = 22:53 UTC** y lleva dentro `job=105` y `request_id req_011Ce99Bqd7KhyUyKVfNGbMh`, **el mismo** que la línea del log de las `22:53:04.815Z`. Ya no es *ausencia de error*: es **constancia de llegada**, con la cadena entera probada —modelo inexistente a propósito → reintentos agotados → oyente de la cola de fallidos → `AlertService` → webhook → mensaje—. **Llegó uno de los dos, y es lo correcto**: en `alert.service.ts` el `logger.warn` es incondicional y el envío pasa después por un `SET NX EX` de 15 min con el título como clave; los dos avisos comparten título y se llevan 74 s, así que el segundo se calló **por diseño**. La prueba validó la entrega **y** el antirrebote en la misma pasada, y `job=106` no se perdió: está en el log, que es la fuente de verdad. **Bloque 1–5 ejecutado**, cuatro commits atómicos en local: `8092852` (línea 213 de `TASKS.md`, que registraba como logro lo que rompió la clasificación), `f895925` (`--no-cpu-throttling` en `deploy.yml`, con el precio anotado), `83aa449` (la política a `infra/alert_policy.json` —existía en tres sitios y ninguno era la fuente— y el paso que faltaba en `GCP_SETUP.md`: crear `ALERT_WEBHOOK_SECRET`), `64fca42` (`.githooks/pre-commit` + `AI_ROLES.md`). **El gancho está probado**: con `ALANA.md` y un archivo bajo `packages/` a la vez sale con **código 1**, y luego deja pasar un commit legítimo — no iba a añadir otra pieza puesta y desconectada. **Sin `push`**: subirlos dispara CI y una revisión nueva, queda a decisión de Doc. **La lección, por una vez del derecho**: esta junta sí estaba conectada, y se supo **mirando el otro extremo** — no del código, ni del parte, ni de la ausencia de un error. Añadida la sección 30. | `64fca42` (local) · `155e592` (origin) |
 | 2026-08-18 | **Despertar 13. La Fase 4 cerrada y contrastada (§29).** Primer despertar con la directiva ampliada —puedo escribir en todo el repositorio y usar Chrome previo acuerdo—; sigo comprobando igual. `HEAD` = `155e592`, local y remoto idénticos, revisión viva `00057-ksl`, **601 pruebas en 29 suites ejecutadas por mí**. **Los tres 🔴 resueltos**: `CLAUDE_MODEL_CLASSIFY` = `claude-sonnet-5` y la clasificación **funciona** (hoy 13:42, `isActionable=true, 2 tareas creadas`); `ALERT_WEBHOOK_URL` está en el entorno de la revisión viva; y la Capa 1 **dispara de verdad**. **Y aparece la causa exacta de §27.5, con fecha**: el secreto contenía el texto de relleno —cada alerta moría con `Failed to parse URL from TO_BE_FILLED_BY_USER`— hasta la **versión 2, del 17-08 a las 18:39:54**. El canal existía desde el 14 y no llegaba nada, tres días. **La prueba de punta a punta, casi entera**: el 17 a las 22:53 y 22:54, con `modelo-inexistente-prueba-e2e` puesto a propósito, dos alertas recorrieron fallo → reintentos agotados → oyente de la cola de fallidos → envío, **sin ningún error detrás**. Pero `AlertService` **no registra el éxito, solo el fallo**, así que tengo *ausencia de error*, no *constancia de llegada* — falta mirar el espacio de Chat. **La tabla del Jefe, comprobada una a una**: el 🔴 de `TASKS.md` es cierto (la línea 213 registra como logro el cambio que rompió producción); la disciplina de `git add` es cierta y con caso —`ce5b7de`, titulado «Update GRAVITY_MEMORY.md», commiteó **1.542 líneas de `ALANA.md`**, 71 de `DOC.md` y un archivo de código, y **no hay ningún gancho de git**—; `--no-cpu-throttling` está aplicado a mano pero no en `deploy.yml`; **`GCP_SETUP.md` ya no está desactualizado** (sí tiene dos «Paso B», ningún «Paso C», y no menciona `ALERT_WEBHOOK_SECRET`); y `alert_policy_v2.json` sigue sin seguimiento y duplica el manual. **Abierto de lo mío**: Neon sigue perdiendo trabajo en frío —el 17 dos clasificaciones perdidas por `Can't reach database server`, con aviso pero sin reintento—, la deduplicación sin verse disparar, y la versión 1 del secreto sigue `enabled`. **La lección**: los cuatro fallos de esta fase no estaban dentro de ninguna pieza, sino **en la junta entre dos**, y ninguno era un error de programación. Añadida la sección 29. | `155e592` · revisión `00057-ksl` |
@@ -3755,3 +3756,123 @@ Y una que va a mi cuenta: el respaldo que diseñé como puente provisional lleva
 tres días siendo la única protección real de la base, y yo no lo sabía hasta hoy.
 **Un parche que nadie retira deja de ser un parche y se convierte en la
 arquitectura**, sin que nadie decida que lo sea.
+
+---
+
+## 32. El parche de Cloud SQL, y el segundo barrido (2026-08-18)
+
+### 32.1 Los dos interruptores de §31, cerrados y comprobados
+
+**Los respaldos automáticos están encendidos**, y con más de lo que pedí:
+
+```json
+"enabled": true,
+"pointInTimeRecoveryEnabled": true,
+"replicationLogArchivingEnabled": true,
+"transactionalLogStorageState": "CLOUD_STORAGE",
+"retainedBackups": 7,  "transactionLogRetentionDays": 7,  "startTime": "05:00"
+```
+
+Siete copias, siete días de registro de transacciones y recuperación a un punto
+en el tiempo. Cierra §31.2. A partir de ahora mi job de `pg_dump` deja de ser la
+única red y pasa a ser lo que se diseñó: la segunda, y el vehículo de cualquier
+mudanza futura.
+
+**Y la puerta pública está cerrada**: `requireSsl: true` y `authorizedNetworks`
+vacío. Cierra §31.3.
+
+**Un matiz que conviene saber antes de que confunda a alguien**: `sslMode` quedó
+en **`TRUSTED_CLIENT_CERTIFICATE_REQUIRED`**. Eso no es «exige cifrado», es
+**exige certificado de cliente** — TLS mutuo. El proxy no se entera, porque se
+autentica con sus propias credenciales, así que la API y el job de respaldo
+siguen igual. Pero una conexión directa a la IP pública ya no entra **ni con
+TLS**: haría falta un certificado. Es la postura más estricta y me parece la
+correcta; queda escrito para que el día que alguien vea fallar una conexión
+directa no lo «arregle» aflojando esto.
+
+`ipv4Enabled` sigue en `true`: la IP pública existe, pero sin redes autorizadas
+no la alcanza nadie. Apagarla del todo sería el cierre limpio, y es un comando.
+
+**El parche costó un barrido.** La operación corrió de **22:02:55 a 22:14:48** y
+reinició la instancia. A las **22:05:11** el cron de vencidas se llevó un `P1001`
+contra el socket y devolvió **500**; ese barrido se perdió.
+
+**Y la alerta sonó**: `ALERTA · Error 500 en POST /cron/overdue: code=P1001`.
+Merece subrayarse — **es la primera vez en esta bitácora que el sistema avisa de
+un incidente antes de que yo lo encuentre mirando**, y encima uno que nadie
+provocó a propósito. Ese era el objetivo entero de la Fase 4.
+
+A las 22:07 volvió solo, y a las **22:18** `/health/ready` responde **200**:
+`database up` (919 ms), `schema` con **9 migraciones aplicadas, 0 a medias, 0
+revertidas**, `redis up`. Producción sana.
+
+### 32.2 🟠 Upstash: el cubo se agota antes de que acabe el mes
+
+| Recurso | Uso | Tope |
+|---|---|---|
+| **Comandos** | **297 k** | **500 k / mes** |
+| Almacenamiento | 440 KB | 256 MB |
+| Ancho de banda | 0 B | 50 GB |
+| Coste | 0,00 $ | — |
+
+**59 % del tope, y estamos a 18 de agosto.** El desglose diario de los últimos
+cinco días, de la propia consola:
+
+```
+viernes 21 k · sábado 15 k · domingo 13 k · lunes 21 k · martes 20 k
+```
+
+Media ≈ **18 k/día**. Quedan **203 k** y **13 días** de mes. A ese ritmo el tope
+se alcanza **hacia el 29 o 30 de agosto**, antes del corte mensual.
+
+**Y ese gasto no es trabajo, es sondeo.** En §20 medí 19 comandos por minuto con
+el contenedor despierto **y en reposo**: 18 k/día son unas doce horas diarias de
+instancia viva sin hacer nada. Con `--no-cpu-throttling` la instancia vive más
+rato, así que la tendencia apunta arriba, no abajo.
+
+**Lo que hay que confirmar antes de decidir nada**: qué hace exactamente Upstash
+al llegar al tope —rechazar comandos o pasar a cobrar—. No lo he podido leer en
+la consola y no lo voy a suponer. Si rechaza, se cae la cola, y con la cola la
+ingesta y la clasificación: sería el mismo apagón silencioso del `watch`, otra
+vez con fecha en el calendario.
+
+### 32.3 🟡 Vercel: sano, y redesplegando documentación
+
+Plan **Hobby**, proyecto `pmo-frontend` → `pmo-frontend-ten.vercel.app`,
+despliegue de producción **en verde**. Consumo de 30 días: **302 peticiones de
+1 M**, 5,42 MB de 100 GB, 0 s de 1 h de CPU. Nada, por tres órdenes de magnitud.
+
+Dos cosas que sí dicen algo:
+
+**El último despliegue es de `cea0145`, un commit solo de documentación.** Vercel
+no tiene el `paths-ignore` que sí tiene `ci.yml`, así que **el frontend se
+reconstruye cada vez que alguien toca un `.md`**. Hoy no cuesta dinero, pero
+gasta construcciones, ensucia el historial y —lo que importa— hace que «hay un
+despliegue nuevo» deje de significar nada. El día que haga falta saber si el
+frontend cambió de verdad, la lista no lo dirá.
+
+**302 peticiones en 30 días** es un dato de producto, no de infraestructura: el
+tablero apenas se abre en el navegador. No es un fallo y no propongo nada; lo
+dejo escrito porque explica dónde vive el valor de este sistema hoy, que es en la
+ingesta y la clasificación, no en la interfaz.
+
+**Lo que no pude terminar**: abrir la lista completa de despliegues para contar
+cuántos de los últimos son solo documentación. La consola dejó de responder a la
+navegación. Es un dato de apoyo; no cambia el hallazgo, que se ve desde el panel.
+
+### 32.4 Lo que enseña
+
+Los dos interruptores de §31 se cerraron el mismo día, y el segundo trajo su
+propia factura: reiniciar la instancia costó un barrido. Bien pagado.
+
+Lo que me llevo es otra cosa. Llevo catorce despertares escribiendo que aquí
+nunca falla una pieza sino la junta entre dos, y que nadie se entera hasta que
+alguien va a mirar. **Hoy no ha hecho falta ir a mirar**: el fallo de las 22:05
+lo contó el sistema solo, en el espacio de Chat, con el motivo dentro. Eso es lo
+que se construyó en la Fase 4 y hoy es la primera vez que sirve sin que se lo
+pidan.
+
+Y a la vez, Upstash tiene fecha —el 29 o el 30— igual que la tuvo el `watch` el
+día 20. **Los topes de los planes gratuitos no avisan: llegan.** La alerta nueva
+tampoco los ve, porque vigila el silencio de los push, no el saldo de un cubo que
+está en la consola de otra empresa.
