@@ -1046,6 +1046,8 @@ de Vercel. Detalle y comprobación en **§14**.
 
 | Fecha | Qué revisó | Corte de git |
 |---|---|---|
+| 2026-08-18 (2) | **Veredicto de entrega: la alerta llegó (§30).** Entré al espacio «Alertas PMO» de Google Chat en modo estricto de lectura, que es la comprobación que venía pidiendo desde §27.8. **CONFIRMADA, y por identificador**: el mensaje está publicado por `Alertas API Capa 1` con marca **«Ayer 5:53 p.m.» = 22:53 UTC** y lleva dentro `job=105` y `request_id req_011Ce99Bqd7KhyUyKVfNGbMh`, **el mismo** que la línea del log de las `22:53:04.815Z`. Ya no es *ausencia de error*: es **constancia de llegada**, con la cadena entera probada —modelo inexistente a propósito → reintentos agotados → oyente de la cola de fallidos → `AlertService` → webhook → mensaje—. **Llegó uno de los dos, y es lo correcto**: en `alert.service.ts` el `logger.warn` es incondicional y el envío pasa después por un `SET NX EX` de 15 min con el título como clave; los dos avisos comparten título y se llevan 74 s, así que el segundo se calló **por diseño**. La prueba validó la entrega **y** el antirrebote en la misma pasada, y `job=106` no se perdió: está en el log, que es la fuente de verdad. **Bloque 1–5 ejecutado**, cuatro commits atómicos en local: `8092852` (línea 213 de `TASKS.md`, que registraba como logro lo que rompió la clasificación), `f895925` (`--no-cpu-throttling` en `deploy.yml`, con el precio anotado), `83aa449` (la política a `infra/alert_policy.json` —existía en tres sitios y ninguno era la fuente— y el paso que faltaba en `GCP_SETUP.md`: crear `ALERT_WEBHOOK_SECRET`), `64fca42` (`.githooks/pre-commit` + `AI_ROLES.md`). **El gancho está probado**: con `ALANA.md` y un archivo bajo `packages/` a la vez sale con **código 1**, y luego deja pasar un commit legítimo — no iba a añadir otra pieza puesta y desconectada. **Sin `push`**: subirlos dispara CI y una revisión nueva, queda a decisión de Doc. **La lección, por una vez del derecho**: esta junta sí estaba conectada, y se supo **mirando el otro extremo** — no del código, ni del parte, ni de la ausencia de un error. Añadida la sección 30. | `64fca42` (local) · `155e592` (origin) |
+| 2026-08-18 | **Despertar 13. La Fase 4 cerrada y contrastada (§29).** Primer despertar con la directiva ampliada —puedo escribir en todo el repositorio y usar Chrome previo acuerdo—; sigo comprobando igual. `HEAD` = `155e592`, local y remoto idénticos, revisión viva `00057-ksl`, **601 pruebas en 29 suites ejecutadas por mí**. **Los tres 🔴 resueltos**: `CLAUDE_MODEL_CLASSIFY` = `claude-sonnet-5` y la clasificación **funciona** (hoy 13:42, `isActionable=true, 2 tareas creadas`); `ALERT_WEBHOOK_URL` está en el entorno de la revisión viva; y la Capa 1 **dispara de verdad**. **Y aparece la causa exacta de §27.5, con fecha**: el secreto contenía el texto de relleno —cada alerta moría con `Failed to parse URL from TO_BE_FILLED_BY_USER`— hasta la **versión 2, del 17-08 a las 18:39:54**. El canal existía desde el 14 y no llegaba nada, tres días. **La prueba de punta a punta, casi entera**: el 17 a las 22:53 y 22:54, con `modelo-inexistente-prueba-e2e` puesto a propósito, dos alertas recorrieron fallo → reintentos agotados → oyente de la cola de fallidos → envío, **sin ningún error detrás**. Pero `AlertService` **no registra el éxito, solo el fallo**, así que tengo *ausencia de error*, no *constancia de llegada* — falta mirar el espacio de Chat. **La tabla del Jefe, comprobada una a una**: el 🔴 de `TASKS.md` es cierto (la línea 213 registra como logro el cambio que rompió producción); la disciplina de `git add` es cierta y con caso —`ce5b7de`, titulado «Update GRAVITY_MEMORY.md», commiteó **1.542 líneas de `ALANA.md`**, 71 de `DOC.md` y un archivo de código, y **no hay ningún gancho de git**—; `--no-cpu-throttling` está aplicado a mano pero no en `deploy.yml`; **`GCP_SETUP.md` ya no está desactualizado** (sí tiene dos «Paso B», ningún «Paso C», y no menciona `ALERT_WEBHOOK_SECRET`); y `alert_policy_v2.json` sigue sin seguimiento y duplica el manual. **Abierto de lo mío**: Neon sigue perdiendo trabajo en frío —el 17 dos clasificaciones perdidas por `Can't reach database server`, con aviso pero sin reintento—, la deduplicación sin verse disparar, y la versión 1 del secreto sigue `enabled`. **La lección**: los cuatro fallos de esta fase no estaban dentro de ninguna pieza, sino **en la junta entre dos**, y ninguno era un error de programación. Añadida la sección 29. | `155e592` · revisión `00057-ksl` |
 | 2026-08-14 (7) | **🔴 La clasificación está rota en producción (§28).** Lo que en §27.4 escribí como riesgo ocurrió: `22:45:52 ERROR Falló la clasificación … HTTP 404 · {"type":"not_found_error","message":"model: claude-3-sonnet-20240229"}`. **Anthropic no sirve ese modelo**: la función que decide qué es accionable y crea tareas **no funciona** sobre la revisión viva `00046-64q`. Desde las 22:15 no hay ni un `Resultado de IA`; cuatro correos han entrado a clasificarse y ninguno ha salido. El último éxito es de las 21:32, con `claude-sonnet-5`, antes de que la variable existiera. La cadena entera: yo señalé la variable como **ruido de arranque** (§19.4-E) → se «limpió» a un modelo de junio de 2024 (§26.4) → se «revirtió» a uno de febrero de 2024 (§27.4) → **404**. **Y la alerta estaba muda**: trece minutos antes, `ALERT_WEBHOOK_URL no está configurada: las alertas se registrarán en el log pero no se enviarán a ningún sitio`. La Capa 1 **sí llegó a producción** —`adf2efe` incluye `a23202d`, resuelto §27.2— pero sin URL, porque `ALERT_WEBHOOK_SECRET` sigue sin existir y `deploy.yml` toma el `else`. Así que **el primer fallo real que el sistema de alertas tenía que contar no se lo contó a nadie**: es la demostración que pedía §27.8 y llegó sola. **Dos cambios de un minuto, ninguno de código**: `CLAUDE_MODEL_CLASSIFY` → `claude-sonnet-5` (el valor que funcionaba y el que el código trae por defecto), y crear `ALERT_WEBHOOK_SECRET` con el nombre del secreto que existe desde las 21:49. Y una lección mía: **señalar algo como ruido invita a callarlo, no a arreglarlo** — enumerar molestias sin decir cuál es el arreglo correcto es repartir trabajo mal definido. Añadida la sección 28. | `adf2efe` · revisión `00046-64q` |
 | 2026-08-15 | **Despertar 12. La Capa 1 y la Capa 2, contrastadas (§27).** **Arreglado de §26 y bien arreglado**: la política de errores desapareció y en su sitio hay una de **ausencia** —`conditionAbsent` sobre `push_request_count` de `gmail-ingest-push`, 23,5 h—, que es exactamente la alerta por silencio que faltaba y que **sí** habría visto la avería del día 20; `retryPolicy` puesta a `10s/600s`; y **597 pruebas en 29 suites, ejecutadas por mí**, con las cuatro suites nuevas —`alert.service`, `cron.controller`, `cron-auth.guard`, `overdue.cron-purge`— que **cierran §19.4-D**, abierto desde hacía seis despertares. La Capa 1 está bien diseñada y sus cuatro enganches existen de verdad en el árbol. **🔴 Pero la Capa 1 no está en producción**: busqué en el log el aviso de arranque de `AlertService`, **no aparece ninguno**, y esa ausencia era el hallazgo — `a23202d` está commiteado en local **y sin empujar**, `origin/master` sigue en `4de9236` y la revisión viva `00045-ndn` corre `4de9236`. **🔴 Y cuando se empuje seguirá muda**: `deploy.yml` condiciona el secreto a `vars.ALERT_WEBHOOK_SECRET`, **esa variable no existe**, así que se ejecuta el `else` y solo queda un aviso amarillo en un run que nadie mira. **🔴 El modelo de clasificación ha ido hacia atrás dos veces**: `21:47 claude-sonnet-5` → `21:48 claude-3-5-sonnet-20240620` → `22:15 claude-3-sonnet-20240229`; `TASKS.md` lo llama «revertida», y revertir habría sido volver a `claude-sonnet-5` — esto es un segundo salto atrás, a un modelo de febrero de 2024 que además está **retirado**, y **no se ha clasificado ni un correo desde las 21:32**, así que ninguno de los dos valores nuevos ha funcionado nunca. **🟠 El canal se llama «Google Chat Webhook (Pendiente)»**, es un webhook genérico y nadie ha demostrado que llegue un mensaje. **Dos correcciones al parte**: `GCP_SETUP.md` **no** está congelado (+84 líneas sin commitear, de otro), y `alert_policy_v2.json` **coincide exactamente con la política ya aplicada** — es el archivo origen, no un pendiente. **El patrón, una capa más arriba**: escrito, probado y commiteado ≠ en producción; y un sistema de alertas es donde ese error se paga doble. Se cierra provocando un fallo y esperando el mensaje en Chat. Añadida la sección 27. | `a23202d` (local) · `4de9236` (origin) · revisión `00045-ndn` |
 | 2026-08-14 (6) | **La infraestructura de la Fase 4, auditada (§26).** Levantada en consola entre 21:47 y 21:51; comprobada con `gcloud` y con la API de Monitoring. **Bien hecho**: la cola de mensajes fallidos está **completa** —tema `gmail-ingest-dlq`, `maxDeliveryAttempts: 5`, suscripción propia, y **las dos concesiones de IAM** que hacen falta (`publisher` sobre el tema, `subscriber` sobre la suscripción de origen), que es justo donde esto falla en silencio—. Cierra §19.4-C. **🔴 La alerta no avisa a nadie**: la política `[Capa 2] Fallo Critico en Infraestructura` está activa con `notificationChannels` **vacío**, y en el proyecto entero **no existe ni un canal de notificación** — abre el incidente y no se lo cuenta a nadie. **🔴 Y esa «Capa 2» es por error, no por silencio**: su filtro es `severity>=ERROR` sobre Cloud Run y Scheduler, así que **no habría visto el fallo que motivó la fase** — el `watch` dejaba un `WARNING` y el apagón del día 20 no habría dejado nada. **🔴 «Limpiar» `CLAUDE_MODEL_CLASSIFY` cambió el modelo del producto**: `21:47 claude-sonnet-5` → `21:48 claude-3-5-sonnet-20240620`, un modelo de junio de 2024, como efecto secundario de una tarea de higiene; y no se ha clasificado ni un correo desde entonces, así que ni se sabe si ese id sigue vivo. **🟠 Además**: `ALERT_WEBHOOK_URL` existe en Secret Manager pero **no está en el entorno de la revisión**, y la suscripción sigue **sin `retryPolicy`** —cinco intentos inmediatos contra un contenedor dormido acaban en la cola de fallidos, que nadie lee y que no genera ninguna línea que la alerta pueda ver—. Sigue abierto: cobertura cero en los tres del cron, Neon rechazando conexiones en frío (`P1001` a las 21:32) y la deduplicación nunca vista disparar. **El patrón: la infraestructura quedó puesta y desconectada** — cada pieza existe y el sistema sigue igual de ciego. Añadida la sección 26. | `4de9236` · revisión `00044-k8n` |
@@ -3383,3 +3385,225 @@ aviso protegía un valor por defecto correcto, y que fijar la variable **sin
 comprobar el modelo** cambiaba el producto. Un auditor que enumera molestias sin
 decir cuál es el arreglo correcto está repartiendo trabajo mal definido, y el
 trabajo mal definido se hace mal.
+
+---
+
+## 29. La Fase 4, cerrada y contrastada (2026-08-18)
+
+Despertar 13, y el primero con la directiva ampliada: puedo escribir en todo el
+repositorio, y usar Chrome previo acuerdo. Sigo comprobando igual.
+
+Estado al escribir: `HEAD` = `155e592`, local y remoto **idénticos**, árbol
+limpio salvo `alert_policy_v2.json` sin seguimiento. Revisión viva
+**`pmo-api-00057-ksl`** (`SERVICE_VERSION` = `10def67`; los dos commits
+posteriores son solo `.md`, que `ci.yml` ignora). **601 pruebas en 29 suites,
+ejecutadas por mí.**
+
+### 29.1 Los tres 🔴 de §26–§28, resueltos y verificados
+
+**La clasificación funciona.** `CLAUDE_MODEL_CLASSIFY` = `claude-sonnet-5`, en la
+variable del repositorio y en el entorno de la revisión viva. Y no lo doy por
+bueno porque lo diga la configuración: hoy a las **13:42** el log dice
+`Resultado de IA … isActionable=true, 2 tareas creadas`. El 404 de §28 está
+cerrado.
+
+**La Capa 1 tiene URL y llegó a producción.** `ALERT_WEBHOOK_SECRET` existe desde
+el 14-08 a las 23:07 y `ALERT_WEBHOOK_URL` **está en el entorno de `00057-ksl`**.
+
+**Y la Capa 1 dispara de verdad.** En el log del 17 hay alertas reales, no
+simuladas: `ALERTA · No se pudo encolar un correo entrante`, `ALERTA ·
+Clasificación perdida: un job agotó sus reintentos`.
+
+### 29.2 El detalle que confirma §27.5, con fecha
+
+El canal existía desde el 14 y **no llegaba nada**, exactamente como escribí.
+Ahora está la causa, en el log del 17:
+
+```
+15:38:34  ERROR  No se pudo enviar la alerta «No se pudo encolar un correo
+                 entrante»: Failed to parse URL from TO_BE_FILLED_BY_USER
+```
+
+**El secreto contenía el texto de relleno.** Se creó el 14-08 a las 21:49
+(versión 1) y no se sustituyó por la URL real hasta el **17-08 a las 18:39:54**
+(versión 2). Entre esas dos fechas cada alerta se generó, intentó salir y murió
+en el envío — y el único sitio donde constaba era el log.
+
+Es el mismo error tres veces seguidas, y ya con nombre: **una pieza existe, pasa
+su propia comprobación y no conecta con la siguiente**. Aquí la comprobación que
+faltaba costaba un `curl`.
+
+Desde las 18:16 del 17 **no hay un solo fallo de envío**.
+
+### 29.3 La prueba de punta a punta que pedí, casi entera
+
+El 17 a las 22:53 y 22:54, con un modelo inexistente puesto a propósito:
+
+```
+ALERTA · Clasificación perdida: un job agotó sus reintentos:
+cola=classify-email job=105 · 404 {"type":"not_found_error",
+"message":"model: modelo-inexistente-prueba-e2e"}
+```
+
+Dos alertas, **sin ningún error de envío detrás**. Es un sabotaje deliberado que
+recorrió la cadena entera: fallo → reintentos agotados → oyente de la cola de
+fallidos → envío. Eso es lo que pedía §27.8.
+
+**Pero no es prueba de entrega, y conviene no confundirlo.** `AlertService`
+registra el fallo del envío y **no registra el éxito**, así que lo que tengo es
+*ausencia de error*, no *constancia de llegada*. La diferencia es justo la que me
+ha ocupado cuatro días. Lo que falta es mirar el espacio de Google Chat y ver los
+dos mensajes del 17. Es una comprobación de un minuto y la única que convierte
+esto en un hecho.
+
+### 29.4 Lo demás que quedó cerrado
+
+- **`--no-cpu-throttling` está aplicado**: `run.googleapis.com/cpu-throttling=false`
+  en el servicio y en la revisión viva. Puesto a mano —el creador de la revisión
+  es la cuenta del usuario, no el pipeline—, y ahí está el pendiente 🟠: la
+  configuración vive en la consola, no en `deploy.yml`.
+- **La DLQ, la política de reintentos y la alerta por ausencia**, todas
+  verificadas en §26 y §27 y sin cambios.
+- **`GCP_SETUP.md` ya no está congelado**: tiene su sección «6. Fase 4» con
+  Scheduler, DLQ con las dos concesiones de IAM, el secreto y la política de
+  Capa 2 completa, incluida la nota de que el canal nativo de Chat hay que
+  autorizarlo a mano y no admite datos de relleno — aprendido por las malas.
+- **El `jobId` entero** (`b31995d`): la alerta `Custom Id cannot be integers`
+  aparece por última vez el 17 a las 18:16 y no vuelve.
+
+### 29.5 Lo que sigue abierto
+
+**De la tabla del Jefe**, comprobado uno a uno:
+
+| # | Punto | Lo que encuentro |
+|---|---|---|
+| 🔴 | `claude-3-sonnet-20240229` en `TASKS.md` | **Cierto.** Línea 213: registra como logro «variable revertida a `claude-3-sonnet-20240229` tras corrección arquitectónica». Es el cambio que rompió la clasificación en producción, anotado como acierto. La línea 62 sí está bien (`hoy claude-sonnet-5`) |
+| 🟠 | Disciplina de `git add` | **Cierto y con caso.** `ce5b7de`, titulado «Update GRAVITY_MEMORY.md», commiteó **1.542 líneas de `ALANA.md`**, 71 de `DOC.md`, 31 de `GRAVITY_MEMORY.md` y un archivo de código. Cuatro dueños en un commit que nombra a uno. Tercera vez que `ALANA.md` viaja de polizón. **No hay ningún gancho de git**: ni `.husky`, ni `.githooks`, ni `hooksPath` |
+| 🟠 | `--no-cpu-throttling` en `deploy.yml` | **Cierto.** No aparece en el `gcloud run deploy` del workflow. Está aplicado en el servicio a mano |
+| 🟡 | `GCP_SETUP.md` desactualizado | **Ya no.** Sí tiene dos defectos menores: **dos pasos llamados «Paso B»** y salto a «Paso D» sin «Paso C», y **no menciona la variable de repositorio `ALERT_WEBHOOK_SECRET`** — que es justo el paso cuya ausencia dejó las alertas mudas |
+| 🟡 | `alert_policy_v2.json` sin seguimiento | **Cierto.** Su contenido coincide con la política aplicada. El manual manda crear un `alert_policy.json` a mano, así que o se versiona este como el artefacto real, o se borra por duplicado |
+
+**De lo mío**, sin cerrar:
+
+- **Neon sigue perdiendo trabajo en frío.** El 17 a las 15:48 y 16:47:
+  `Clasificación perdida … Can't reach database server`. La alerta ahora avisa
+  —que es más de lo que había—, pero **el correo se queda sin clasificar** y
+  nadie lo reintenta.
+- **La deduplicación sigue sin verse disparar en producción** (§23.6).
+- **La versión 1 del secreto, la del texto de relleno, sigue `enabled`.** Se usa
+  `:latest`, así que no molesta; desactivarla cuesta un comando y quita un pie
+  del que tropezar.
+
+### 29.6 Lo que enseña
+
+La Fase 4 se cierra bien, y la lección no está en lo que se construyó sino en
+**dónde se rompió cada vez**: nunca dentro de una pieza, siempre en la junta
+entre dos. El modelo apuntando a un id retirado, el secreto con el texto de
+relleno, la variable de repositorio que nadie creó, el canal llamado
+«Pendiente». Cuatro fallos y ninguno es un error de programación.
+
+Y el corolario para la directiva nueva: ahora que puedo tocar todo el
+repositorio, **el trabajo que me toca sigue siendo el mismo** — comprobar las
+juntas. Escribir en más archivos no me hace mejor auditora; me da más sitios
+donde dejar una pieza puesta y desconectada.
+
+---
+
+## 30. Veredicto de entrega: la alerta llegó (2026-08-18)
+
+Con autorización ejecutiva y en modo estricto de lectura, entré al espacio
+**«Alertas PMO»** de Google Chat. Es la comprobación que vengo pidiendo desde
+§27.8 y que §29.3 dejó a medias.
+
+### 30.1 CONFIRMADA, y por identificador
+
+En el espacio está el mensaje, publicado por la aplicación `Alertas API Capa 1`:
+
+```
+Ayer 5:53 p.m.
+🔴 Clasificación perdida: un job agotó sus reintentos
+cola=classify-email job=105 · 404 {"type":"not_found_error",
+"message":"model: modelo-inexistente-prueba-e2e",
+"request_id":"req_011Ce99Bqd7KhyUyKVfNGbMh"}
+```
+
+**5:53 p.m. en Tulum son las 22:53 UTC**, y la línea del log dice
+`2026-08-17T22:53:04.815Z … job=105 … req_011Ce99Bqd7KhyUyKVfNGbMh`. Coinciden la
+hora y **el `request_id` de Anthropic**, que es un identificador único y no una
+coincidencia posible.
+
+Esto ya no es *ausencia de error*: es **constancia de llegada**. La cadena entera
+queda probada de punta a punta — modelo inexistente puesto a propósito → job
+agotando reintentos → oyente de la cola de fallidos → `AlertService` → webhook →
+mensaje en el espacio.
+
+También está, a las **2:07 p.m.** (19:07 UTC), un
+`🚀 Prueba de comunicación: El webhook de la Capa 1 está vivo`. Encaja con la
+versión 2 del secreto, creada a las 18:39:54 UTC: la URL real sustituyó al
+`TO_BE_FILLED_BY_USER` y media hora después se probó el canal.
+
+### 30.2 Llegó **uno** de los dos, y eso es lo correcto
+
+El log tiene dos avisos —`job=105` a las 22:53:04 y `job=106` a las 22:54:18— y
+en Chat hay **uno**. Doc esperaba dos, así que conviene dejar escrito por qué no
+es una pérdida.
+
+En `alert.service.ts`, por este orden:
+
+```ts
+this.logger.warn(`ALERTA · ${titulo}…`);        // siempre, se mande o no
+if (!this.url) return;
+if (!(await this.debeMandarse(claveDeFreno ?? titulo))) return;   // el freno
+```
+
+El registro es incondicional y el envío pasa después por un `SET NX EX` de **15
+minutos con el título como clave**. Los dos avisos comparten título —«Clasificación
+perdida: un job agotó sus reintentos»— y se llevan **74 segundos**, así que el
+segundo se calló **por diseño**.
+
+De modo que la prueba salió mejor de lo previsto: **validó la entrega y el
+antirrebote en la misma pasada**. Y deja demostrada la decisión de fondo que
+tomó quien lo escribió — el log es la fuente de verdad y la alerta solo una
+notificación —, porque `job=106` no se ha perdido: está en el log, donde tiene
+que estar.
+
+**Un matiz que anoto sin convertirlo en tarea**: el freno agrupa por título, así
+que dos fallos *distintos* con el mismo título dentro de la misma ventana se
+cuentan como uno. Es la elección correcta para un canal que no debe gritar, y el
+precio está pagado a conciencia; solo conviene saberlo el día que se lea el
+espacio esperando encontrar todo.
+
+### 30.3 El trabajo del bloque 1–5
+
+Cuatro commits atómicos, en local:
+
+| Commit | Qué cierra |
+|---|---|
+| `8092852` | `TASKS.md` línea 213: registraba **como logro** el cambio que rompió la clasificación. Reescrita con lo que pasó |
+| `f895925` | `--no-cpu-throttling` en `deploy.yml`, con el precio anotado —se factura CPU toda la vida de la instancia— y el porqué: los workers de BullMQ trabajan fuera del ciclo de una petición |
+| `83aa449` | La política de alertas pasa a `infra/alert_policy.json` —existía en tres sitios y ninguno era la fuente— y `GCP_SETUP.md` gana **el paso que faltaba**: crear la variable `ALERT_WEBHOOK_SECRET`. De paso, había dos «Paso B» y ningún «Paso C» |
+| `64fca42` | `.githooks/pre-commit` y su explicación en `AI_ROLES.md` |
+
+**El gancho está probado, no solo escrito.** Con `ALANA.md` y un archivo bajo
+`packages/` preparados a la vez, el commit sale con **código 1** y el mensaje que
+corresponde; acto seguido dejó pasar un commit legítimo de un solo dueño. No iba
+a añadir a este proyecto una pieza más puesta y desconectada — que es de lo que
+va §26.7 y todo lo que vino después.
+
+Sus dos límites están escritos dentro de él y en `AI_ROLES.md`: **no ve los flags
+con que se le invoca** —mira el efecto, la mezcla de dueños, no el `-a`— y **solo
+protege a la terminal que haya ejecutado `git config core.hooksPath .githooks`**.
+Cada terminal lo activa una vez. La mía ya lo está.
+
+**Sin `push`**: los cuatro commits están en local a la espera de que Doc decida
+la ventana, porque subirlos dispara CI y una revisión nueva en producción.
+
+### 30.4 Lo que enseña
+
+Cierro con lo contrario de lo que llevo cuatro días escribiendo, y me alegra
+poder hacerlo: **esta vez la junta entre dos piezas sí estaba conectada, y se
+comprobó mirando el otro extremo**. No se dedujo del código, ni del parte, ni de
+la ausencia de un error en el log: se leyó el mensaje en el espacio y se cotejó
+su `request_id` con el del registro.
+
+Ese es el listón, y no es alto: **alguien tiene que ir al otro lado y mirar**.
