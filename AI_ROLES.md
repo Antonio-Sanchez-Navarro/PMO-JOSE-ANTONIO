@@ -107,6 +107,39 @@ Estos archivos los necesitan ambos; avisar antes de editarlos:
 Nadie edita la memoria del otro — para eso está `DOC.md`, donde Doc anota lo que
 afecta a los dos.
 
+### Disciplina de `git add` — y el gancho que la sostiene
+
+**Prohibidos `git add -A` y `git commit -a`.** Se prepara por ruta exacta. Con
+tres agentes escribiendo en el mismo árbol de trabajo, un `-a` no distingue lo
+tuyo de lo que otro tiene a medias: se lo lleva todo.
+
+No es teoría. `ce5b7de`, titulado «Update GRAVITY_MEMORY.md», commiteó **1.542
+líneas de `ALANA.md`**, 71 de `DOC.md`, 31 de `GRAVITY_MEMORY.md` y un archivo de
+código: cuatro dueños en un commit que nombra a uno. Fue la **tercera** vez que
+`ALANA.md` viajó de polizón. Las tres salieron bien, y por eso se pone el freno
+ahora: este fallo no avisa cuando ocurre, avisa cuando alguien pierde una hora de
+trabajo.
+
+Desde el **2026-08-18** hay un gancho en `.githooks/pre-commit` que rechaza un
+commit cuando lo preparado mezcla dueños —dos bitácoras a la vez, o una bitácora
+junto con código—. **Cada terminal lo activa una vez**, porque los ganchos no
+viajan en el repositorio:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Comprueba que está activo con `git config core.hooksPath` (debe responder
+`.githooks`). Un gancho que nadie activó no protege de nada, que es la forma de
+fallo favorita de este proyecto.
+
+Si una mezcla es deliberada, se dice en voz alta en vez de rodearla:
+`ALLOW_MIXED_COMMIT=1 git commit ...`.
+
+Dos límites, escritos para que nadie los descubra tarde: el gancho **no ve los
+flags** con que se le invoca, así que no bloquea `-a` ni `-A` como tales — mira
+el efecto, que es la mezcla de dueños; y no protege a quien no lo activó.
+
 ## Excepciones vigentes
 
 - **`KanbanBoard.tsx` — detección de colisión del arrastre**, commiteada por

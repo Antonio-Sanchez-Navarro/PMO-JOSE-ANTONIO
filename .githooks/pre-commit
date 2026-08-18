@@ -1,0 +1,83 @@
+#!/bin/sh
+#
+# Impide que un commit se lleve por delante el trabajo de otro agente.
+#
+# ── Por qué existe ──────────────────────────────────────────────────────────
+# Tres agentes comparten este árbol de trabajo y escriben a la vez. Un
+# `git add -A` o un `git commit -a` no distinguen entre lo tuyo y lo que otro
+# tiene a medias: se lo llevan todo, con un mensaje que nombra un archivo y un
+# contenido que toca cuatro.
+#
+# El caso que motivó esto es `ce5b7de`, titulado «Update GRAVITY_MEMORY.md»:
+# commiteó 1.542 líneas de ALANA.md, 71 de DOC.md, 31 de GRAVITY_MEMORY.md y un
+# archivo de código. Cuatro dueños en un commit que nombra a uno. Fue la tercera
+# vez que ALANA.md viajó de polizón.
+#
+# Salió bien las tres veces. Esa es justamente la razón de ponerlo ahora: el
+# fallo no avisa cuando ocurre, avisa cuando alguien pierde una hora de trabajo.
+#
+# ── Qué bloquea ─────────────────────────────────────────────────────────────
+#   1. Más de una bitácora en el mismo commit.
+#   2. Una bitácora junto con código (apps/, packages/).
+#
+# ── Qué NO puede hacer, y conviene saberlo ──────────────────────────────────
+# Un gancho de pre-commit **no ve con qué flags lo invocaron**, así que no puede
+# detectar `-a` ni `-A` como tales: solo ve el resultado. Lo que se comprueba es
+# el efecto —la mezcla de dueños—, que es lo que hace daño. Un `git add -A` que
+# solo toque archivos de un dueño pasa, y está bien que pase.
+#
+# Y solo protege a la terminal que haya ejecutado:
+#
+#     git config core.hooksPath .githooks
+#
+# Es un cinturón, no un muro. Cada terminal lo activa una vez.
+#
+# Para saltárselo a conciencia (una integración deliberada, un merge):
+#
+#     ALLOW_MIXED_COMMIT=1 git commit ...
+#
+
+if [ -n "$ALLOW_MIXED_COMMIT" ]; then
+  echo "pre-commit: mezcla de dueños permitida a propósito (ALLOW_MIXED_COMMIT)."
+  exit 0
+fi
+
+# Solo lo que está preparado, sin los borrados: un archivo que desaparece no le
+# pisa el trabajo a nadie.
+preparados=$(git diff --cached --name-only --diff-filter=d)
+
+[ -z "$preparados" ] && exit 0
+
+bitacoras=$(echo "$preparados" | grep -E '^(ALANA|CLAUDE_MEMORY|GRAVITY_MEMORY|DOC)\.md$')
+codigo=$(echo "$preparados" | grep -E '^(apps|packages)/')
+
+numero_bitacoras=$(echo "$bitacoras" | grep -c . )
+
+fallar() {
+  echo ""
+  echo "  ✖ pre-commit: este commit mezcla el trabajo de varios dueños."
+  echo ""
+  echo "    $1"
+  echo ""
+  echo "    Preparado ahora mismo:"
+  echo "$preparados" | sed 's/^/      · /'
+  echo ""
+  echo "    Cada bitácora tiene un dueño (ver AI_ROLES.md) y se commitea sola."
+  echo "    Prepara por ruta exacta, nunca con -A ni con -a:"
+  echo ""
+  echo "      git reset && git add <ruta> && git commit -m \"...\""
+  echo ""
+  echo "    Si la mezcla es deliberada:  ALLOW_MIXED_COMMIT=1 git commit ..."
+  echo ""
+  exit 1
+}
+
+if [ "$numero_bitacoras" -gt 1 ]; then
+  fallar "Hay $numero_bitacoras bitácoras preparadas a la vez, y cada una es de otro agente."
+fi
+
+if [ "$numero_bitacoras" -ge 1 ] && [ -n "$codigo" ]; then
+  fallar "Hay una bitácora preparada junto con código. La bitácora cuenta lo que pasó; el código lo hace. Van en commits distintos."
+fi
+
+exit 0
