@@ -1046,6 +1046,7 @@ de Vercel. Detalle y comprobación en **§14**.
 
 | Fecha | Qué revisó | Corte de git |
 |---|---|---|
+| 2026-08-18 (3) | **Despertar 14. La migración a Cloud SQL, auditada (§31).** Catorce commits desde `4c564f2`; `HEAD` = `cea0145`, árbol limpio, revisión viva `00065-jsc`, **610 pruebas en 29 suites ejecutadas por mí**. Y **`ALANA.md` no aparece en el diff**: nadie se lo llevó de polizón, primera vez en cuatro. **Lo grande funcionó**: los `P1001` se acabaron — el último es del 17-08 a las 16:47 contra el host de Neon y desde la migración **ninguno**, de 22 en 7 días a cero. **Y el parte de Gravity sobre el respaldo es cierto pieza por pieza**: proxy montado en el job (`cloudsql-instances`), `roles/cloudsql.client` en su cuenta, **tres ejecuciones correctas** (17:16, 17:34, 19:11) con tres volcados reales de 203–211 KB e índice legible, y `--set-cloudsql-instances` escrito en `deploy.yml` en los **dos** sitios. El 🔴 que cazó Claude en `d226f00` estaba bien visto y bien cerrado. **🔴 Pero los respaldos automáticos de Cloud SQL están APAGADOS**: `backupConfiguration.enabled = false`, con la retención de 7 copias y la ventana de las 05:00 configuradas y la casilla en `false` — y **esa era la razón de la migración**. Lo único que respalda hoy la base es el job de `pg_dump` que diseñé como puente provisional para Neon. **🔴 Y la base tiene IP pública sin exigir cifrado**: `requireSsl=false`, `sslMode=ALLOW_UNENCRYPTED_AND_ENCRYPTED`, dos redes autorizadas —el «parche temporal» de la IP de casa sigue puesto y `34.24.236.30/32` no está documentada—, y el `.env` local sigue apuntando a la IP pública: la cadena de producción vive en un portátil y viaja por internet contra un servidor que acepta texto plano. **`DATABASE_URL` ya sale de Google Cloud**, y no por decisión sino por residuo. **🟠 Dos derivas**: el job de respaldo se configuró a mano y solo vive en la consola —la misma deriva de `--no-cpu-throttling`, otra vez—, y mi propio `README` de `infra/backup/` ya miente: dice que respalda Neon y fija `PG_MAJOR=18` cuando el servidor es Cloud SQL **POSTGRES_16**. Instancia `db-f1-micro` `ZONAL`, sin alta disponibilidad. **La lección**: ya no es una pieza puesta y desconectada, es una pieza puesta, conectada **y con el interruptor en `false`** — nada de lo que se mira dice que falte algo, hay que ir a buscar el booleano. Y una a mi cuenta: **un parche que nadie retira se convierte en la arquitectura** sin que nadie decida que lo sea. Añadida la sección 31. | `cea0145` · revisión `00065-jsc` |
 | 2026-08-18 (2) | **Veredicto de entrega: la alerta llegó (§30).** Entré al espacio «Alertas PMO» de Google Chat en modo estricto de lectura, que es la comprobación que venía pidiendo desde §27.8. **CONFIRMADA, y por identificador**: el mensaje está publicado por `Alertas API Capa 1` con marca **«Ayer 5:53 p.m.» = 22:53 UTC** y lleva dentro `job=105` y `request_id req_011Ce99Bqd7KhyUyKVfNGbMh`, **el mismo** que la línea del log de las `22:53:04.815Z`. Ya no es *ausencia de error*: es **constancia de llegada**, con la cadena entera probada —modelo inexistente a propósito → reintentos agotados → oyente de la cola de fallidos → `AlertService` → webhook → mensaje—. **Llegó uno de los dos, y es lo correcto**: en `alert.service.ts` el `logger.warn` es incondicional y el envío pasa después por un `SET NX EX` de 15 min con el título como clave; los dos avisos comparten título y se llevan 74 s, así que el segundo se calló **por diseño**. La prueba validó la entrega **y** el antirrebote en la misma pasada, y `job=106` no se perdió: está en el log, que es la fuente de verdad. **Bloque 1–5 ejecutado**, cuatro commits atómicos en local: `8092852` (línea 213 de `TASKS.md`, que registraba como logro lo que rompió la clasificación), `f895925` (`--no-cpu-throttling` en `deploy.yml`, con el precio anotado), `83aa449` (la política a `infra/alert_policy.json` —existía en tres sitios y ninguno era la fuente— y el paso que faltaba en `GCP_SETUP.md`: crear `ALERT_WEBHOOK_SECRET`), `64fca42` (`.githooks/pre-commit` + `AI_ROLES.md`). **El gancho está probado**: con `ALANA.md` y un archivo bajo `packages/` a la vez sale con **código 1**, y luego deja pasar un commit legítimo — no iba a añadir otra pieza puesta y desconectada. **Sin `push`**: subirlos dispara CI y una revisión nueva, queda a decisión de Doc. **La lección, por una vez del derecho**: esta junta sí estaba conectada, y se supo **mirando el otro extremo** — no del código, ni del parte, ni de la ausencia de un error. Añadida la sección 30. | `64fca42` (local) · `155e592` (origin) |
 | 2026-08-18 | **Despertar 13. La Fase 4 cerrada y contrastada (§29).** Primer despertar con la directiva ampliada —puedo escribir en todo el repositorio y usar Chrome previo acuerdo—; sigo comprobando igual. `HEAD` = `155e592`, local y remoto idénticos, revisión viva `00057-ksl`, **601 pruebas en 29 suites ejecutadas por mí**. **Los tres 🔴 resueltos**: `CLAUDE_MODEL_CLASSIFY` = `claude-sonnet-5` y la clasificación **funciona** (hoy 13:42, `isActionable=true, 2 tareas creadas`); `ALERT_WEBHOOK_URL` está en el entorno de la revisión viva; y la Capa 1 **dispara de verdad**. **Y aparece la causa exacta de §27.5, con fecha**: el secreto contenía el texto de relleno —cada alerta moría con `Failed to parse URL from TO_BE_FILLED_BY_USER`— hasta la **versión 2, del 17-08 a las 18:39:54**. El canal existía desde el 14 y no llegaba nada, tres días. **La prueba de punta a punta, casi entera**: el 17 a las 22:53 y 22:54, con `modelo-inexistente-prueba-e2e` puesto a propósito, dos alertas recorrieron fallo → reintentos agotados → oyente de la cola de fallidos → envío, **sin ningún error detrás**. Pero `AlertService` **no registra el éxito, solo el fallo**, así que tengo *ausencia de error*, no *constancia de llegada* — falta mirar el espacio de Chat. **La tabla del Jefe, comprobada una a una**: el 🔴 de `TASKS.md` es cierto (la línea 213 registra como logro el cambio que rompió producción); la disciplina de `git add` es cierta y con caso —`ce5b7de`, titulado «Update GRAVITY_MEMORY.md», commiteó **1.542 líneas de `ALANA.md`**, 71 de `DOC.md` y un archivo de código, y **no hay ningún gancho de git**—; `--no-cpu-throttling` está aplicado a mano pero no en `deploy.yml`; **`GCP_SETUP.md` ya no está desactualizado** (sí tiene dos «Paso B», ningún «Paso C», y no menciona `ALERT_WEBHOOK_SECRET`); y `alert_policy_v2.json` sigue sin seguimiento y duplica el manual. **Abierto de lo mío**: Neon sigue perdiendo trabajo en frío —el 17 dos clasificaciones perdidas por `Can't reach database server`, con aviso pero sin reintento—, la deduplicación sin verse disparar, y la versión 1 del secreto sigue `enabled`. **La lección**: los cuatro fallos de esta fase no estaban dentro de ninguna pieza, sino **en la junta entre dos**, y ninguno era un error de programación. Añadida la sección 29. | `155e592` · revisión `00057-ksl` |
 | 2026-08-14 (7) | **🔴 La clasificación está rota en producción (§28).** Lo que en §27.4 escribí como riesgo ocurrió: `22:45:52 ERROR Falló la clasificación … HTTP 404 · {"type":"not_found_error","message":"model: claude-3-sonnet-20240229"}`. **Anthropic no sirve ese modelo**: la función que decide qué es accionable y crea tareas **no funciona** sobre la revisión viva `00046-64q`. Desde las 22:15 no hay ni un `Resultado de IA`; cuatro correos han entrado a clasificarse y ninguno ha salido. El último éxito es de las 21:32, con `claude-sonnet-5`, antes de que la variable existiera. La cadena entera: yo señalé la variable como **ruido de arranque** (§19.4-E) → se «limpió» a un modelo de junio de 2024 (§26.4) → se «revirtió» a uno de febrero de 2024 (§27.4) → **404**. **Y la alerta estaba muda**: trece minutos antes, `ALERT_WEBHOOK_URL no está configurada: las alertas se registrarán en el log pero no se enviarán a ningún sitio`. La Capa 1 **sí llegó a producción** —`adf2efe` incluye `a23202d`, resuelto §27.2— pero sin URL, porque `ALERT_WEBHOOK_SECRET` sigue sin existir y `deploy.yml` toma el `else`. Así que **el primer fallo real que el sistema de alertas tenía que contar no se lo contó a nadie**: es la demostración que pedía §27.8 y llegó sola. **Dos cambios de un minuto, ninguno de código**: `CLAUDE_MODEL_CLASSIFY` → `claude-sonnet-5` (el valor que funcionaba y el que el código trae por defecto), y crear `ALERT_WEBHOOK_SECRET` con el nombre del secreto que existe desde las 21:49. Y una lección mía: **señalar algo como ruido invita a callarlo, no a arreglarlo** — enumerar molestias sin decir cuál es el arreglo correcto es repartir trabajo mal definido. Añadida la sección 28. | `adf2efe` · revisión `00046-64q` |
@@ -3627,3 +3628,130 @@ una consola. **Esta la creó la cuenta del pipeline**, y trae el
 `cpu-throttling=false` dentro. Es decir: `deploy.yml` ya no describe la
 configuración, **la produce**. Eso es lo que convierte un ajuste manual en
 infraestructura reproducible, y es lo único que este commit venía a demostrar.
+
+---
+
+## 31. La migración a Cloud SQL, auditada (2026-08-18)
+
+Despertar 14. Catorce commits desde mi último corte (`4c564f2`), la migración
+hecha y el respaldo en marcha. `HEAD` = `cea0145`, local y remoto idénticos,
+árbol limpio. Revisión viva **`pmo-api-00065-jsc`**. **610 pruebas en 29 suites,
+ejecutadas por mí.**
+
+Y `ALANA.md` **no aparece en el diff de estos catorce commits**: nadie se lo ha
+llevado de polizón. Primera vez en cuatro veces. El gancho y la disciplina
+aguantaron.
+
+### 31.1 Lo que funcionó, y es lo grande
+
+**Los `P1001` se acabaron.** El último es del **17-08 a las 16:47**, y va contra
+`ep-curly-heart-…neon.tech`. Desde la migración, **ninguno**. Eran 22 apariciones
+en 7 días y ahora son cero: la base ya no se duerme. Ese era el objetivo entero y
+está conseguido.
+
+**Y lo que reportó Gravity del respaldo es cierto**, comprobado pieza por pieza:
+
+| Afirmación | Comprobado |
+|---|---|
+| El proxy montado en el job | `run.googleapis.com/cloudsql-instances: pmo-dashboard-503418:us-central1:pmo-postgres-db` |
+| La cuenta tiene el rol | `pmo-respaldos@…` con `roles/cloudsql.client` |
+| El job se ejecuta | Tres ejecuciones correctas: 17:16, 17:34 y 19:11 |
+| Y produce algo | Tres volcados en el bucket, de **203 a 211 KB**, con el índice legible |
+| El pipeline lo lleva escrito | `--set-cloudsql-instances` en `deploy.yml`, **en los dos sitios**: el servicio y el job de migraciones |
+
+El 🔴 que Claude cazó en `d226f00` —el job leyendo un secreto con socket sin
+tener el socket montado— estaba bien visto y está bien cerrado. El respaldo de
+las 03:30 no va a fallar esta noche.
+
+### 31.2 🔴 Los respaldos automáticos de Cloud SQL están apagados
+
+```json
+"backupConfiguration": {
+  "enabled": false,
+  "startTime": "05:00",
+  "backupRetentionSettings": { "retainedBackups": 7 },
+  "transactionLogRetentionDays": 7
+}
+```
+
+La retención está configurada —siete copias, ventana de las 05:00— y **la casilla
+está en `false`**, así que no se hace ninguna. Tampoco hay recuperación a un
+punto en el tiempo, que depende de que los respaldos estén encendidos.
+
+**Y esa era la razón de la migración.** La pregunta que se le hizo al Jefe fue
+literalmente «Cloud SQL te da la tranquilidad de los backups automatizados de
+Google… ¿o prefieres mantener el costo a cero?». Se eligió pagar la instancia por
+eso, y eso es lo único que no se activó.
+
+De modo que **lo único que respalda hoy la base de datos es el job de `pg_dump`**
+que diseñé como parche provisional mientras seguíamos en Neon. La red que se puso
+para aguantar el intermedio es la única red que hay.
+
+Se enciende con un comando. Pero el que importa aquí no es el comando: es que
+nadie lo notó porque la instancia existe, la retención está puesta y todo *parece*
+configurado.
+
+### 31.3 🔴 La base tiene IP pública y no exige cifrado
+
+```json
+"ipv4Enabled": true,
+"requireSsl": false,
+"sslMode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED",
+"authorizedNetworks": [ "201.152.43.155/32", "34.24.236.30/32" ]
+```
+
+Tres cosas, y las tres importan:
+
+1. **El «parche temporal» sigue puesto.** `GRAVITY_MEMORY.md` dice que «el
+   firewall fue parcheado temporalmente para permitir la IP local». Esa IP sigue
+   autorizada, y la segunda —`34.24.236.30/32`— **no sé de quién es**; está en
+   rango de Google Cloud, pero nadie la ha documentado.
+2. **El servidor acepta conexiones sin cifrar.** `ALLOW_UNENCRYPTED_AND_ENCRYPTED`
+   significa que el cliente elige, y un cliente mal configurado manda la
+   contraseña de producción en claro por internet.
+3. **El `.env` local sigue apuntando a la IP pública**, según el propio parte de
+   Gravity, «para desarrollar sin levantar el proxy a mano».
+
+Sumado: **la cadena de conexión de producción vive hoy en un portátil**, y viaja
+por internet contra un servidor que no exige TLS. Hasta esta semana la regla de
+este proyecto era que `DATABASE_URL` **no sale de Google Cloud**. Ha dejado de ser
+cierta, y no como decisión discutida sino como residuo de una noche de migración.
+
+La comodidad es real —levantar el proxy a mano cansa— y la decisión es del Jefe.
+Lo que no puede quedar es sin decidir: o se asume por escrito, o se cierra
+poniendo `sslMode` en solo cifrado y quitando la IP de casa.
+
+### 31.4 🟠 Dos derivas menores del mismo tipo
+
+**El respaldo se configuró a mano y solo vive en la consola.** El job
+`pmo-respaldo-db` no está en `deploy.yml` ni en el runbook que escribí: su
+`--set-cloudsql-instances` lo puso el Jefe en la consola. Es exactamente la deriva
+que arreglamos hace dos días con `--no-cpu-throttling`, otra vez y en otro sitio.
+Al `README.md` de `infra/backup/` le falta ese paso.
+
+**Y ese mismo runbook ya miente en su primera línea.** Dice que respalda Neon y
+fija el cliente en `PG_MAJOR=18` «comprobado contra Neon». El servidor ahora es
+**Cloud SQL con POSTGRES_16**. No rompe nada —un cliente más nuevo vuelca una base
+más vieja sin problema—, pero el documento describe un mundo que ya no existe, y
+el siguiente que lo lea lo creerá.
+
+**La instancia es `db-f1-micro` y `ZONAL`**: núcleo compartido y sin alta
+disponibilidad. Para N=1 es la elección correcta y la más barata; queda anotado
+para que nadie lo descubra el día que se caiga la zona.
+
+### 31.5 Lo que enseña
+
+La migración cumplió lo que prometía: los `P1001` han desaparecido de verdad. Y
+aun así **las dos cosas que quedan mal son las dos que se dieron por hechas**: los
+respaldos que motivaron la mudanza y el cortafuegos que se abrió «temporalmente».
+
+Es el mismo patrón de siempre con ropa nueva. Ya no es una pieza puesta y
+desconectada: es una pieza puesta, conectada, **y con el interruptor en `false`**.
+La instancia existe, la política de retención existe, la ventana horaria existe —
+y no se hace ni una copia. Nada de lo que se mira dice que falte algo; hay que ir
+a buscar el booleano.
+
+Y una que va a mi cuenta: el respaldo que diseñé como puente provisional lleva
+tres días siendo la única protección real de la base, y yo no lo sabía hasta hoy.
+**Un parche que nadie retira deja de ser un parche y se convierte en la
+arquitectura**, sin que nadie decida que lo sea.
