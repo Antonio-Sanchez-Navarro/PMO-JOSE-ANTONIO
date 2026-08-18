@@ -3607,3 +3607,23 @@ la ausencia de un error en el log: se leyó el mensaje en el espacio y se cotej�
 su `request_id` con el del registro.
 
 Ese es el listón, y no es alto: **alguien tiene que ir al otro lado y mirar**.
+
+### 30.5 El despliegue confirmado (2026-08-18, 15:19 UTC)
+
+Con el consenso de Doc, empujados los cinco commits. CI y despliegue **en verde**
+sobre `43896a6`, y la revisión **`pmo-api-00058-fmp`** al **100 % del tráfico**.
+
+Lo que había que comprobar no era que el flag estuviera —ya estaba—, sino **quién
+lo ponía**:
+
+```
+serving.knative.dev/creator = github-deployer@pmo-dashboard-503418.iam.gserviceaccount.com
+run.googleapis.com/cpu-throttling = false
+SERVICE_VERSION = 43896a6
+```
+
+La revisión anterior, `00057-ksl`, la creó `antonio.sanchez@zepto.com.mx` desde
+una consola. **Esta la creó la cuenta del pipeline**, y trae el
+`cpu-throttling=false` dentro. Es decir: `deploy.yml` ya no describe la
+configuración, **la produce**. Eso es lo que convierte un ajuste manual en
+infraestructura reproducible, y es lo único que este commit venía a demostrar.
