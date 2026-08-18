@@ -211,6 +211,7 @@ jobs:
           gcloud run jobs deploy "${SERVICE}-migrate" \
             --image="${IMAGE}:${SHA}" \
             --region="${REGION}" \
+            --set-cloudsql-instances="pmo-dashboard-503418:us-central1:pmo-postgres-db" \
             --set-secrets="DATABASE_URL=pmo-database-url:latest" \
             --max-retries=0 \
             --task-timeout=10m \
@@ -579,6 +580,7 @@ jobs:
             --region "${REGION}" \
             --platform managed \
             --port 8080 \
+            --set-cloudsql-instances="pmo-dashboard-503418:us-central1:pmo-postgres-db" \
             --allow-unauthenticated \
             --no-cpu-throttling \
             --set-env-vars "${ENV_VARS}" \
