@@ -1046,6 +1046,7 @@ de Vercel. Detalle y comprobación en **§14**.
 
 | Fecha | Qué revisó | Corte de git |
 |---|---|---|
+| 2026-08-19 | **La bóveda, probada (§33).** `SIMULACRO CORRECTO: … se restaura y trae 394 filas` — Email 172, Task 145, ChatMessage 35, CopilotAuditLog 27, migraciones 9, ChatThread 5, User 1. Un volcado del bucket restaurado sobre una base vacía, devolviendo correos y tareas reales. **El punto 1 del acuerdo con Doc queda cerrado con hechos.** **Cinco intentos, y ninguno era el respaldo**: (1) mi sustitución del nombre de base era global y sin anclar, y la ruta del socket contiene `/pmo`, así que el proxy pidió una instancia inexistente; (2) `unrecognized configuration parameter "transaction_timeout"` — un `pg_dump` 18 escribe directivas de PG17+ **dentro del archivo** y el servidor es 16, **error mío de razonamiento que además le hice cambiar al Jefe**, que tenía razón desde el principio; (3) `$'\r': command not found`, Git convirtió `respaldo.sh` a CRLF y `gcloud builds submit` sube el árbol de trabajo tal cual; (4) `Source hash … does not match destination hash 1B2M2Y8AsgTpgAmY7PhCfg==`, mi comprobación leía por tubería y `pg_restore --list` la cerraba antes de tiempo. **Lo que descubrió, y justifica todo**: **los cuatro volcados anteriores no se podían restaurar** — escritos por un cliente 18 contra un servidor 16, ni uno habría vuelto, y durante más de un día fueron la única protección de la base. `pg_restore --list` decía que estaban bien y era cierto: **leer el índice no es devolver los datos**. Y **mi propia comprobación pasaba por casualidad**, porque los archivos de 200 KB cabían en el búfer de la tubería; el primero de 270 KB la destapó — no una pieza desconectada, sino **una que parecía funcionar**. **Queda**: el job `pmo-respaldo-db` sigue en `v5` con la comprobación rota (sube el archivo y muere después), se arregla con `v6` ya commiteada; y **nadie vigila los fallos de ese job** — la alerta de Capa 2 mira la ausencia de push, no esto. `TimeEntry` con 0 filas no es fallo de la restauración: está vacía en producción, el registro de tiempos no se usa. **La lección**: cuatro errores que ningún repaso de diseño habría encontrado, y que aparecieron todos en cuanto alguien intentó **usar** el respaldo en vez de mirarlo. **Un respaldo no se audita: se restaura.** Añadida la sección 33. | `96ba4af` · imagen `v5` |
 | 2026-08-18 (4) | **El parche de Cloud SQL y el segundo barrido (§32).** **Los dos interruptores de §31, cerrados y comprobados**: respaldos `enabled: true` con **PITR**, archivado de registros a Cloud Storage, 7 copias y 7 días de logs; y `requireSsl: true` con `authorizedNetworks` **vacío**. Mi job de `pg_dump` deja de ser la única red. **Matiz**: `sslMode` quedó en `TRUSTED_CLIENT_CERTIFICATE_REQUIRED`, que no es «exige cifrado» sino **exige certificado de cliente** — el proxy no se entera, pero una conexión directa ya no entra ni con TLS; escrito para que nadie lo afloje el día que falle. `ipv4Enabled` sigue en `true`, aunque sin redes autorizadas no la alcanza nadie. **El parche costó un barrido**: la operación reinició la instancia (22:02:55→22:14:48) y a las 22:05:11 el cron de vencidas se llevó un `P1001` y devolvió 500. **Y la alerta sonó sola** — `ALERTA · Error 500 en POST /cron/overdue` —: **primera vez en esta bitácora que el sistema avisa de un incidente antes de que yo lo encuentre mirando**, y encima uno no provocado. A las 22:18 `/health/ready` da **200** con `database up`, 9 migraciones aplicadas y 0 a medias, `redis up`. **🟠 Upstash tiene fecha**: **297 k de 500 k** comandos al 18 de agosto (59 %), con un ritmo medido de **~18 k/día** (vie 21k, sáb 15k, dom 13k, lun 21k, mar 20k). Quedan 203 k y 13 días: **el tope se alcanza hacia el 29-30**, antes del corte mensual. Y el gasto **no es trabajo, es sondeo** —19 comandos/min en reposo, §20—, y con `--no-cpu-throttling` la instancia vive más rato, así que va a más. Falta confirmar qué hace Upstash al llegar al tope; si rechaza comandos, se cae la cola y con ella la ingesta. **🟡 Vercel sano pero redesplegando documentación**: plan Hobby, producción en verde, consumo ridículo (302 peticiones de 1 M en 30 días), y **el último despliegue es `cea0145`, un commit solo de `.md`** — Vercel no tiene el `paths-ignore` de `ci.yml`, así que «hay un despliegue nuevo» ha dejado de significar nada. Las 302 peticiones son además un dato de producto: el tablero apenas se abre. No pude abrir la lista completa de despliegues, la consola dejó de responder. **La lección**: hoy no hizo falta ir a mirar, el sistema lo contó solo — y aun así **los topes de los planes gratuitos no avisan, llegan**, y la alerta nueva no los ve porque vigila el silencio de los push, no el saldo de un cubo en la consola de otra empresa. Añadida la sección 32. | `cea0145` · revisión `00065-jsc` |
 | 2026-08-18 (3) | **Despertar 14. La migración a Cloud SQL, auditada (§31).** Catorce commits desde `4c564f2`; `HEAD` = `cea0145`, árbol limpio, revisión viva `00065-jsc`, **610 pruebas en 29 suites ejecutadas por mí**. Y **`ALANA.md` no aparece en el diff**: nadie se lo llevó de polizón, primera vez en cuatro. **Lo grande funcionó**: los `P1001` se acabaron — el último es del 17-08 a las 16:47 contra el host de Neon y desde la migración **ninguno**, de 22 en 7 días a cero. **Y el parte de Gravity sobre el respaldo es cierto pieza por pieza**: proxy montado en el job (`cloudsql-instances`), `roles/cloudsql.client` en su cuenta, **tres ejecuciones correctas** (17:16, 17:34, 19:11) con tres volcados reales de 203–211 KB e índice legible, y `--set-cloudsql-instances` escrito en `deploy.yml` en los **dos** sitios. El 🔴 que cazó Claude en `d226f00` estaba bien visto y bien cerrado. **🔴 Pero los respaldos automáticos de Cloud SQL están APAGADOS**: `backupConfiguration.enabled = false`, con la retención de 7 copias y la ventana de las 05:00 configuradas y la casilla en `false` — y **esa era la razón de la migración**. Lo único que respalda hoy la base es el job de `pg_dump` que diseñé como puente provisional para Neon. **🔴 Y la base tiene IP pública sin exigir cifrado**: `requireSsl=false`, `sslMode=ALLOW_UNENCRYPTED_AND_ENCRYPTED`, dos redes autorizadas —el «parche temporal» de la IP de casa sigue puesto y `34.24.236.30/32` no está documentada—, y el `.env` local sigue apuntando a la IP pública: la cadena de producción vive en un portátil y viaja por internet contra un servidor que acepta texto plano. **`DATABASE_URL` ya sale de Google Cloud**, y no por decisión sino por residuo. **🟠 Dos derivas**: el job de respaldo se configuró a mano y solo vive en la consola —la misma deriva de `--no-cpu-throttling`, otra vez—, y mi propio `README` de `infra/backup/` ya miente: dice que respalda Neon y fija `PG_MAJOR=18` cuando el servidor es Cloud SQL **POSTGRES_16**. Instancia `db-f1-micro` `ZONAL`, sin alta disponibilidad. **La lección**: ya no es una pieza puesta y desconectada, es una pieza puesta, conectada **y con el interruptor en `false`** — nada de lo que se mira dice que falte algo, hay que ir a buscar el booleano. Y una a mi cuenta: **un parche que nadie retira se convierte en la arquitectura** sin que nadie decida que lo sea. Añadida la sección 31. | `cea0145` · revisión `00065-jsc` |
 | 2026-08-18 (2) | **Veredicto de entrega: la alerta llegó (§30).** Entré al espacio «Alertas PMO» de Google Chat en modo estricto de lectura, que es la comprobación que venía pidiendo desde §27.8. **CONFIRMADA, y por identificador**: el mensaje está publicado por `Alertas API Capa 1` con marca **«Ayer 5:53 p.m.» = 22:53 UTC** y lleva dentro `job=105` y `request_id req_011Ce99Bqd7KhyUyKVfNGbMh`, **el mismo** que la línea del log de las `22:53:04.815Z`. Ya no es *ausencia de error*: es **constancia de llegada**, con la cadena entera probada —modelo inexistente a propósito → reintentos agotados → oyente de la cola de fallidos → `AlertService` → webhook → mensaje—. **Llegó uno de los dos, y es lo correcto**: en `alert.service.ts` el `logger.warn` es incondicional y el envío pasa después por un `SET NX EX` de 15 min con el título como clave; los dos avisos comparten título y se llevan 74 s, así que el segundo se calló **por diseño**. La prueba validó la entrega **y** el antirrebote en la misma pasada, y `job=106` no se perdió: está en el log, que es la fuente de verdad. **Bloque 1–5 ejecutado**, cuatro commits atómicos en local: `8092852` (línea 213 de `TASKS.md`, que registraba como logro lo que rompió la clasificación), `f895925` (`--no-cpu-throttling` en `deploy.yml`, con el precio anotado), `83aa449` (la política a `infra/alert_policy.json` —existía en tres sitios y ninguno era la fuente— y el paso que faltaba en `GCP_SETUP.md`: crear `ALERT_WEBHOOK_SECRET`), `64fca42` (`.githooks/pre-commit` + `AI_ROLES.md`). **El gancho está probado**: con `ALANA.md` y un archivo bajo `packages/` a la vez sale con **código 1**, y luego deja pasar un commit legítimo — no iba a añadir otra pieza puesta y desconectada. **Sin `push`**: subirlos dispara CI y una revisión nueva, queda a decisión de Doc. **La lección, por una vez del derecho**: esta junta sí estaba conectada, y se supo **mirando el otro extremo** — no del código, ni del parte, ni de la ausencia de un error. Añadida la sección 30. | `64fca42` (local) · `155e592` (origin) |
@@ -3911,3 +3912,90 @@ Y lo que sigue siendo verdad: **el gasto es sondeo, no trabajo**. Se ha dividido
 no eliminado. Con el contenedor despierto siguen corriendo cuatro clientes
 bloqueados contra Redis, y el suelo del consumo lo marca cuántas horas al día vive
 la instancia, no cuánto correo entra.
+
+---
+
+## 33. La bóveda, probada (2026-08-19, 22:50 UTC)
+
+```
+SIMULACRO CORRECTO: gs://pmo-respaldos-db/pmo-2026-08-19T223914Z.dump
+se restaura y trae 394 filas.
+
+       tabla        | filas
+--------------------+-------
+ Email              |   172
+ Task               |   145
+ ChatMessage        |    35
+ CopilotAuditLog    |    27
+ _prisma_migrations |     9
+ ChatThread         |     5
+ User               |     1
+ Tag                |     0
+ TimeEntry          |     0
+ _TagToTask         |     0
+```
+
+Un volcado del bucket, restaurado sobre una base vacía, devolviendo los correos y
+las tareas reales. **El punto 1 del acuerdo con Doc queda cerrado con hechos.**
+
+### 33.1 Cinco intentos, y ninguno era el respaldo
+
+Vale la pena la lista, porque es la mejor defensa de por qué esto no se podía
+clausurar diciendo «volcados verificados»:
+
+| # | Falló | De quién era |
+|---|---|---|
+| 1 | `pmo_restore_test-dashboard-503418:…` — mi sustitución del nombre de base era global y sin anclar, y la ruta del socket contiene `/pmo` | **Mío** |
+| 2 | `unrecognized configuration parameter "transaction_timeout"` — un `pg_dump` 18 escribe directivas de PG17+ **dentro del archivo**, y el servidor es 16 | **Mío**, por un razonamiento equivocado que además le hice cambiar al Jefe |
+| 3 | `$'\r': command not found` — Git convirtió `respaldo.sh` a CRLF y `gcloud builds submit` sube el árbol de trabajo tal cual | Del entorno |
+| 4 | `Source hash … does not match destination hash 1B2M2Y8AsgTpgAmY7PhCfg==` — mi comprobación leía por tubería y `pg_restore --list` la cerraba antes de tiempo | **Mío** |
+| 5 | — | Verde |
+
+**Ninguno de los cinco era el respaldo**: los volcados llevaban días saliendo
+bien. Lo que fallaba era siempre la junta — mi código, la versión del cliente,
+los finales de línea, mi propia verificación.
+
+### 33.2 Lo que descubrió, y es lo que justifica todo
+
+**Los cuatro volcados anteriores no se podían restaurar.** Estaban escritos por
+un `pg_dump` 18 contra un servidor 16, así que llevaban dentro
+`SET transaction_timeout = 0;`, que no existe antes de PostgreSQL 17. Con
+cliente 18 el archivo se lee y el servidor lo rechaza; con cliente 16 no se abre
+siquiera. **Ni uno de ellos habría vuelto.**
+
+Durante más de un día, lo único que protegía la base eran cuatro archivos
+irrecuperables. `pg_restore --list` decía que estaban bien —y era verdad: el
+índice era legible—, y aun así ninguno servía. **Leer el índice no es devolver
+los datos**, y ese matiz costó descubrirlo cinco ejecuciones.
+
+**Y mi propia comprobación pasaba por casualidad.** El `cat | pg_restore --list`
+llevaba cuatro respaldos en verde solo porque los archivos de 200 KB cabían en el
+búfer de la tubería antes de que `pg_restore` cerrara. El primero de 270 KB lo
+destapó. Es la versión más incómoda del patrón de toda la semana: no una pieza
+desconectada, sino **una que parecía funcionar**.
+
+### 33.3 Lo que queda del respaldo
+
+- El job `pmo-respaldo-db` sigue apuntando a una imagen con la comprobación rota
+  (`v5`). El volcado se toma bien y el job muere después, así que **sale en rojo
+  con el archivo ya subido**. Se arregla con `v6`, que ya está commiteada.
+- **Nadie vigila los fallos de este job.** La alerta de Capa 2 mira la ausencia de
+  push de Pub/Sub; que el respaldo diario reviente no lo ve nadie. Es un hueco
+  aparte y no lo he cerrado.
+- `TimeEntry` con **0 filas** no es un fallo de la restauración: está vacía en
+  producción. El registro de tiempos no se usa. Dato de producto, no de
+  infraestructura.
+
+### 33.4 Lo que enseña
+
+Doc lo dijo mejor que yo antes de empezar: *«Si la bóveda no se puede restaurar
+de forma autónoma, no hay Fase 5 que abrir.»* Resultó que **no se podía**, y
+nadie lo sabía —ni yo, que la había diseñado—.
+
+La lección no es que hubiera errores. Es **dónde estaban**: en mi sustitución de
+cadenas, en una regla de versiones que deduje en vez de probar, en un retorno de
+carro, y en una verificación que pasaba por el tamaño de un búfer. Cuatro cosas
+que ningún repaso de diseño habría encontrado, y que aparecieron todas en cuanto
+alguien intentó **usar** el respaldo en lugar de mirarlo.
+
+Un respaldo no se audita. Se restaura.
