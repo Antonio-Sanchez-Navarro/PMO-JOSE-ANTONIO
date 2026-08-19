@@ -20,6 +20,8 @@ secrets/
 # tapar todo. Si hay que tocarlas, en UTF-8 sin BOM.
 *db_url*
 *.sql
+*.dump
+cloud-sql-proxy*
 !apps/api/prisma/migrations/**/*.sql
 
 # Builds

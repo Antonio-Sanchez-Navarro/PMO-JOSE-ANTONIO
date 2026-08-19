@@ -5,15 +5,22 @@ tiene valor aunque la migración a Cloud SQL no llegue nunca.
 
 ## Por qué existe
 
-Neon en plan gratuito conserva **6 horas** de historial. El tablero es el sistema
-de registro de las tareas y los fichajes, y **eso no existe en ningún otro
-sitio**: los correos están en Gmail, las tareas no están en ninguna parte. Hoy
-estamos a un accidente de perder el histórico entero.
+El tablero es el sistema de registro de las tareas y los fichajes, y **eso no
+existe en ningún otro sitio**: los correos están en Gmail, las tareas no están
+en ninguna parte. Sin volcados, estamos a un accidente de perder el histórico
+entero.
 
-**Lo que esto NO arregla**: los `P1001` (`Can't reach database server`). Son 22
-apariciones en 7 días, unos 10 incidentes, y vienen de que Neon se suspende sin
-tráfico. Eso lo resuelve Cloud SQL, que no se duerme — no un volcado. Conviene
-tenerlo escrito para que nadie dé el problema por cerrado con esto.
+Nació urgente porque la base de entonces conservaba **6 horas** de historial.
+Desde la migración a **Cloud SQL** (2026-08-18) el suelo es mejor —la instancia
+tiene sus propias copias automáticas— pero esto **no sobra**: un volcado
+`--format=custom` en un bucket ajeno a la instancia es lo único que sobrevive a
+que alguien borre la instancia entera, y es el vehículo para restaurar en otro
+sitio.
+
+**Lo que esto NO arregla**: los `P1001` (`Can't reach database server`), 22
+apariciones en 7 días. Venían de que la base se suspendía sin tráfico, y **eso
+lo cerró la migración a Cloud SQL**, que no se duerme — no un volcado. Queda
+escrito para que nadie confunda las dos cosas.
 
 ## Qué hace
 
@@ -28,7 +35,12 @@ Un **Cloud Run Job** que corre una vez al día, disparado por Cloud Scheduler:
    error, para que Cloud Scheduler lo cuente como fallo.
 
 `DATABASE_URL` **no sale de Google Cloud**: va de Secret Manager al contenedor y
-de ahí a Neon. No se registra, no se imprime y no viaja como argumento.
+de ahí a Cloud SQL **por el socket del Auth Proxy**, no por IP pública. No se
+registra, no se imprime y no viaja como argumento.
+
+⚠️ Eso es lo que obliga a que el Job lleve `--set-cloudsql-instances`: sin esa
+bandera Cloud Run no monta el socket `/cloudsql/…` y `pg_dump` busca un archivo
+que no existe. Lo pone el pipeline (`deploy.yml`); **no se configura a mano**.
 
 ### Las tres decisiones que importan
 
@@ -49,7 +61,7 @@ que no tener respaldo, porque encima da tranquilidad.
 - **Una copia al día significa hasta 24 h de pérdida** en el peor caso. Pasamos
   de «6 h de historial» a «hasta 24 h de trabajo perdido, pero recuperable». Si
   eso es demasiado, se duplica la frecuencia cambiando una línea del Scheduler.
-- El primer volcado despierta a Neon, así que tarda unos segundos más.
+- La instancia es `db-f1-micro`, la más pequeña: un volcado grande tardará.
 
 ---
 
@@ -66,22 +78,18 @@ export JOB=pmo-respaldo-db
 export GAR=us-central1-docker.pkg.dev/${PROYECTO}/pmo
 ```
 
-## 0. La versión del servidor — ✅ resuelto el 2026-08-18
+## 0. La versión del servidor — ✅ resuelto
 
-**Neon corre Postgres 18** (consola del proyecto `pmo-db` → *Project settings* →
-*Postgres version*), y `PG_MAJOR` ya está puesto en 18 en el `Dockerfile`.
-Estaba en 17, que habría reventado la primera ejecución con
-`server version mismatch`: el cliente no puede ser más viejo que el servidor.
+**Cloud SQL corre `POSTGRES_16`** (`gcloud sql instances describe pmo-postgres-db`),
+y `PG_MAJOR` está puesto en 16 en el `Dockerfile`. No hay nada que hacer aquí.
 
-**No hay nada que hacer aquí ahora**, pero sí más adelante: este número **hay que
-subirlo cada vez que Neon o Cloud SQL actualicen**, y nada avisa. El error no
-aparece al construir la imagen, sino la primera vez que el job se ejecuta — con
-todo lo demás correcto. Si alguna vez el job falla de golpe sin haber tocado
-nada, mira esto primero:
+Sí lo habrá el día que se actualice la instancia, y **nada avisa**: `pg_dump` se
+niega a volcar una base más nueva que él y el error aparece **la primera vez que
+el job se ejecuta**, no al construir la imagen. Si el respaldo falla de golpe sin
+haber tocado nada, mira esto primero:
 
 ```bash
-# La versión real, desde cualquier sitio que tenga la cadena de conexión
-psql "$DATABASE_URL" -tAc 'SHOW server_version'
+gcloud sql instances describe pmo-postgres-db   --project pmo-dashboard-503418 --format='value(databaseVersion)'
 ```
 
 ## 1. El bucket
@@ -127,6 +135,20 @@ gcloud secrets add-iam-policy-binding ALERT_WEBHOOK_URL \
   --role="roles/secretmanager.secretAccessor"
 ```
 
+Y **conectarse a Cloud SQL**. Este se olvidó al crear la cuenta y hubo que
+añadirlo de urgencia el 08-18: sin él el Job tiene el socket montado pero no
+puede autenticarse contra la instancia.
+
+```bash
+gcloud projects add-iam-policy-binding "${PROYECTO}"   --member="serviceAccount:${SA_MAIL}"   --role="roles/cloudsql.client"
+```
+
+> ⚠️ **El IAM no está en el pipeline y es deliberado.** Un workflow con permiso
+> para repartir roles de proyecto es una escalada de privilegios esperando a que
+> alguien toque el repositorio. Estos tres `add-iam-policy-binding` se ejecutan
+> una vez, a mano, y quedan escritos aquí — que es la diferencia entre
+> configuración manual **documentada** y configuración fantasma.
+
 Sobre el bucket, **crear y leer, nunca borrar**:
 
 ```bash
@@ -143,39 +165,41 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
 > job se vuelve loco o alguien se cuela en él, no puede borrar los respaldos
 > antiguos. El borrado lo hace la regla de ciclo de vida, que no depende de él.
 
-## 3. Construir y publicar la imagen
+## 3 y 4. La imagen y el Job — **los hace el pipeline**
 
-Desde la raíz del repositorio:
+⚠️ **Ya no se ejecutan a mano.** Desde el 2026-08-18, `.github/workflows/deploy.yml`
+construye la imagen (`respaldo-db`, contexto `infra/backup`) y despliega el Job en
+cada despliegue de la API, con `gcloud run jobs deploy`, que es crear-o-actualizar.
 
-```bash
-gcloud builds submit infra/backup \
-  --project="${PROYECTO}" \
-  --tag "${GAR}/respaldo-db:v1"
-```
+Se llevó al pipeline porque este Job ya enseñó lo que cuesta lo contrario: se creó
+a mano, la migración a Cloud SQL lo dejó sin poder alcanzar la base, y **hubo que
+parchearlo a mano otra vez**. Configuración que solo vive en la consola no se
+revisa, no se revierte y nadie sabe que existe hasta que se rompe.
 
-## 4. El Cloud Run Job
+Lo que el pipeline le pone, y por qué:
 
-```bash
-gcloud run jobs create "${JOB}" \
-  --project="${PROYECTO}" \
-  --region="${REGION}" \
-  --image="${GAR}/respaldo-db:v1" \
-  --service-account="${SA_MAIL}" \
-  --set-env-vars="BUCKET_RESPALDOS=${BUCKET}" \
-  --set-secrets="DATABASE_URL=pmo-database-url:latest,ALERT_WEBHOOK_URL=ALERT_WEBHOOK_URL:latest" \
-  --max-retries=2 \
-  --task-timeout=900s
-```
+| Bandera | Motivo |
+|---|---|
+| `--set-cloudsql-instances` | sin ella no hay socket `/cloudsql/…` y `pg_dump` no encuentra la base |
+| `--service-account=pmo-respaldos@…` | crear y leer en el bucket, nunca borrar |
+| `--set-secrets` | `DATABASE_URL` y `ALERT_WEBHOOK_URL`, que no salen de Google Cloud |
+| `--max-retries=2`, `--task-timeout=900s` | un volcado que tarda no es un volcado roto |
 
-**Pruébalo a mano antes de programarlo**, que es el paso que este proyecto se
+**No lleva `--no-cpu-throttling`, y no es un olvido:** esa bandera no existe para
+los Jobs. El estrangulamiento de CPU es cosa de los **servicios**, atado al ciclo
+de vida de la petición; en un Job la CPU está asignada durante toda la tarea, así
+que el `pg_dump` no se puede congelar a mitad. Añadirla tumba el despliegue con
+`unrecognized arguments`.
+
+**Sí hay que probarlo a mano la primera vez**, que es el paso que este proyecto se
 salta siempre:
 
 ```bash
-gcloud run jobs execute "${JOB}" --project="${PROYECTO}" --region="${REGION}" --wait
+gcloud run jobs execute pmo-respaldo-db --project="${PROYECTO}" --region="${REGION}" --wait
 gcloud storage ls --long "gs://${BUCKET}"
 ```
 
-Tiene que aparecer un `.dump` con tamaño razonable y el log debe terminar en
+Tiene que aparecer un `.dump` con tamaño razonable y el log terminar en
 `Respaldo correcto:`.
 
 ## 5. El disparador diario

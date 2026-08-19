@@ -12,16 +12,22 @@ FROM google/cloud-sdk:slim
 # `pg_dump` se niega a volcar una base más nueva que él con
 # «server version mismatch», y ese error aparece **la primera vez que se
 # ejecuta**, no al construir. Comprueba la versión real antes de fijar esta
-# línea (ver el README) y súbela cuando Neon o Cloud SQL actualicen.
+# línea (ver el README) y súbela cuando Cloud SQL actualice.
 #
 # Se instala desde el repositorio oficial de PostgreSQL porque el de Debian
 # estable va dos versiones por detrás.
 #
-# **18, comprobado contra Neon el 2026-08-18** (consola del proyecto `pmo-db`:
-# «Postgres version 18»). Estaba puesto en 17, que habría reventado en la
-# primera ejecución con `server version mismatch` — el cliente no puede ser más
-# viejo que el servidor.
-ARG PG_MAJOR=18
+# **16, que es lo que corre el servidor**: `pmo-postgres-db` es `POSTGRES_16`
+# (verificado con `gcloud sql instances describe` el 2026-08-18).
+#
+# _Historia de esta línea, porque explica por qué no es 17 ni 18._ Nació en 17
+# por defecto. Se subió a 18 al comprobar que **Neon** corría esa versión, que
+# era la base de entonces. La migración a Cloud SQL bajó el servidor a 16, así
+# que se iguala: un cliente 18 **también** habría funcionado —la regla es que no
+# sea más viejo que el servidor, y uno más nuevo vuelca sin problema—, pero
+# igualarlo evita el problema del otro extremo, el día que haya que restaurar
+# con un `pg_restore` de la versión del servidor.
+ARG PG_MAJOR=16
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates gnupg lsb-release \
  && install -d /usr/share/postgresql-common/pgdg \
