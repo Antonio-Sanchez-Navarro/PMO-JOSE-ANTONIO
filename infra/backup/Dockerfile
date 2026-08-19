@@ -7,43 +7,42 @@
 # es el lado difícil de los dos.
 FROM google/cloud-sdk:slim
 
-# ⚠️ **La versión del cliente tiene que ser >= la del servidor.**
+# ⚠️ **La versión del cliente tiene que ser LA MISMA que la del servidor.**
 #
-# `pg_dump` se niega a volcar una base más nueva que él con
-# «server version mismatch», y ese error aparece **la primera vez que se
-# ejecuta**, no al construir. Comprueba la versión real antes de fijar esta
-# línea (ver el README) y súbela cuando Cloud SQL actualice.
+# No «mayor o igual». **La misma major.** Corregido el 2026-08-19 tras dos
+# intentos fallidos del simulacro de restauración, que es lo que se necesitaba
+# para saberlo.
+#
+# `pg_dump` no escribe un archivo neutro: escribe **SQL para la versión con la
+# que habla**. Un `pg_dump` 18 mete `SET transaction_timeout = 0;` en la
+# cabecera del volcado, y ese parámetro **no existe antes de PostgreSQL 17**. Al
+# restaurarlo contra `POSTGRES_16` muere con
+# `unrecognized configuration parameter "transaction_timeout"`, y da igual con
+# qué `pg_restore` se lea: el problema viaja **dentro del archivo**.
+#
+# Y por el otro lado tampoco se puede bajar el cliente por debajo del servidor:
+# `pg_dump` se niega con «server version mismatch», y `pg_restore` rechaza un
+# archivo escrito por uno más nuevo —los volcados de un cliente 18 llevan
+# `PGDMP · versión 1.16`, ilegible para un `pg_restore` 16—.
+#
+# Las dos paredes juntas dejan un solo valor válido: **el del servidor**.
+#
+#     gcloud sql instances describe pmo-postgres-db --format='value(databaseVersion)'
+#
+# ⚠️ **Y esto cambia la operación el día que Cloud SQL actualice**: los volcados
+# tomados con el cliente viejo dejan de restaurarse en el servidor nuevo, y al
+# revés. Subir esta línea es parte de la migración de versión, no un detalle
+# posterior — y conviene tomar un volcado nuevo el mismo día.
+#
+# _Historia del vaivén, que se pagó en dos ejecuciones fallidas._ Nació en 17 por
+# defecto. Subió a 18 cuando la base era Neon 18. Bajó a 16 con la migración a
+# Cloud SQL. Volvió a 18 el 19-08 por un razonamiento mío equivocado —«cliente
+# mayor o igual»—, y el simulacro demostró que el correcto era 16. **La lección
+# no es el número: es que esto no se deduce, se prueba restaurando.**
 #
 # Se instala desde el repositorio oficial de PostgreSQL porque el de Debian
 # estable va dos versiones por detrás.
-#
-# **18**, aunque el servidor sea `POSTGRES_16`. La regla va en **una sola
-# dirección** —el cliente nunca más viejo que el servidor— y vale igual para
-# volcar que para restaurar: un `pg_restore` 18 devuelve datos a un servidor 16
-# sin problema.
-#
-# ⚠️ **Igualar el cliente al servidor no es más seguro: rompe los respaldos que
-# ya existen.** Corregido el 2026-08-19, y esta vez con el archivo en la mano en
-# vez de con un razonamiento. Los cuatro volcados del bucket llevan en su
-# cabecera:
-#
-#     magic: PGDMP    version del archivo: 1.16
-#
-# El formato **1.16** lo escribe un `pg_dump` posterior al 16, y `pg_restore`
-# **se niega a leer un archivo escrito por un cliente más nuevo que él**:
-# `unsupported version (1.16) in file header`. Con `PG_MAJOR=16` el simulacro de
-# restauración habría muerto ahí — y lo peor no es el fallo, es la lectura: habría
-# parecido que la bóveda estaba rota cuando lo roto era la herramienta.
-#
-# Con 30 días de retención, bajar esta línea deja **un mes de copias que nuestra
-# propia imagen no sabe abrir**.
-#
-# _Historia, porque explica el vaivén._ Nació en 17 por defecto. Subió a 18 al
-# comprobar que Neon corría esa versión. La migración a Cloud SQL la bajó a 16
-# buscando «evitar el problema del otro extremo» — un problema que no existe:
-# restaurar con un cliente más nuevo que el servidor es el caso soportado y
-# normal. **Sube esta línea cuando Cloud SQL actualice; no la bajes nunca.**
-ARG PG_MAJOR=18
+ARG PG_MAJOR=16
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates gnupg lsb-release \
  && install -d /usr/share/postgresql-common/pgdg \

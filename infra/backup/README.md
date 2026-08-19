@@ -81,18 +81,27 @@ export GAR=us-central1-docker.pkg.dev/${PROYECTO}/pmo
 ## 0. La versión del servidor — ✅ resuelto
 
 **Cloud SQL corre `POSTGRES_16`** (`gcloud sql instances describe pmo-postgres-db`)
-y `PG_MAJOR` está puesto en **18** en el `Dockerfile`. No es un descuido: la regla
-va en **una sola dirección** —el cliente nunca más viejo que el servidor— y vale
-igual para volcar que para restaurar.
+y `PG_MAJOR` tiene que ser **16**: **la misma major que el servidor**, no «mayor o
+igual».
 
-> ⚠️ **No bajes `PG_MAJOR` para «igualarlo» al servidor.** Se intentó el
-> 2026-08-18 y habría roto el simulacro de restauración. Los volcados del bucket
-> llevan `PGDMP · versión de archivo 1.16`, que escribe un cliente posterior al
-> 16, y **`pg_restore` se niega a leer un archivo escrito por uno más nuevo que
-> él**: `unsupported version (1.16) in file header`. Con 30 días de retención,
-> bajar esa línea deja un mes de copias que nuestra propia imagen no sabe abrir —
-> y el fallo se leería como «la bóveda está rota» cuando lo roto sería la
-> herramienta. **Súbela cuando Cloud SQL actualice; no la bajes nunca.**
+> ⚠️ **Esto costó dos simulacros fallidos el 2026-08-19, y merece leerse entero.**
+>
+> `pg_dump` **no escribe un archivo neutro**: escribe SQL para la versión con la
+> que habla. Un `pg_dump` 18 mete `SET transaction_timeout = 0;` en la cabecera
+> del volcado, y ese parámetro **no existe antes de PostgreSQL 17**. Restaurarlo
+> contra `POSTGRES_16` muere con
+> `unrecognized configuration parameter "transaction_timeout"` — **y da igual con
+> qué `pg_restore` se lea, porque el problema viaja dentro del archivo**.
+>
+> Por el otro lado tampoco se puede bajar: `pg_dump` se niega a volcar una base
+> más nueva que él («server version mismatch») y `pg_restore` rechaza un archivo
+> escrito por un cliente más nuevo (`unsupported version (1.16) in file header`).
+>
+> Las dos paredes juntas dejan **un solo valor válido: el del servidor**.
+>
+> **El día que Cloud SQL actualice**, subir esta línea es parte de la migración,
+> no un detalle posterior: los volcados viejos dejan de restaurarse en el servidor
+> nuevo. **Toma un volcado nuevo el mismo día y vuelve a correr el simulacro.**
 
 Sí lo habrá el día que se actualice la instancia, y **nada avisa**: `pg_dump` se
 niega a volcar una base más nueva que él y el error aparece **la primera vez que
