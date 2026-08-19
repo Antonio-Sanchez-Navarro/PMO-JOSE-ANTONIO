@@ -50,3 +50,7 @@ apps/web
 Thumbs.db
 .DS_Store
 *.log
+
+pmo-repo/
+
+pmo-repo/
