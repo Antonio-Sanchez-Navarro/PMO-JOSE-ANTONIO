@@ -35,7 +35,11 @@ https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
  && rm -rf /var/lib/apt/lists/*
 
 COPY respaldo.sh /usr/local/bin/respaldo.sh
-RUN chmod +x /usr/local/bin/respaldo.sh
+# El simulacro de restauración viaja en la misma imagen a propósito: es el mismo
+# cliente de Postgres que produjo el volcado, así que si uno escribe y el otro no
+# puede leer, el problema es del archivo y no de las versiones.
+COPY restaurar.sh /usr/local/bin/restaurar.sh
+RUN chmod +x /usr/local/bin/respaldo.sh /usr/local/bin/restaurar.sh
 
 # `bash` y no `sh`: el script usa `set -o pipefail`, que el `dash` de Debian no
 # implementa. Sin esto, un `pg_dump` roto subiría un archivo truncado y el job
