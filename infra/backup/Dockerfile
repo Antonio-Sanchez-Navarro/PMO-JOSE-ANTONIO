@@ -60,7 +60,21 @@ COPY respaldo.sh /usr/local/bin/respaldo.sh
 # cliente de Postgres que produjo el volcado, así que si uno escribe y el otro no
 # puede leer, el problema es del archivo y no de las versiones.
 COPY restaurar.sh /usr/local/bin/restaurar.sh
-RUN chmod +x /usr/local/bin/respaldo.sh /usr/local/bin/restaurar.sh
+# ⚠️ **Se quitan los retornos de carro antes de nada.**
+#
+# Git en Windows convierte los archivos a CRLF al ponerlos en el árbol de
+# trabajo, y `gcloud builds submit` sube el árbol tal cual. `bash` no entiende el
+# `\r`: muere en la primera línea con `$'\r': command not found`, con el
+# contenedor ya arrancado y autenticado, así que el error no se parece en nada a
+# su causa.
+#
+# Pasó el 2026-08-19 y tumbó una ejecución del respaldo. Hay un `.gitattributes`
+# en la raíz que marca los `.sh` como `eol=lf`, pero **esto se queda igualmente**:
+# aquello depende de que la configuración de Git esté bien en la máquina de quien
+# construya, y esto no depende de nadie. La imagen queda sana venga de donde
+# venga el archivo.
+RUN sed -i 's/\r$//' /usr/local/bin/respaldo.sh /usr/local/bin/restaurar.sh \
+ && chmod +x /usr/local/bin/respaldo.sh /usr/local/bin/restaurar.sh
 
 # `bash` y no `sh`: el script usa `set -o pipefail`, que el `dash` de Debian no
 # implementa. Sin esto, un `pg_dump` roto subiría un archivo truncado y el job

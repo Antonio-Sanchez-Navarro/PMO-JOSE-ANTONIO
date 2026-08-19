@@ -1,0 +1,18 @@
+# Finales de línea.
+#
+# Git en Windows convierte a CRLF al pasar los archivos al árbol de trabajo
+# (`core.autocrlf`). Para casi todo da igual; para un script que va a correr
+# dentro de un contenedor Linux, no: `bash` no entiende el retorno de carro y
+# muere en la primera línea con `$'\r': command not found`.
+#
+# Pasó el 2026-08-19 y costó una ejecución del respaldo: los scripts de
+# `infra/backup/` funcionaron mientras estuvieron recién escritos con LF, y se
+# rompieron en cuanto Git los normalizó al recommittearlos. El contenedor
+# arrancaba, se autenticaba, encontraba el script — y se atragantaba con el
+# primer `\r`.
+*.sh text eol=lf
+
+# El `Dockerfile` no lo ejecuta bash, pero viaja al mismo sitio y no hay motivo
+# para que lleve CRLF.
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
