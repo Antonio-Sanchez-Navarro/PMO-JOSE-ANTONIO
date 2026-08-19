@@ -9,6 +9,56 @@
 
 ---
 
+## La infraestructura del respaldo ya es código (2026-08-18)
+
+`deploy.yml` construye la imagen del respaldo y despliega el Job en cada
+despliegue de la API. **Se acabó la configuración que solo vivía en la consola.**
+
+```
+Construir y publicar la imagen del respaldo   contexto infra/backup, etiqueta = SHA
+Desplegar el Job de respaldo diario           gcloud run jobs deploy (crear-o-actualizar)
+```
+
+Se llevó al pipeline porque este Job enseñó por las malas lo que cuesta lo
+contrario: se creó a mano, **la rotación del secreto en la migración a Cloud SQL
+lo dejó sin poder alcanzar la base**, y hubo que parchearlo a mano otra vez. Lo
+que solo vive en la consola no se revisa, no se revierte, y nadie sabe que
+existe hasta que se rompe.
+
+### ⚠️ En los Jobs no existe `--no-cpu-throttling`
+
+Y no es un olvido de gcloud: **el estrangulamiento de CPU es un concepto de
+servicios**, atado al ciclo de vida de la petición. En un Job la CPU está
+asignada durante toda la tarea por definición, así que un `pg_dump` no se puede
+congelar a mitad como se congelaban las alertas del servicio. Añadir la bandera
+tumba el despliegue con `unrecognized arguments`.
+
+Es el reverso exacto del hallazgo del 08-17: allí el `void fetch(...)` sí se
+congelaba **porque era un servicio**. La misma palabra describe dos mundos
+distintos.
+
+### El paso va al final, y el IAM se queda fuera
+
+**Al final** porque si falla, la API ya está desplegada y comprobada: un problema
+con el respaldo no debe impedir que el producto salga.
+
+**Y el IAM no entra en el pipeline a propósito.** Un workflow con permiso para
+repartir roles de proyecto es una escalada de privilegios esperando a que alguien
+toque el repositorio. Los tres `add-iam-policy-binding` —incluido el
+`roles/cloudsql.client` que se olvidó y hubo que añadir de urgencia— se ejecutan
+una vez a mano y quedan escritos en `infra/backup/README.md`. Esa es la
+diferencia entre configuración manual **documentada** y configuración fantasma.
+
+### Y una corrección de bulto en `deploy.yml`
+
+El comentario de las migraciones decía que el Job existía por costumbre, porque
+«Neon es Postgres público y el runner llegaría de sobra». Con Cloud SQL **vuelve
+a valer el motivo original**: no hay IP pública y se entra por el Auth Proxy. El
+segundo motivo no dejó de valer nunca: así `DATABASE_URL` no sale de Google
+Cloud.
+
+---
+
 ## Sondeo de Redis, segunda vuelta · y el `.gitignore` que tapaba todo (2026-08-18)
 
 ### 🔴 El ajuste del 08-13 se quedó corto, y el error estaba en la aritmética
@@ -137,9 +187,10 @@ Lo único que sale bien de esto: **fallará ruidosamente**. `pipefail` lo caza, 
 script sale con error y avisa por el webhook de la Capa 1. La alerta que
 construimos el 08-17 va a cazar el fallo del respaldo que construimos el 08-18.
 
-_`PG_MAJOR=18` en el `Dockerfile` **sigue siendo correcto** aunque el servidor
-sea 16: la regla es que el cliente no sea más viejo que el servidor, y uno más
-nuevo vuelca sin problema._
+_`PG_MAJOR` bajó a **16** el 08-18 para igualar al servidor. 18 también
+funcionaba —la regla es que el cliente no sea más viejo—, pero igualarlo evita
+el problema del otro extremo: restaurar con un `pg_restore` de la versión del
+servidor._
 
 ---
 
