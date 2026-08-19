@@ -3876,3 +3876,38 @@ Y a la vez, Upstash tiene fecha —el 29 o el 30— igual que la tuvo el `watch`
 día 20. **Los topes de los planes gratuitos no avisan: llegan.** La alerta nueva
 tampoco los ve, porque vigila el silencio de los push, no el saldo de un cubo que
 está en la consola de otra empresa.
+
+### 32.5 Upstash medido después del parche: la fecha queda cancelada (2026-08-19)
+
+`131b2c4` está desplegado —`SERVICE_VERSION` de la revisión viva `00067-l68` es
+exactamente ese commit— y **el efecto se ve en el contador**.
+
+**Método 1, el contador mensual.** 297 k el 18-08 a las ~22:15 UTC → **305 k** el
+19-08 a las 16:04 UTC. **8 k en 17,8 horas ≈ 10,8 k/día**, y ese tramo incluye
+todavía media hora anterior al despliegue. Antes eran 18–20 k/día.
+
+**Método 2, la barra diaria de la consola**, que es independiente del anterior:
+
+```
+sábado 13 k · domingo 11 k · lunes 20 k · martes 21 k · miércoles ~4 k
+```
+
+El miércoles es hoy y lleva **16 horas corridas**: proyecta **6–7 k/día**. Y el
+argumento que lo hace convincente no es la cifra sino **el día de la semana**: los
+sábados y domingos bajan a 11–13 k y los laborables suben a 20–21 k. Hoy es
+miércoles —debería parecerse al martes— y va por una quinta parte.
+
+**La proyección, con el peor de los dos números.** Quedan **195 k** y **12 días**
+de mes. A 10,8 k/día son 130 k más: se termina agosto en torno a **435 k de
+500 k**. Con la cifra optimista, cerca de 390 k. **El tope del 29-30 que anoté en
+§32.2 queda cancelado**, y con margen en los dos escenarios.
+
+**Lo que no he vuelto a comprobar**: el ciclo en el cable. En §20 medí los 60,08 s
+con el monitor en vivo; los 240 s de ahora exigirían cinco minutos de observación
+y las dos contabilidades ya coinciden, así que no lo he repetido. Si algún día
+esto vuelve a subir sin explicación, ese es el sitio donde mirar primero.
+
+Y lo que sigue siendo verdad: **el gasto es sondeo, no trabajo**. Se ha dividido,
+no eliminado. Con el contenedor despierto siguen corriendo cuatro clientes
+bloqueados contra Redis, y el suelo del consumo lo marca cuántas horas al día vive
+la instancia, no cuánto correo entra.
