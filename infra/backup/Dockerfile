@@ -17,17 +17,33 @@ FROM google/cloud-sdk:slim
 # Se instala desde el repositorio oficial de PostgreSQL porque el de Debian
 # estable va dos versiones por detrás.
 #
-# **16, que es lo que corre el servidor**: `pmo-postgres-db` es `POSTGRES_16`
-# (verificado con `gcloud sql instances describe` el 2026-08-18).
+# **18**, aunque el servidor sea `POSTGRES_16`. La regla va en **una sola
+# dirección** —el cliente nunca más viejo que el servidor— y vale igual para
+# volcar que para restaurar: un `pg_restore` 18 devuelve datos a un servidor 16
+# sin problema.
 #
-# _Historia de esta línea, porque explica por qué no es 17 ni 18._ Nació en 17
-# por defecto. Se subió a 18 al comprobar que **Neon** corría esa versión, que
-# era la base de entonces. La migración a Cloud SQL bajó el servidor a 16, así
-# que se iguala: un cliente 18 **también** habría funcionado —la regla es que no
-# sea más viejo que el servidor, y uno más nuevo vuelca sin problema—, pero
-# igualarlo evita el problema del otro extremo, el día que haya que restaurar
-# con un `pg_restore` de la versión del servidor.
-ARG PG_MAJOR=16
+# ⚠️ **Igualar el cliente al servidor no es más seguro: rompe los respaldos que
+# ya existen.** Corregido el 2026-08-19, y esta vez con el archivo en la mano en
+# vez de con un razonamiento. Los cuatro volcados del bucket llevan en su
+# cabecera:
+#
+#     magic: PGDMP    version del archivo: 1.16
+#
+# El formato **1.16** lo escribe un `pg_dump` posterior al 16, y `pg_restore`
+# **se niega a leer un archivo escrito por un cliente más nuevo que él**:
+# `unsupported version (1.16) in file header`. Con `PG_MAJOR=16` el simulacro de
+# restauración habría muerto ahí — y lo peor no es el fallo, es la lectura: habría
+# parecido que la bóveda estaba rota cuando lo roto era la herramienta.
+#
+# Con 30 días de retención, bajar esta línea deja **un mes de copias que nuestra
+# propia imagen no sabe abrir**.
+#
+# _Historia, porque explica el vaivén._ Nació en 17 por defecto. Subió a 18 al
+# comprobar que Neon corría esa versión. La migración a Cloud SQL la bajó a 16
+# buscando «evitar el problema del otro extremo» — un problema que no existe:
+# restaurar con un cliente más nuevo que el servidor es el caso soportado y
+# normal. **Sube esta línea cuando Cloud SQL actualice; no la bajes nunca.**
+ARG PG_MAJOR=18
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates gnupg lsb-release \
  && install -d /usr/share/postgresql-common/pgdg \

@@ -80,8 +80,19 @@ export GAR=us-central1-docker.pkg.dev/${PROYECTO}/pmo
 
 ## 0. La versión del servidor — ✅ resuelto
 
-**Cloud SQL corre `POSTGRES_16`** (`gcloud sql instances describe pmo-postgres-db`),
-y `PG_MAJOR` está puesto en 16 en el `Dockerfile`. No hay nada que hacer aquí.
+**Cloud SQL corre `POSTGRES_16`** (`gcloud sql instances describe pmo-postgres-db`)
+y `PG_MAJOR` está puesto en **18** en el `Dockerfile`. No es un descuido: la regla
+va en **una sola dirección** —el cliente nunca más viejo que el servidor— y vale
+igual para volcar que para restaurar.
+
+> ⚠️ **No bajes `PG_MAJOR` para «igualarlo» al servidor.** Se intentó el
+> 2026-08-18 y habría roto el simulacro de restauración. Los volcados del bucket
+> llevan `PGDMP · versión de archivo 1.16`, que escribe un cliente posterior al
+> 16, y **`pg_restore` se niega a leer un archivo escrito por uno más nuevo que
+> él**: `unsupported version (1.16) in file header`. Con 30 días de retención,
+> bajar esa línea deja un mes de copias que nuestra propia imagen no sabe abrir —
+> y el fallo se leería como «la bóveda está rota» cuando lo roto sería la
+> herramienta. **Súbela cuando Cloud SQL actualice; no la bajes nunca.**
 
 Sí lo habrá el día que se actualice la instancia, y **nada avisa**: `pg_dump` se
 niega a volcar una base más nueva que él y el error aparece **la primera vez que
