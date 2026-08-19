@@ -51,13 +51,31 @@ if [ "$BASE_ORIGEN" = "$BASE_PRUEBA" ]; then
   exit 1
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
 # Misma conexión, otra base. Se sustituye el nombre dentro de la cadena sin
-# imprimirla: sirve para las dos formas que admite libpq —URI (`.../pmo?...`) y
-# pares clave=valor (`dbname=pmo`)—.
+# imprimirla, para las dos formas que admite libpq: URI (`.../pmo?...`) y pares
+# clave=valor (`dbname=pmo`).
+#
+# ⚠️ **Anclado, y nunca global.** La primera versión de esto hacía
+# `${DATABASE_URL//\/$BASE_ORIGEN/…}` —sustitución global de `/pmo`— y reventó en
+# la primera ejecución (2026-08-19): la ruta del socket es
+# `/cloudsql/pmo-dashboard-503418:...`, que **también contiene `/pmo`**, así que
+# el reemplazo destrozó el host y el proxy pidió una instancia llamada
+# `pmo_restore_test-dashboard-503418:...`. El nombre de la base era prefijo de su
+# propio proyecto, que es la clase de coincidencia que no se ve al escribirlo.
+#
+# Por eso el reemplazo se ancla al `?` que abre los parámetros, o al final de la
+# cadena — los dos únicos sitios donde puede terminar el nombre de la base.
+# ─────────────────────────────────────────────────────────────────────────────
 if [[ "$DATABASE_URL" == *"dbname=$BASE_ORIGEN"* ]]; then
   DSN_PRUEBA="${DATABASE_URL/dbname=$BASE_ORIGEN/dbname=$BASE_PRUEBA}"
+elif [[ "$DATABASE_URL" == *"/$BASE_ORIGEN?"* ]]; then
+  DSN_PRUEBA="${DATABASE_URL/\/$BASE_ORIGEN\?/\/$BASE_PRUEBA\?}"
+elif [[ "$DATABASE_URL" == */"$BASE_ORIGEN" ]]; then
+  DSN_PRUEBA="${DATABASE_URL%/$BASE_ORIGEN}/$BASE_PRUEBA"
 else
-  DSN_PRUEBA="${DATABASE_URL//\/$BASE_ORIGEN/\/$BASE_PRUEBA}"
+  echo "ABORTADO: no se reconoce dónde está el nombre de la base en la cadena de conexión." >&2
+  exit 1
 fi
 
 echo "Creando ${BASE_PRUEBA} vacía…"
@@ -68,9 +86,20 @@ limpiar() {
   echo "Destruyendo ${BASE_PRUEBA}…"
   psql "$DATABASE_URL" -c "DROP DATABASE IF EXISTS ${BASE_PRUEBA};" || true
 }
-# Se destruye pase lo que pase, también si la restauración falla: una base de
-# prueba abandonada en la instancia es basura que alguien acabará confundiendo.
+# Se arma aquí, y no antes: hasta que la base existe no hay nada que destruir.
 trap limpiar EXIT
+
+# ── No nos fiamos del reemplazo: se comprueba conectando ─────────────────────
+# Cualquier forma de cadena que no hayamos previsto acaba aquí, y acaba parada.
+# Es más barato preguntarle al servidor a qué base nos ha conectado que razonar
+# sobre la sustitución — y es lo que habría cazado el fallo del 2026-08-19 en el
+# primer segundo, en vez de a mitad del `pg_restore`.
+BASE_CONECTADA="$(psql "$DSN_PRUEBA" -tAc 'select current_database()')"
+if [ "$BASE_CONECTADA" != "$BASE_PRUEBA" ]; then
+  echo "ABORTADO: la cadena de prueba conecta a '${BASE_CONECTADA}' y no a '${BASE_PRUEBA}'." >&2
+  exit 1
+fi
+echo "Conexión de prueba comprobada: apunta a ${BASE_CONECTADA}"
 
 echo "Bajando ${VOLCADO}…"
 gcloud storage cp "$VOLCADO" /tmp/volcado.dump
