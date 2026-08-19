@@ -81,7 +81,28 @@ echo "Tamaño: ${TAMANO} bytes"
 [ "${TAMANO:-0}" -gt "${TAMANO_MINIMO:-51200}" ] \
   || fallar "el volcado pesa ${TAMANO} bytes, por debajo del mínimo (${TAMANO_MINIMO:-51200}). Probablemente esté truncado."
 
-gcloud storage cat "$DESTINO" | pg_restore --list >/dev/null \
+# ⚠️ **Se baja a disco en vez de leerlo por tubería, y no es un capricho.**
+#
+# Esto era `gcloud storage cat "$DESTINO" | pg_restore --list`, y estuvo mal
+# desde el primer día aunque pasara: `pg_restore --list` lee **solo el índice**
+# del archivo y sale, así que la tubería se cierra antes de que `gcloud` termine
+# de escribir. `gcloud` lo detecta como fallo de integridad —«Source hash … does
+# not match destination hash 1B2M2Y8AsgTpgAmY7PhCfg==», que es el hash de la
+# cadena vacía— y con `pipefail` se lleva el job por delante.
+#
+# **Funcionó cuatro veces por el tamaño del búfer**: con volcados de 200 KB
+# `gcloud` acababa de escribir antes de que `pg_restore` cerrara. El primero de
+# 270 KB lo destapó (2026-08-19). Una comprobación que depende de que el archivo
+# sea pequeño no comprueba nada.
+#
+# Bajarlo además mejora lo que se prueba: se lee **el objeto tal como quedó
+# guardado**, ida y vuelta completa, no el flujo que acabamos de mandar.
+gcloud storage cp "$DESTINO" /tmp/verificar.dump \
+  || fallar "el volcado subió pero no se puede volver a bajar"
+
+pg_restore --list /tmp/verificar.dump >/dev/null \
   || fallar "el volcado subió pero pg_restore no puede leerlo: está corrupto o incompleto"
+
+rm -f /tmp/verificar.dump
 
 echo "Respaldo correcto: ${DESTINO} (${TAMANO} bytes, índice legible)"
