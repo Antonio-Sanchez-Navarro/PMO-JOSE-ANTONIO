@@ -1046,6 +1046,7 @@ de Vercel. Detalle y comprobación en **§14**.
 
 | Fecha | Qué revisó | Corte de git |
 |---|---|---|
+| 2026-08-20 | **Fase 4 cerrada: la comprobación final (§34).** Barrido de cierre, no para repetir lo escrito sino porque **firmar una fase con lo que recuerdo de ayer sería el error que esta fase vino a corregir**. Comprobado hoy pieza por pieza: respaldos de Cloud SQL `enabled: true` **con PITR**, `sslMode: TRUSTED_CLIENT_CERTIFICATE_REQUIRED` y sin redes autorizadas, los **tres crones ENABLED**, revisión viva `pmo-api-00070-rkb`, **614 pruebas en 30 suites ejecutadas por mí**, y el repositorio sincronizado con mis siete commits en `origin`. Y `TASKS.md` ya registra la clausura, el simulacro con sus 394 filas, la regla del cliente de Postgres, los CRLF y la comprobación por tubería — antes no sabía nada del 19-08 y mentía por omisión en lo más importante del día. De paso corregí el `README` del respaldo, que enseñaba a restaurar **a mano contra la instancia**, algo que ya no se puede hacer desde el 18 y que además usaba `--clean --if-exists`, justo las banderas contra las que el script pone una guarda. **Lo único que queda de la 4**: `ipv4Enabled` sigue en `true` — no entra nadie, pero el cierre limpio es `--no-assign-ip`, y como reinicia la instancia lo ejecuta el Jefe cuando le venga bien. **Lo que pasa a la Fase 5, y es lo primero**: nadie vigila los fallos del job de respaldo. El 19-08 estuvo roto entre las 22:12 y las 22:54 y lo supimos **porque estábamos delante**; a las 03:30 el silencio habría sido idéntico al de un respaldo correcto. Es el mismo agujero que la Fase 4 vino a tapar, en el único sitio donde no se tapó, y en la pieza que protege todo lo demás. **Lo que la fase deja escrito**: una pieza puede estar puesta, conectada y con el interruptor en `false`; un canal puede existir y no entregar nada; un archivo puede pasar su propia verificación y ser inservible; y una comprobación puede pasar por casualidad. Ninguna de las cuatro la habría encontrado una revisión de diseño. **Una fase no se cierra porque las piezas estén: se cierra cuando el mensaje llega al otro lado.** Añadida la sección 34. | `a3f662b` · revisión `00070-rkb` |
 | 2026-08-19 | **La bóveda, probada (§33).** `SIMULACRO CORRECTO: … se restaura y trae 394 filas` — Email 172, Task 145, ChatMessage 35, CopilotAuditLog 27, migraciones 9, ChatThread 5, User 1. Un volcado del bucket restaurado sobre una base vacía, devolviendo correos y tareas reales. **El punto 1 del acuerdo con Doc queda cerrado con hechos.** **Cinco intentos, y ninguno era el respaldo**: (1) mi sustitución del nombre de base era global y sin anclar, y la ruta del socket contiene `/pmo`, así que el proxy pidió una instancia inexistente; (2) `unrecognized configuration parameter "transaction_timeout"` — un `pg_dump` 18 escribe directivas de PG17+ **dentro del archivo** y el servidor es 16, **error mío de razonamiento que además le hice cambiar al Jefe**, que tenía razón desde el principio; (3) `$'\r': command not found`, Git convirtió `respaldo.sh` a CRLF y `gcloud builds submit` sube el árbol de trabajo tal cual; (4) `Source hash … does not match destination hash 1B2M2Y8AsgTpgAmY7PhCfg==`, mi comprobación leía por tubería y `pg_restore --list` la cerraba antes de tiempo. **Lo que descubrió, y justifica todo**: **los cuatro volcados anteriores no se podían restaurar** — escritos por un cliente 18 contra un servidor 16, ni uno habría vuelto, y durante más de un día fueron la única protección de la base. `pg_restore --list` decía que estaban bien y era cierto: **leer el índice no es devolver los datos**. Y **mi propia comprobación pasaba por casualidad**, porque los archivos de 200 KB cabían en el búfer de la tubería; el primero de 270 KB la destapó — no una pieza desconectada, sino **una que parecía funcionar**. **Queda**: el job `pmo-respaldo-db` sigue en `v5` con la comprobación rota (sube el archivo y muere después), se arregla con `v6` ya commiteada; y **nadie vigila los fallos de ese job** — la alerta de Capa 2 mira la ausencia de push, no esto. `TimeEntry` con 0 filas no es fallo de la restauración: está vacía en producción, el registro de tiempos no se usa. **La lección**: cuatro errores que ningún repaso de diseño habría encontrado, y que aparecieron todos en cuanto alguien intentó **usar** el respaldo en vez de mirarlo. **Un respaldo no se audita: se restaura.** Añadida la sección 33. | `96ba4af` · imagen `v5` |
 | 2026-08-18 (4) | **El parche de Cloud SQL y el segundo barrido (§32).** **Los dos interruptores de §31, cerrados y comprobados**: respaldos `enabled: true` con **PITR**, archivado de registros a Cloud Storage, 7 copias y 7 días de logs; y `requireSsl: true` con `authorizedNetworks` **vacío**. Mi job de `pg_dump` deja de ser la única red. **Matiz**: `sslMode` quedó en `TRUSTED_CLIENT_CERTIFICATE_REQUIRED`, que no es «exige cifrado» sino **exige certificado de cliente** — el proxy no se entera, pero una conexión directa ya no entra ni con TLS; escrito para que nadie lo afloje el día que falle. `ipv4Enabled` sigue en `true`, aunque sin redes autorizadas no la alcanza nadie. **El parche costó un barrido**: la operación reinició la instancia (22:02:55→22:14:48) y a las 22:05:11 el cron de vencidas se llevó un `P1001` y devolvió 500. **Y la alerta sonó sola** — `ALERTA · Error 500 en POST /cron/overdue` —: **primera vez en esta bitácora que el sistema avisa de un incidente antes de que yo lo encuentre mirando**, y encima uno no provocado. A las 22:18 `/health/ready` da **200** con `database up`, 9 migraciones aplicadas y 0 a medias, `redis up`. **🟠 Upstash tiene fecha**: **297 k de 500 k** comandos al 18 de agosto (59 %), con un ritmo medido de **~18 k/día** (vie 21k, sáb 15k, dom 13k, lun 21k, mar 20k). Quedan 203 k y 13 días: **el tope se alcanza hacia el 29-30**, antes del corte mensual. Y el gasto **no es trabajo, es sondeo** —19 comandos/min en reposo, §20—, y con `--no-cpu-throttling` la instancia vive más rato, así que va a más. Falta confirmar qué hace Upstash al llegar al tope; si rechaza comandos, se cae la cola y con ella la ingesta. **🟡 Vercel sano pero redesplegando documentación**: plan Hobby, producción en verde, consumo ridículo (302 peticiones de 1 M en 30 días), y **el último despliegue es `cea0145`, un commit solo de `.md`** — Vercel no tiene el `paths-ignore` de `ci.yml`, así que «hay un despliegue nuevo» ha dejado de significar nada. Las 302 peticiones son además un dato de producto: el tablero apenas se abre. No pude abrir la lista completa de despliegues, la consola dejó de responder. **La lección**: hoy no hizo falta ir a mirar, el sistema lo contó solo — y aun así **los topes de los planes gratuitos no avisan, llegan**, y la alerta nueva no los ve porque vigila el silencio de los push, no el saldo de un cubo en la consola de otra empresa. Añadida la sección 32. | `cea0145` · revisión `00065-jsc` |
 | 2026-08-18 (3) | **Despertar 14. La migración a Cloud SQL, auditada (§31).** Catorce commits desde `4c564f2`; `HEAD` = `cea0145`, árbol limpio, revisión viva `00065-jsc`, **610 pruebas en 29 suites ejecutadas por mí**. Y **`ALANA.md` no aparece en el diff**: nadie se lo llevó de polizón, primera vez en cuatro. **Lo grande funcionó**: los `P1001` se acabaron — el último es del 17-08 a las 16:47 contra el host de Neon y desde la migración **ninguno**, de 22 en 7 días a cero. **Y el parte de Gravity sobre el respaldo es cierto pieza por pieza**: proxy montado en el job (`cloudsql-instances`), `roles/cloudsql.client` en su cuenta, **tres ejecuciones correctas** (17:16, 17:34, 19:11) con tres volcados reales de 203–211 KB e índice legible, y `--set-cloudsql-instances` escrito en `deploy.yml` en los **dos** sitios. El 🔴 que cazó Claude en `d226f00` estaba bien visto y bien cerrado. **🔴 Pero los respaldos automáticos de Cloud SQL están APAGADOS**: `backupConfiguration.enabled = false`, con la retención de 7 copias y la ventana de las 05:00 configuradas y la casilla en `false` — y **esa era la razón de la migración**. Lo único que respalda hoy la base es el job de `pg_dump` que diseñé como puente provisional para Neon. **🔴 Y la base tiene IP pública sin exigir cifrado**: `requireSsl=false`, `sslMode=ALLOW_UNENCRYPTED_AND_ENCRYPTED`, dos redes autorizadas —el «parche temporal» de la IP de casa sigue puesto y `34.24.236.30/32` no está documentada—, y el `.env` local sigue apuntando a la IP pública: la cadena de producción vive en un portátil y viaja por internet contra un servidor que acepta texto plano. **`DATABASE_URL` ya sale de Google Cloud**, y no por decisión sino por residuo. **🟠 Dos derivas**: el job de respaldo se configuró a mano y solo vive en la consola —la misma deriva de `--no-cpu-throttling`, otra vez—, y mi propio `README` de `infra/backup/` ya miente: dice que respalda Neon y fija `PG_MAJOR=18` cuando el servidor es Cloud SQL **POSTGRES_16**. Instancia `db-f1-micro` `ZONAL`, sin alta disponibilidad. **La lección**: ya no es una pieza puesta y desconectada, es una pieza puesta, conectada **y con el interruptor en `false`** — nada de lo que se mira dice que falte algo, hay que ir a buscar el booleano. Y una a mi cuenta: **un parche que nadie retira se convierte en la arquitectura** sin que nadie decida que lo sea. Añadida la sección 31. | `cea0145` · revisión `00065-jsc` |
@@ -3999,3 +4000,71 @@ que ningún repaso de diseño habría encontrado, y que aparecieron todas en cua
 alguien intentó **usar** el respaldo en lugar de mirarlo.
 
 Un respaldo no se audita. Se restaura.
+
+---
+
+## 34. Fase 4 cerrada: la comprobación final (2026-08-20)
+
+Con `TASKS.md` ya actualizado y todo empujado, hago el barrido de cierre. No para
+repetir lo escrito, sino porque **firmar una fase con lo que recuerdo de ayer
+sería exactamente el error que esta fase vino a corregir**.
+
+Estado, comprobado hoy pieza por pieza:
+
+| Qué | Comprobado |
+|---|---|
+| Respaldos automáticos de Cloud SQL | `enabled: true` **y** `pointInTimeRecoveryEnabled: true` |
+| Puerta pública de la base | `sslMode: TRUSTED_CLIENT_CERTIFICATE_REQUIRED`, sin redes autorizadas |
+| Los tres crones | `pmo-respaldo-db-diario`, `pmo-gmail-watch-renew`, `pmo-overdue-sweep`: **ENABLED** |
+| Revisión viva | `pmo-api-00070-rkb` |
+| Suite | **614 pruebas en 30 suites**, ejecutadas por mí |
+| Repositorio | Local y remoto idénticos, árbol limpio, mis siete commits en `origin` |
+| Restauración | Probada el 19-08: **394 filas** |
+
+### 34.1 Lo único que queda de la Fase 4
+
+**`ipv4Enabled` sigue en `true`.** No entra nadie —sin redes autorizadas y con
+certificado de cliente exigido, ni siquiera con TLS—, así que en la práctica la
+puerta está cerrada. Pero la IP pública existe, y el cierre limpio es apagarla:
+
+```
+gcloud sql instances patch pmo-postgres-db --project pmo-dashboard-503418 --no-assign-ip
+```
+
+Es una mutación en producción y **reinicia la instancia**, como el parche del 18
+—que costó un barrido de vencidas—, así que lo ejecuta el Jefe cuando le venga
+bien. No bloquea el cierre de la fase: bloquea llamarla «sellada» sin matices.
+
+### 34.2 Lo que pasa a la Fase 5, y por qué es lo primero
+
+**Nadie vigila los fallos del job de respaldo.** La alerta de Capa 2 vigila la
+ausencia de push de Pub/Sub; que el respaldo diario reviente **no lo ve nadie**.
+
+Y no es hipotético: el 19-08 el job estuvo roto entre las 22:12 y las 22:54, con
+tres ejecuciones fallidas seguidas, y lo supimos **porque estábamos delante**. Si
+hubiera pasado a las 03:30, el silencio habría sido idéntico al de un respaldo
+correcto.
+
+Es el mismo agujero que la Fase 4 vino a tapar, en el único sitio donde no se
+tapó — y encima en la pieza que protege todo lo demás.
+
+### 34.3 Lo que esta fase deja escrito
+
+Cuatro cosas que no sabíamos hace una semana, todas aprendidas por intentar usar
+algo en vez de mirarlo:
+
+1. **Una pieza puede estar puesta, conectada y con el interruptor en `false`.**
+   Los respaldos de Cloud SQL existían, con retención y ventana configuradas, y
+   no se hacía ni uno.
+2. **Un canal puede existir y no entregar nada.** El webhook llevaba tres días
+   con el texto de relleno dentro del secreto.
+3. **Un archivo puede pasar su propia verificación y ser inservible.** Cuatro
+   volcados con el índice legible y ninguno restaurable.
+4. **Una comprobación puede pasar por casualidad.** La del respaldo funcionó
+   cuatro veces por el tamaño de un búfer.
+
+Ninguna de las cuatro la habría encontrado una revisión de diseño. Las cuatro
+aparecieron al tirar del cable hasta el otro extremo.
+
+**Un respaldo no se audita: se restaura.** Y una fase no se cierra porque las
+piezas estén: se cierra cuando el mensaje llega al otro lado.
