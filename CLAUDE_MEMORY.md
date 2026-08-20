@@ -9,6 +9,124 @@
 
 ---
 
+## Encargo en curso
+
+Estado: TRABAJAR · Orquestado por Doc
+
+**@Claude — firmar la Capa 2 con fuego real, y meter el vigilante en el pipeline (2026-08-20)**
+
+Doc verificó contra la nube antes de repartir. Lo que **sí** está bien, para que no
+lo repases:
+
+| Qué | Estado real, comprobado |
+|---|---|
+| Política `[Capa 2] Fallo Critico: El respaldo de la base de datos` | viva y `enabled` en `pmo-dashboard-503418` |
+| ¿Deriva contra `infra/alert_policy_respaldo.json`? | **ninguna** — `0s` / `50400s`, `CRITICAL`, `autoClose 1800s` |
+| Canal | Google Chat «Alertas PMO», habilitado |
+| Scheduler `pmo-respaldo-db-diario` | `ENABLED`, `30 3,15 * * *` en `America/Cancun` |
+
+Las 12 h entre volcados contra la ventana de 14 h cuadran: una ejecución perdida
+más 2 h de margen.
+
+**Lo que nadie ha visto nunca es que el mensaje llegue.** Entre la condición y el
+teléfono del Jefe hay dos piezas sin probar: que el filtro de la métrica case con
+lo que Cloud Run emite de verdad, y que el webhook de Chat siga vivo. Las dos
+fallan en silencio y su síntoma es idéntico al de que todo funcione.
+
+---
+
+### Punto 1 — Provocar un fallo controlado y ver llegar el aviso
+
+**El fallo tiene que ocurrir antes de subir nada.** Un volcado a medias en el
+bucket es peor que ningún volcado: ya nos costó cuatro dumps ilegibles que
+pasaban todas las comprobaciones. La vía limpia es apuntar el destino a un bucket
+que no existe — `pg_dump` es solo lectura, y la subida muere sin dejar objeto:
+
+```bash
+gcloud run jobs execute pmo-respaldo-db \
+  --region us-central1 --project pmo-dashboard-503418 \
+  --update-env-vars="BUCKET_RESPALDOS=pmo-respaldos-db-simulacro-inexistente" \
+  --wait
+```
+
+Si tu `gcloud` no acepta `--update-env-vars` en `execute`, usa `gcloud beta run
+jobs execute` con la misma bandera. **No toques el job desplegado** con
+`jobs update`: eso deja el fallo pegado a la siguiente ejecución real.
+
+**Qué esperar, y en qué orden — son dos avisos distintos, no uno duplicado:**
+
+1. **Capa 1, en segundos.** El `avisar`/`fallar` de dentro del script manda a Chat
+   el motivo concreto: *«pg_dump o la subida terminaron con error»*. Es el
+   diagnóstico.
+2. **Capa 2, en minutos.** La política de Cloud Monitoring. **Tarda**: el
+   `alignmentPeriod` es de 300 s y hay evaluación por encima. **No declares
+   fracaso en el minuto dos** — dale hasta 10.
+
+**Dos trampas del propio simulacro:**
+
+- El job lleva `--max-retries=2`, así que verás **hasta tres intentos** y tres
+  mensajes de Capa 1. La métrica `completed_execution_count{result="failed"}` solo
+  sube cuando la **ejecución** entera se da por fallida, no en cada intento.
+- La incidencia se autocierra a los 30 min (`autoClose: 1800s`). Si miras tarde,
+  puede que ya no esté abierta: la prueba es **el mensaje**, no el incidente vivo.
+
+**Comprobaciones de cierre, las tres:**
+
+```bash
+gcloud run jobs executions list --job pmo-respaldo-db --region us-central1 --project pmo-dashboard-503418 --limit 3
+```
+
+```bash
+gcloud storage ls gs://pmo-respaldos-db --project pmo-dashboard-503418 | tail -3
+```
+
+- que el bucket real **no** tenga ningún objeto nuevo del simulacro,
+- que llegara el mensaje de Capa 2 (pega el texto, no lo resumas),
+- y que **la siguiente ejecución real sea correcta** — o lánzala tú a mano sin
+  overrides y compruébalo, para no dejar la bóveda en rojo por una prueba.
+
+---
+
+### Punto 2 — El vigilante también tiene que nacer del pipeline
+
+`DOC.md` daba por saldada la «IaC de Respaldos», y solo vale para el **job**.
+Comprobado: `deploy.yml` despliega `pmo-respaldo-db` y nada más. **Ni la política
+ni el Cloud Scheduler nacen del pipeline** — `alert_policy_respaldo.json` solo
+aparece como un comando manual en `infra/backup/README.md`, y la palabra
+`scheduler` no está en `deploy.yml`. Los dos viven en la consola.
+
+Es la misma deuda que la Capa 2 existe para cubrir: si alguien los toca o los
+borra, git no se entera y el vigilante desaparece **sin dejar rastro**.
+
+Encargo: llevarlos a `deploy.yml`, junto al paso del job, con dos condiciones.
+
+- **Idempotencia.** `gcloud alpha monitoring policies create` ejecutado dos veces
+  crea **dos políticas duplicadas**, y entonces cada fallo avisa dos veces hasta
+  que alguien se harta y silencia el canal. Hay que buscar por `displayName` y
+  hacer `update` si existe, `create` si no.
+- **No bloquear el despliegue.** El paso del job ya está aislado a propósito —un
+  problema con el respaldo no debe impedir que la API se despliegue—. El de la
+  política y el Scheduler, igual.
+
+El `notificationChannels` de la política lleva un id fijo
+(`1419143099601865450`). Decide con Doc antes de escribirlo a fuego en el YAML:
+o se resuelve por nombre del canal, o se pasa como variable, pero un id de
+consola incrustado en el pipeline es la siguiente deuda de esta misma familia.
+
+---
+
+### Lo que NO entra en este encargo
+
+**La condición de ausencia (14 h) no se prueba aquí.** Solo se demuestra dejando
+pasar una ejecución de verdad — pausar el Scheduler catorce horas—, y eso es una
+ventana con la bóveda a ciegas. Se decide con el Jefe, y encaja en el simulacro
+mensual que propuso @Alana en `ALANA.md` §36.5. No lo hagas por iniciativa propia.
+
+Con el mensaje de Capa 2 pegado y el Punto 2 en el pipeline, Doc firma la Capa 2 y
+cierra la Fase 5.
+
+---
+
 ## ✅ Vigilancia del respaldo: el vigilante no puede vivir dentro de lo vigilado (2026-08-20)
 
 **Apertura de la Fase 5.** El 2026-08-19 el job `pmo-respaldo-db` estuvo roto
