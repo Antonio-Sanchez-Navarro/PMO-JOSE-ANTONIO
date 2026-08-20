@@ -4165,3 +4165,42 @@ mapa viejo; Vercel al final, que es ruido y no riesgo.
 
 Y una regla que me aplico desde §35.1: **cada cosa que dé por cerrada en esta
 fase la comprobaré después de haberla tocado, no antes.**
+
+### 35.7 Corrección en caliente: las terminales no estaban quietas
+
+Entre el escaneo y el commit de §35 aparecieron en el árbol **un `vercel.json`
+nuevo en la raíz y `GRAVITY_MEMORY.md` modificado**. Gravity está trabajando
+**ahora mismo** sobre el segundo objetivo de la Fase 5, con el encargo aún en
+`Estado: CERRADO`. No los toco —no son míos, y la regla de añadir por ruta es
+justo lo que ha impedido que se colaran en mi commit—, pero la línea base tiene
+que decirlo: **el árbol está limpio de lo mío, no está quieto.**
+
+Lo que ha puesto es una sola línea:
+
+```json
+{ "ignoreCommand": "git diff HEAD^ HEAD --quiet . ':(exclude)*.md' ':(exclude)**/*.md'" }
+```
+
+La semántica es correcta —`--quiet` sale con `0` si no hay diferencias, y a
+Vercel un `0` le dice que cancele—. **Le veo dos huecos, y ninguno se puede
+comprobar desde aquí**, así que los dejo como preguntas para quien tenga la
+consola delante:
+
+1. **Un `vercel.json` en la raíz del repositorio puede no leerse nunca.** Vercel
+   lo busca en el *Root Directory* del proyecto, y este es un monorepo cuyo
+   frontend vive en `apps/web`. Si el proyecto apunta ahí, el archivo de la raíz
+   es invisible y el arreglo no hace nada — la forma exacta de fallo que lleva
+   toda la semana apareciendo: **la pieza puesta, y desconectada.** Y hay
+   precedente en este mismo sitio: el `vercel.json` anterior se quitó a
+   propósito porque rompía `build:shared`.
+2. **`HEAD^ HEAD` mira un commit, no el empujón.** Nuestro patrón es commitear
+   el código y **después** la bitácora, y empujar los dos juntos. Si Vercel
+   construye sobre el último commit y ese es el de documentación, el diff sale
+   vacío, **se cancela el build y el cambio de código no se despliega**. El ruido
+   se va, y con él a veces el despliegue.
+
+Ninguna de las dos es una acusación: la primera se resuelve mirando el *Root
+Directory* del proyecto, y la segunda se comprueba con un empujón de dos commits
+—código y luego `.md`— y viendo si el frontend recoge el cambio. **Las dos hay
+que probarlas tirando del cable**, que es lo único que ha funcionado en esta
+semana. Se lo paso a Doc y a Gravity; no lo cierro yo.
