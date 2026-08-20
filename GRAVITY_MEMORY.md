@@ -10,9 +10,65 @@ infraestructura de Gravity.
 
 ## Encargo en curso
 
-Estado: EN PAUSA · Orquestado por Doc
+Estado: TRABAJAR · Orquestado por Doc
 
-Esperando la repartición y alineación de tareas para la Fase 5 por parte de Doc.
+**@Gravity — rehacer el pathspec del `ignoreCommand`, subir y verificar (2026-08-20)**
+
+Lo que quedó en `aac9c4c` muere con `fatal: '../../packages/shared' is outside
+repository` (salida **128**) si Vercel ejecuta desde la raíz del monorepo.
+Comprobado en este árbol, no deducido.
+
+**Y ese 128 es el fallo peor, no el mejor.** Vercel aborta el build **solo** con
+salida 0; cualquier otra cosa significa «construye». Un `fatal` deja el
+`ignoreCommand` sin ignorar nada —ni siquiera los `.md`, que era el problema
+original— y la fuga de recursos vuelve entera y en silencio, porque builds que
+terminan en verde no parecen un fallo.
+
+1. **`apps/web/vercel.json`, exactamente esto:**
+
+   ```json
+   {
+     "ignoreCommand": "git diff --quiet $VERCEL_GIT_PREVIOUS_SHA $VERCEL_GIT_COMMIT_SHA -- ':(top)apps/web' ':(top)packages/shared' ':(exclude)**/*.md'"
+   }
+   ```
+
+   Tres diferencias con lo que hay, y las tres importan: `:(top)` ancla a la raíz
+   del repositorio **se ejecute donde se ejecute**, el `--` separa rutas de
+   revisiones, y desaparece el `..` que escapa del repo.
+
+   Verificado por Doc en este árbol:
+
+   | Desde | Commit | Salida | Vercel |
+   |---|---|---|---|
+   | raíz del repo | `598f50d` (solo `.md`) | `0` | se lo salta ✅ |
+   | `apps/web` | `598f50d` (solo `.md`) | `0` | se lo salta ✅ |
+   | `apps/web` | `aac9c4c` (código) | `1` | construye ✅ |
+
+2. **Commit del arreglo.** En el mensaje **no** escribas *«when root directory is
+   apps/web»*: el arreglo existe justo para no depender de eso.
+
+3. **Sube los cuatro commits de una vez** — `23ccf00`, `aac9c4c`, `598f50d` y el
+   nuevo llevan tres rondas sin salir de tu disco:
+
+   ```bash
+   git push origin master
+   ```
+
+   No se subieron antes a propósito: empujar `aac9c4c` tal como está desplegaría
+   la versión que se rompe. Primero el arreglo, luego el push.
+
+4. **Verificación. Sin esto el punto no se cierra:**
+   - el push del paso 3 lleva código → el build tiene que **ARRANCAR**
+   - después, un commit que toque **solo tu bitácora** → tiene que **SALTARSE**
+   - después, un commit que toque **solo `packages/shared`** (basta una línea de
+     comentario con la fecha y el motivo) → tiene que **ARRANCAR**
+
+   En el log de despliegue de Vercel sale la línea del `ignoreCommand` con su
+   resultado. **Pega las tres.** No sirve «salió bien»: este arreglo ya se dio
+   por bueno dos veces sin que nadie viera a Vercel obedecerlo.
+
+5. **Corrige la fila de «Lo último entregado»**: hoy apunta a `aac9c4c` como la
+   corrección, y `aac9c4c` es el intento que no aguanta el escenario de raíz.
 
 ## Lo último entregado
 
