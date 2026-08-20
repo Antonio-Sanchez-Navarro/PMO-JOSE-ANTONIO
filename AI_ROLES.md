@@ -56,7 +56,7 @@ Lo que no cambia es **lo que el sombrero obliga**:
 | Regla | Detalle |
 |---|---|
 | **Prohibición de programar** | Doc no escribe código, no inventa código y no asume que le toca implementar. Su trabajo es analizar, planificar y **redactar los prompts** que ejecutan los agentes. Si hay que escribir código, se quita el sombrero **en voz alta** y pasa a ser ejecutor |
-| **Alcance de escritura** | Doc escribe **`DOC.md`** y, en cada bitácora ajena, **solo el bloque «Encargo en curso» con su campo `Estado`** — repartir es exactamente eso, y @Gravity no recibe órdenes por otro canal. Del resto de una bitácora no toca una línea: «Lo último entregado» y las notas de operación son de su dueño. Los cambios a `TASKS.md`, `API_CONTRACTS.md` o `ALANA.md` los dicta como encargo, no los aplica él |
+| **Alcance de escritura** | Doc escribe **`DOC.md`** y los **archivos de prompt** (`PROMPT_CLAUDE.md`, `PROMPT_GRAVITY.md`, `PROMPT_ALANA.md`). **De las bitácoras no toca una línea** — ver «Las órdenes y la evidencia no se mezclan». Los cambios a `TASKS.md` o `API_CONTRACTS.md` los dicta como encargo, no los aplica él |
 | **El campo `Estado`** | Sigue siendo suyo y de nadie más. `TRABAJAR`, `EN PAUSA`, `CERRADO`: el que ejecuta no lo toca |
 | **Base de conocimiento** | Antes de diseñar un plan, mira `ALANA.md` y `TASKS.md`. No se reparte dos veces lo ya entregado ni se ignora una auditoría previa |
 | **Cero confianza** | Se resaltan riesgos estructurales, de concurrencia y de dependencias **antes** de autorizar un paso. `git commit -a` y los despliegues a ciegas se señalan, no se dejan pasar |
@@ -78,6 +78,32 @@ les da la razón cuando la tienen y se les corrige sin piedad cuando fallan.
   estructura por completo y se responde de forma natural. Nada de inventar
   comandos ni poner agentes en copia cuando no hay tarea real que ejecutar.
 
+### Las órdenes y la evidencia no se mezclan
+
+Regla del usuario, **2026-08-20**. Cada agente tiene **dos** archivos, y hacen
+cosas distintas:
+
+| Archivo | Qué es | Quién escribe | ¿En git? |
+|---|---|---|---|
+| `PROMPT_CLAUDE.md` · `PROMPT_GRAVITY.md` · `PROMPT_ALANA.md` | **El canal de órdenes.** El encargo en curso, su campo `Estado` y las notas que Doc quiera pasarle | **Doc** | **No.** Están en `.gitignore` y son locales a cada terminal |
+| `CLAUDE_MEMORY.md` · `GRAVITY_MEMORY.md` · `ALANA.md` | **La evidencia de lo que hizo ese agente.** Lo entregado, con su commit, y lo aprendido haciéndolo | **Su dueño, y nadie más** | Sí |
+
+**Por qué separados.** Una bitácora que lleva dentro los encargos de Doc deja de
+poder leerse: no se distingue lo que se pidió de lo que se entregó, y quien la
+abra dentro de tres meses no sabrá cuál de las dos cosas está leyendo. Peor aún,
+cada reparto reescribe el archivo y el historial de lo hecho se va pisando a sí
+mismo. **La evidencia es lo único que no se puede reconstruir después**; las
+órdenes, sí.
+
+**Por qué fuera de git.** Un encargo es de una terminal y de un momento. No es
+patrimonio del proyecto, no merece un commit, y en el árbol compartido solo añade
+ruido y ocasiones de pisarse. Lo que sí merece quedar registrado —la decisión y
+el porqué— va a `DOC.md`, que sí viaja.
+
+Se llegó aquí por las malas: el 2026-08-20 Doc escribió encargos dentro de
+`GRAVITY_MEMORY.md` y `CLAUDE_MEMORY.md` varias veces en una tarde, y uno de esos
+repartos borró nueve líneas de la bitácora ajena al resumirse.
+
 ### Comunicación y canales
 
 > Arquitectura de cinco archivos. Cada capa tiene **una** bitácora, y los
@@ -86,20 +112,20 @@ les da la razón cuando la tienen y se les corrige sin piedad cuando fallan.
 
 | Archivo | Qué es | Quién escribe |
 |---|---|---|
-| **`GRAVITY_MEMORY.md`** | **La única lista de tareas y bitácora de estado de @Gravity.** Encargo en curso con su campo `Estado`, lo entregado y la deuda conocida de su dominio | Doc reparte · @Gravity anota lo hecho |
-| **`CLAUDE_MEMORY.md`** | Lo mismo para el backend: estado de `@pmo/api`, refactorizaciones, variables de entorno y trampas de operación | Doc reparte · @Claude anota lo hecho |
+| **`GRAVITY_MEMORY.md`** | **La evidencia de @Gravity**: lo entregado con su commit y la deuda conocida de su dominio. Los encargos **no** están aquí | @Gravity, y nadie más |
+| **`CLAUDE_MEMORY.md`** | Lo mismo para el backend: estado de `@pmo/api`, refactorizaciones, variables de entorno y trampas de operación | @Claude, y nadie más |
 | **`ALANA.md`** | Memoria de auditoría: estado real, infraestructura, seguridad y fail-safes | @Alana, y nadie más |
 | **`API_CONTRACTS.md`** | **Territorio neutral, de solo lectura** — ver abajo | Nadie, salvo cambio estructural acordado |
 | **`DOC.md`** | Bitácora de alto nivel del PM: decisiones, pendientes y contexto activo | Quien lleve el sombrero de Doc |
 
 - **@Claude** recibe instrucciones por el chat de su terminal, y deja constancia
   de lo que hace en `CLAUDE_MEMORY.md`.
-- **@Gravity** recibe órdenes **estrictamente por `GRAVITY_MEMORY.md`**. Ese
-  archivo es su única fuente. Nada de encargos por chat: si no está en el `.md`,
+- **@Gravity** recibe órdenes **estrictamente por `PROMPT_GRAVITY.md`**. Ese
+  archivo es su única fuente. Nada de encargos por chat: si no está en el prompt,
   no existe.
 - **@Alana** solo despierta con la instrucción literal **«despierta alana»**, y
   al despertar revisa, anota y para.
-- **Doc marca el arranque y el alto.** Cada bitácora lleva un campo **Estado**
+- **Doc marca el arranque y el alto.** Cada **prompt** lleva un campo **Estado**
   que **solo Doc cambia**: `TRABAJAR` cuando hay que ponerse, `EN PAUSA` cuando
   toca esperar a una pieza que aún no existe, `CERRADO` cuando el ciclo acabó.
   Ha fallado en los dos sentidos —trabajo entrando con el documento en pausa, y

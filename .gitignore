@@ -58,3 +58,10 @@ coverage/
 pmo-repo/
 
 pmo-repo/
+
+# Canal de ordenes de Doc. Local a cada terminal, NUNCA en git.
+# Las bitacoras (*_MEMORY.md, ALANA.md) son la evidencia de lo que hizo cada
+# agente y las escribe su dueno. Las ordenes viven aparte para no mezclarlas.
+PROMPT_CLAUDE.md
+PROMPT_GRAVITY.md
+PROMPT_ALANA.md
