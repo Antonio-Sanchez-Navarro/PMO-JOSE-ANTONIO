@@ -4395,3 +4395,53 @@ Las tres capas hacen que no vuelvan los errores que ya conocemos. El simulacro
 es lo que encuentra el que todavía no conocemos.
 
 **Un respaldo no se audita: se restaura.**
+
+### 36.9 Corrección: la capa 2 se entregó mientras yo la proponía
+
+Publiqué §36 a las 12:5x. **La capa 2 estaba hecha desde las 12:36**, por la
+terminal de backend con aprobación de Doc, en `2ee6d2e`, `7296ace`, `285e3a2` y
+`ad1fe4c`. Mi propuesta llegó tarde a su propio apartado 36.4.
+
+Comprobado por mí en `infra/alert_policy_respaldo.json`, no en el reporte:
+
+| Lo que pedía §36.4 | Lo que hay |
+|---|---|
+| Política de **fallo** | ✅ `completed_execution_count` con `result="failed"`, umbral 0, `duration 0s` |
+| Política de **ausencia** | ✅ `conditionAbsent` sobre `result="succeeded"`, `duration 50400s` (14 h) |
+| **Como archivo**, no clics en consola | ✅ Las dos en el repositorio, `combiner: OR`, canal asignado |
+| **Que suene en fuego real** | ⬜ **Abierto** — y lo declaran ellos mismos en el commit: *«nadie ha visto sonar la política todavía»* |
+
+**Y mi número estaba mal.** Pedí ausencia a **26 h**, y no cabe: Cloud
+Monitoring topa la ventana en **23 h 30 m**, así que con una ejecución diaria
+cualquier ventana admisible se agota antes de la siguiente y la alerta sonaría
+todos los días. La solución no fue ajustar el número —fue **doblar la cadencia**
+a `30 3,15 * * *`, que deja 12 h entre volcados y hace que 14 h sea una
+ejecución perdida más 2 h de margen. Yo propuse un umbral sin comprobar que la
+herramienta lo aceptara. Es el error de la casa, en pequeño: **deducir un
+parámetro en vez de probarlo**, igual que la versión del cliente de Postgres.
+
+**Y encontraron algo que yo no vi.** El aviso ya existía *dentro* de
+`respaldo.sh` el 19-08, y aun así los 42 minutos pasaron en silencio: los
+retornos de carro mataron a bash en la primera línea, cuando la función `avisar`
+todavía no existía. **Un vigilante que vive dentro de lo vigilado comparte su
+suerte.** Esa frase es el argumento de la capa 2 mejor dicho de lo que yo lo
+dije, y explica por qué la política tiene que estar fuera y no ser un `curl` al
+final del script.
+
+**Qué queda en pie de §36, entonces:**
+
+- **Capa 2** — hecha, salvo la firma. Lo único pendiente es **provocar un fallo
+  y ver llegar el mensaje**, que es la condición que puse y sigue valiendo: la
+  Capa 1 de la Fase 4 se firmó porque sonó sola, no porque estuviera escrita.
+- **Capa 1 (portero + espejo en CI)** — sin tocar. Sigue siendo para Claude Code
+  al cerrar la Fase 5. Y la regla A gana peso: el CRLF no solo tumbó el respaldo,
+  **también desactivó el aviso que debía contarlo**.
+- **Capa 3 y el simulacro mensual** — sin tocar.
+
+**Lo que esto enseña, y va sin ironía:** he tardado media hora en escribir una
+propuesta y en ese rato el trabajo ya se había hecho. No es un problema de
+velocidad ajena, es mío: **empecé a escribir con el estado que había leído al
+principio y no volví a mirarlo antes de publicar** — exactamente lo que §35.1
+dice que pasa, *un estado verificado caduca en cuanto alguien actúa sobre él*, y
+lo escribí yo hace dos horas. Antes de publicar cualquier cosa que describa el
+estado del sistema, `git log` otra vez. Cuesta dos segundos.
