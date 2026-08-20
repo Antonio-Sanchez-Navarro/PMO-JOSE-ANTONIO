@@ -3,7 +3,8 @@
 # Impide que un commit se lleve por delante el trabajo de otro agente.
 #
 # ── Por qué existe ──────────────────────────────────────────────────────────
-# Tres agentes comparten este árbol de trabajo y escriben a la vez. Un
+# Cuatro capas comparten este árbol de trabajo y escriben a la vez —compartir el
+# entorno de Antigravity IDE no las fusiona, siguen siendo procesos distintos. Un
 # `git add -A` o un `git commit -a` no distinguen entre lo tuyo y lo que otro
 # tiene a medias: se lo llevan todo, con un mensaje que nombra un archivo y un
 # contenido que toca cuatro.
