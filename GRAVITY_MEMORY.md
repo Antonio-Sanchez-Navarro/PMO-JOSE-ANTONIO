@@ -9,18 +9,17 @@ infraestructura de Gravity.
 ---
 
 ## Encargo en curso
-Estado: TRABAJAR · Orquestado por Doc
+Estado: EN PAUSA · Orquestado por Doc
 
-@Gravity: Fase 5 iniciada. Fuga de recursos en Vercel contenida:
-- **Ubicación Corregida (`apps/web/vercel.json`):** Se eliminó de la raíz y se movió el `vercel.json` a la ruta correcta.
-- **Comando de Ignorado Mejorado:** `git diff --quiet $VERCEL_GIT_PREVIOUS_SHA $VERCEL_GIT_COMMIT_SHA . ':(exclude)**/*.md'`
-- **Comportamiento Esperado:** Al usar las variables nativas, evalúa el push completo y evita cancelar builds por push mixtos.
-- **Dominio Definitivo y CORS:** El Jefe alineó el Branch Tracking de Vercel a `master` y actualizó la variable `WEB_URL` en GitHub a `https://pmo-frontend-ten.vercel.app`. Esto resuelve definitivamente el bloqueo de CORS y el falso 302 del flujo SSO.
+Esperando la repartición y alineación de tareas para la Fase 5 por parte de Doc.
 
 ## Lo último entregado
 
 | Encargo | Dónde quedó |
 |---|---|
+| Fuga de Vercel (`ignoreCommand` en `apps/web/vercel.json`) | `251d60e` |
+| Deuda técnica Frontend Fase 5 (Inbox 409, WS dinámico, ARIA anidado, mockTasks) | `251d60e` |
+| Sincronización de memoria de Gravity | `a4eb39c` |
 | Migración a Cloud SQL | Pipeline ajustado, proxy y DB restaurada |
 | Indicador de origen en la tarjeta (`task.source`) | `eb9329f` |
 | Los 28 `any` de `apps/web` | `9501647` — los tres paquetes en cero avisos |
