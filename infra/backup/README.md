@@ -269,18 +269,24 @@ restaura.** Hay que repetir este simulacro cada vez que cambie la versión de
 Cloud SQL o el `PG_MAJOR` del `Dockerfile`, porque son justo los cambios que
 producen archivos que parecen correctos y no lo son.
 
-```bash
-# Bajar el volcado más reciente
-gcloud storage ls "gs://${BUCKET}" | tail -1
-gcloud storage cp "gs://${BUCKET}/pmo-XXXX.dump" ./restauracion.dump
+## 👉 El procedimiento vive en [`RESTAURACION.md`](RESTAURACION.md)
 
-# Ver qué hay dentro sin tocar nada
-pg_restore --list ./restauracion.dump | head -40
+Ahí están los comandos exactos, el script y las guardas. **Se ejecuta como Cloud
+Run Job, no a mano**, y no es una preferencia de estilo:
 
-# Restaurar sobre una base VACÍA (nunca sobre producción para practicar)
-pg_restore --clean --if-exists --no-owner --no-privileges \
-  --dbname="postgresql://.../base_de_pruebas" ./restauracion.dump
-```
+- **Desde un portátil ya no se puede.** Desde el 2026-08-18 la instancia no tiene
+  redes autorizadas y exige certificado de cliente (`TRUSTED_CLIENT_CERTIFICATE_REQUIRED`),
+  así que una conexión directa no entra ni con TLS.
+- **La cadena de conexión no sale de Secret Manager**: nadie la copia ni la deja
+  en el historial de una terminal.
+- **El cliente de Postgres es el mismo que escribió el volcado**, así que si uno
+  escribe y el otro no puede leer, el problema es del archivo y no de las
+  versiones — que fue exactamente la trampa del 19-08.
+
+⚠️ **Y nada de `--clean` ni `--if-exists`** en un ensayo. Sobre una base recién
+creada no hacen falta, y son justo las banderas que convierten un error de
+destino en una pérdida irreversible. El script del runbook además **se niega a
+arrancar** si el destino no contiene `restore_test`.
 
 El día de la migración a Cloud SQL, este mismo archivo es el vehículo: se
 restaura en la instancia nueva y se compara. Por eso el volcado va con
