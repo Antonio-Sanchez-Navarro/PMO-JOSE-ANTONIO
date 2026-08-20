@@ -100,6 +100,27 @@ poner agentes en copia cuando no hay tarea real.
 
    **Y un error mío, anotado para no repetirlo:** descarté la pregunta del Root Directory —«con `:(top)` la respuesta deja de importar»— y era la pregunta que decidía todo. Hice robusto el pathspec de un archivo que nadie leía. **Antes de arreglar cómo se ejecuta algo, comprueba que se ejecuta.**
 
+**Decisión — cómo resuelve el pipeline el canal de la alerta (2026-08-20):**
+
+@Claude preguntó antes de escribirlo, que era justo lo que el encargo pedía. Se
+resuelve **por `displayName` «Alertas PMO»**, no por id incrustado ni por variable
+de GitHub — una variable devolvería el id a un sitio fuera de git, la familia que
+ya costó `WEB_URL` y `GOOGLE_REDIRECT_URI`.
+
+Con tres condiciones, y las dos primeras no son opinables:
+
+1. **Coincidencia exacta y recuento, nunca `head -1`.** Con dos canales homónimos,
+   `head -1` reescribe la política para que avise **a un sitio que nadie mira**, y
+   seguiría diciendo `enabled`. 0 canales o más de 1 → no se toca la política.
+2. **Verificar después de escribir** que `notificationChannels` no quedó vacío.
+   Una política muda es indistinguible de una sana desde fuera.
+3. **El id resuelto, al log del run**, para que «º a dónde avisa esto?» tenga
+   respuesta en el registro y no en la consola.
+
+El *fallback* que propuso @Claude se acepta tal cual — **«mejor la vieja que una
+muda»**: si el canal no aparece, no se toca la política y no se bloquea el
+despliegue de la API.
+
 **Registro de estado (2026-08-20, verificado en `git log`, no en reporte):**
 
 | Qué | Dónde | Estado |
