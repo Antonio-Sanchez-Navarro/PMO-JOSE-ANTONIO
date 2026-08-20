@@ -1,5 +1,4 @@
 // Tipos y enums compartidos entre `api` y `web`.
-// 2026-08-20: Verificación de ignoreCommand en Vercel para detectar cambios en packages/shared.
 
 export enum TaskStatus {
   TODO = "TODO", // Por hacer
