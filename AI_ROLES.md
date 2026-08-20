@@ -85,7 +85,7 @@ cosas distintas:
 
 | Archivo | Qué es | Quién escribe | ¿En git? |
 |---|---|---|---|
-| `PROMPT_CLAUDE.md` · `PROMPT_GRAVITY.md` · `PROMPT_ALANA.md` | **El canal de órdenes.** El encargo en curso, su campo `Estado` y las notas que Doc quiera pasarle | **Doc** | **No.** Están en `.gitignore` y son locales a cada terminal |
+| `PROMPT_CLAUDE.md` · `PROMPT_GRAVITY.md` · `PROMPT_ALANA.md` | **El canal de órdenes**, en los dos sentidos: arriba el encargo y su `Estado`, abajo el **buzón** donde el agente anota dudas y bloqueos | **Doc** arriba · **el agente** en el buzón | **No.** Están en `.gitignore` y no viajan |
 | `CLAUDE_MEMORY.md` · `GRAVITY_MEMORY.md` · `ALANA.md` | **La evidencia de lo que hizo ese agente.** Lo entregado, con su commit, y lo aprendido haciéndolo | **Su dueño, y nadie más** | Sí |
 
 **Por qué separados.** Una bitácora que lleva dentro los encargos de Doc deja de
@@ -103,6 +103,25 @@ el porqué— va a `DOC.md`, que sí viaja.
 Se llegó aquí por las malas: el 2026-08-20 Doc escribió encargos dentro de
 `GRAVITY_MEMORY.md` y `CLAUDE_MEMORY.md` varias veces en una tarde, y uno de esos
 repartos borró nueve líneas de la bitácora ajena al resumirse.
+
+#### El buzón — el canal de vuelta
+
+Añadido el **2026-08-20**. Al final de cada prompt hay un **buzón**: si un agente
+tiene una duda, le falta un dato, ve una orden que contradice al código, o se topa
+con algo que no puede resolver, **lo anota ahí en vez de rodearlo, suponerlo o
+pararse en silencio**.
+
+| Regla | Por qué |
+|---|---|
+| **Se añade al final; nunca se reescribe el archivo** | Estos archivos **no están en git**: no hay historial ni forma de recuperar lo borrado. Reescribir el archivo entero se lleva por delante lo que otro acababa de anotar, y no hay `git checkout --` que lo devuelva. Añadir al final es además lo que evita que dos terminales se pisen |
+| **Solo Doc borra** | Mientras una entrada siga escrita, sigue viva. La retira Doc cuando la da por resuelta, y no antes |
+| **El agente no toca el encargo ni el `Estado`** | Esa mitad es de Doc, como siempre |
+| **Cada entrada va firmada y dice si bloquea** | `### [fecha] @Nombre — BLOQUEA / NO BLOQUEA`. Una duda que impide seguir y una observación que puede esperar no se priorizan igual |
+
+**Escribir en el buzón no despierta a nadie.** No hay proceso sondeando estos
+archivos: deja constancia, pero no avisa. Si el bloqueo impide seguir, hay que
+**parar y decírselo al Jefe**; un bloqueo anotado y no avisado es una terminal
+parada que nadie sabe que está parada.
 
 ### Comunicación y canales
 

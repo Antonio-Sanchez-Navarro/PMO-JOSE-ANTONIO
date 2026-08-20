@@ -27,7 +27,9 @@ de cabeza a mitad de fase. Lo que no cambia es lo que el sombrero obliga.
 * **`GRAVITY_MEMORY.md`:** Cerebro Frontend/DevOps. Estado de UI, despliegues Vercel y UI/UX de @Gravity.
 * **`ALANA.md`:** Memoria de Auditoría. Guardiana del estado real, infraestructura, seguridad y fail-safes.
 * **`DOC.md`:** (Este archivo). Memoria de alto nivel para el PM y la orquestación de agentes.
-* **`PROMPT_CLAUDE.md` · `PROMPT_GRAVITY.md` · `PROMPT_ALANA.md`:** **El canal de órdenes de Doc.** Encargo en curso, campo `Estado` y notas de operación. **Locales a cada terminal y fuera de git** (`.gitignore`).
+* **`PROMPT_CLAUDE.md` · `PROMPT_GRAVITY.md` · `PROMPT_ALANA.md`:** **El canal de órdenes de Doc**, en los dos sentidos. Arriba, el encargo en curso, el campo `Estado` y las notas de operación. Abajo, el **buzón**: donde el agente anota dudas, bloqueos y contradicciones en lugar de rodearlos. **Locales a cada terminal y fuera de git** (`.gitignore`).
+  * **Solo yo borro en esos archivos**, y solo cuando doy una entrada por resuelta. El agente añade al final y no reescribe: sin git detrás no hay historial, y lo que se sobrescribe no vuelve.
+  * **Revisar los tres buzones es trabajo mío, no suyo.** Escribir ahí no despierta a nadie — si algo bloquea de verdad, el agente para y avisa al Jefe.
 
 > **Las órdenes y la evidencia no se mezclan** — regla del Jefe, 2026-08-20. Una
 > bitácora con encargos dentro deja de poder leerse: no se distingue lo que se
