@@ -85,7 +85,7 @@ Con las tres líneas de log, Doc cierra el punto en `DOC.md` y vuelves a
 
 | Encargo | Dónde quedó |
 | --- | --- |
-| Fuga de Vercel (`ignoreCommand`) | `251d60e` ⚠️ corregido definitivamente en `580d2cb` con anclaje `:(top)` para `apps/web` y `packages/shared` |
+| Fuga de Vercel (`ignoreCommand`) | `adad87d` — Movido `vercel.json` a la raíz del monorepo con anclaje `:(top)` para `apps/web` y `packages/shared`. Verificación observable directamente en la columna de estado/duración de la lista de despliegues de Vercel (debe indicar Ignored/Canceled/Skipped en commits de solo `.md`). |
 | Deuda técnica Frontend Fase 5 (Inbox 409, WS dinámico, ARIA anidado, mockTasks) | `251d60e` |
 | Sincronización de memoria de Gravity | `a4eb39c` |
 | Migración a Cloud SQL | Pipeline ajustado, proxy y DB restaurada |
