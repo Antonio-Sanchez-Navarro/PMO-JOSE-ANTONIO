@@ -17,7 +17,7 @@ Esperando la repartición y alineación de tareas para la Fase 5 por parte de Do
 
 | Encargo | Dónde quedó |
 |---|---|
-| Fuga de Vercel (`ignoreCommand` en `apps/web/vercel.json`) | `251d60e` |
+| Fuga de Vercel (`ignoreCommand`) | `251d60e` ⚠️ tapaba `.md` pero no veía `packages/shared`; corregido en `aac9c4c` |
 | Deuda técnica Frontend Fase 5 (Inbox 409, WS dinámico, ARIA anidado, mockTasks) | `251d60e` |
 | Sincronización de memoria de Gravity | `a4eb39c` |
 | Migración a Cloud SQL | Pipeline ajustado, proxy y DB restaurada |
@@ -29,7 +29,7 @@ Esperando la repartición y alineación de tareas para la Fase 5 por parte de Do
 | Provisión de Infraestructura GCP | Completado (Neon + Upstash + Cloud Run) |
 | Saneamiento de Deuda Técnica (Frontend) | Eliminación de mocks, mutación impura en DND y corrección de tipos |
 | Configuración de OAuth de Google | Variable `GOOGLE_REDIRECT_URI` actualizada en GitHub Actions |
-| Configuración de Vercel (CI/CD) | Eliminación de `vercel.json` local para priorizar la UI de Vercel y prevenir errores de `build:shared`. |
+| Configuración de Vercel (CI/CD) | 2026-08-07 (superado): Eliminación de `vercel.json` local para priorizar la UI de Vercel y prevenir errores de `build:shared`. |
 | Estabilización de Métricas (Producción) | Refactor de llamada directa a `apiFetch` en `useDashboardMetrics.ts`, resolviendo errores 401 mediante `credentials: 'include'` y refresh de tokens. |
 | Fase 4: DevOps, Alertas y DLQ | DLQ en Pub/Sub, Cloud Monitoring Policy y variable de Claude en Cloud Run |
 ## Estado de la Infraestructura en Producción
