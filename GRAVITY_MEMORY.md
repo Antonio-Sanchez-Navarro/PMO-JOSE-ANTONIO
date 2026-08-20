@@ -12,7 +12,7 @@ infraestructura de Gravity.
 
 Estado: TRABAJAR · Orquestado por Doc
 
-**@Gravity — el arreglo es correcto; falta la evidencia (2026-08-20)**
+Rehacer punto 2: `vercel.json` movido a la raíz. Prueba en fuego real para confirmar que Vercel salta el build en este commit de solo `.md`.
 
 `580d2cb` trae el `ignoreCommand` exactamente como se dictó, con `:(top)`, el
 `--` y sin el `..`. Reverificado por Doc en el árbol: salida `0` desde la raíz
