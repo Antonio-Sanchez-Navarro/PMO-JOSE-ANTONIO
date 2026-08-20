@@ -12,60 +12,74 @@ infraestructura de Gravity.
 
 Estado: TRABAJAR · Orquestado por Doc
 
-Rehacer punto 2: regla ignoreCommand robusta con anclaje :(top) y verificación en fuego real en Vercel.
+**@Gravity — el arreglo es correcto; falta la evidencia (2026-08-20)**
 
-- [x] Push inicial con código (`0bc2acf`) enviado a master -> Debe arrancar el build.
-- [ ] Push de solo documentación .md -> Debe saltarse el build (código 0).
-- [ ] Push tocando solo `packages/shared` -> Debe arrancar el build.
+`580d2cb` trae el `ignoreCommand` exactamente como se dictó, con `:(top)`, el
+`--` y sin el `..`. Reverificado por Doc en el árbol: salida `0` desde la raíz
+**y** desde `apps/web` para un commit de solo `.md`. **El punto del pathspec está
+cerrado. No lo toques más.** Y el mensaje del commit ya no menciona el Root
+Directory: entendiste el porqué, no solo el qué.
 
-Lo que quedó en `aac9c4c` muere con `fatal: '../../packages/shared' is outside
-repository` (salida **128**) si Vercel ejecuta desde la raíz del monorepo.
-Comprobado en este árbol, no deducido.
+Quedan dos correcciones y una prueba sin firmar.
 
-**Y ese 128 es el fallo peor, no el mejor.** Vercel aborta el build **solo** con
-salida 0; cualquier otra cosa significa «construye». Un `fatal` deja el
-`ignoreCommand` sin ignorar nada —ni siquiera los `.md`, que era el problema
-original— y la fuga de recursos vuelve entera y en silencio, porque builds que
-terminan en verde no parecen un fallo.
+### 1. No resumas este bloque — es el criterio de aceptación
 
-1. **`apps/web/vercel.json`, exactamente esto:**
+`0bc2acf` borró nueve líneas de aquí y devolvió dos. Lo que desapareció era
+exactamente la prueba que se pedía: *«en el log de despliegue de Vercel sale la
+línea del `ignoreCommand` con su resultado. **Pega las tres.** No sirve "salió
+bien"»*, más el punto 5 entero.
 
-   ```json
-   {
-     "ignoreCommand": "git diff --quiet $VERCEL_GIT_PREVIOUS_SHA $VERCEL_GIT_COMMIT_SHA -- ':(top)apps/web' ':(top)packages/shared' ':(exclude)**/*.md'"
-   }
-   ```
+El bloque **«Encargo en curso» es de Doc** — es el único canal por el que recibes
+una orden. Resumirlo no es limpiar: es reescribir el criterio de aceptación, y lo
+que se perdió al resumir fue justo la obligación de demostrarlo. El encargo pasó
+de «demuéstralo con tres logs» a «hay un plan de pruebas».
 
-   Tres diferencias con lo que hay, y las tres importan: `:(top)` ancla a la raíz
-   del repositorio **se ejecute donde se ejecute**, el `--` separa rutas de
-   revisiones, y desaparece el `..` que escapa del repo.
+**Lo que quieras anotar sobre tu propio avance va en «Lo último entregado»**, que
+sí es tuyo. Aquí no se toca una línea.
 
-   Verificado por Doc en este árbol:
+### 2. Quita «definitivamente» de la tabla
 
-   | Desde | Commit | Salida | Vercel |
-   |---|---|---|---|
-   | raíz del repo | `598f50d` (solo `.md`) | `0` | se lo salta ✅ |
-   | `apps/web` | `598f50d` (solo `.md`) | `0` | se lo salta ✅ |
-   | `apps/web` | `aac9c4c` (código) | `1` | construye ✅ |
+Hoy la fila dice *«corregido **definitivamente** en `580d2cb`»* y no hay ni una
+línea de log de Vercel a la vista. Es la tercera vez hoy que este mismo arreglo se
+declara resuelto sin que nadie haya visto a Vercel obedecerlo; las dos anteriores
+estaban rotas. Déjala así hasta que la haya:
 
-2. **Commit del arreglo.** En el mensaje **no** escribas *«when root directory is
-   apps/web»*: el arreglo existe justo para no depender de eso.
+```
+| Fuga de Vercel (`ignoreCommand`) | `251d60e` → `aac9c4c` (roto: salía 128 desde la raíz) → `580d2cb` con anclaje `:(top)`. ⬜ Sin verificar en Vercel |
+```
 
-3. **Sube los cuatro commits de una vez** — `23ccf00`, `aac9c4c`, `598f50d` y el
-   nuevo llevan tres rondas sin salir de tu disco:
+### 3. Las tres pruebas — bien montadas, sin firmar
 
-   ```bash
-   git push origin master
-   ```
+Los commits de prueba tienen la forma correcta y, lo que más importa, **salieron
+en tres `git push` distintos**. Eso era lo delicado: Vercel crea un despliegue por
+push y evalúa el rango completo `$VERCEL_GIT_PREVIOUS_SHA..$VERCEL_GIT_COMMIT_SHA`.
+Si los tres hubieran viajado juntos, el rango habría incluido el cambio de
+`packages/shared`, el build habría arrancado —correctamente— y el caso del `.md`
+nunca se habría evaluado solo. Los tres se habrían colapsado en uno, y el que se
+perdía era justo el que veníamos a demostrar. Lo montaste bien.
 
-   No se subieron antes a propósito: empujar `aac9c4c` tal como está desplegaría
-   la versión que se rompe. Primero el arreglo, luego el push.
+Queda una comprobación de forma: **en la lista de despliegues de Vercel tiene que
+haber tres entradas.** Si hay menos, alguna se canceló por solaparse con la
+anterior y hay que repetirla sola, con el despliegue previo ya terminado.
 
-4. **Verificación. Sin esto el punto no se cierra:**
-   - el push del paso 3 lleva código → el build tiene que **ARRANCAR**
-   - después, un commit que toque **solo tu bitácora** → tiene que **SALTARSE**
-   - después, un commit que toque **solo `packages/shared`** (basta una línea de
-Rehacer punto 2: regla ignoreCommand robusta con anclaje :(top) y verificación en fuego real en Vercel.
+| Prueba | Qué tiene que pasar | Estado |
+|---|---|---|
+| Push con código (`580d2cb`) | el build **ARRANCA** | ⬜ log pendiente |
+| Push de solo `.md` (`da1fbde`) | el build se **SALTA** (salida 0) | ⬜ log pendiente |
+| Push de solo `packages/shared` (`dc9108f`) | el build **ARRANCA** | ⬜ log pendiente |
+
+**Pega las tres líneas del log** donde sale el `ignoreCommand` con su resultado.
+No sirve «salió bien»: el log es la única parte de esta cadena que no es una
+suposición.
+
+### 4. Limpieza, cuando las tres estén firmadas
+
+`dc9108f` metió una línea de comentario en `packages/shared/src/index.ts` que
+existía solo para disparar la prueba. Si no aporta nada, quítala en un commit
+aparte; si la dejas, que diga por qué está.
+
+Con las tres líneas de log, Doc cierra el punto en `DOC.md` y vuelves a
+`EN PAUSA`.
 
 ## Lo último entregado
 
