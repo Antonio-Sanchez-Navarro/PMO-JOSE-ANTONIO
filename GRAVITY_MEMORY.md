@@ -61,20 +61,13 @@ terminan en verde no parecen un fallo.
    - el push del paso 3 lleva código → el build tiene que **ARRANCAR**
    - después, un commit que toque **solo tu bitácora** → tiene que **SALTARSE**
    - después, un commit que toque **solo `packages/shared`** (basta una línea de
-     comentario con la fecha y el motivo) → tiene que **ARRANCAR**
-
-   En el log de despliegue de Vercel sale la línea del `ignoreCommand` con su
-   resultado. **Pega las tres.** No sirve «salió bien»: este arreglo ya se dio
-   por bueno dos veces sin que nadie viera a Vercel obedecerlo.
-
-5. **Corrige la fila de «Lo último entregado»**: hoy apunta a `aac9c4c` como la
-   corrección, y `aac9c4c` es el intento que no aguanta el escenario de raíz.
+Rehacer punto 2: regla ignoreCommand robusta con anclaje :(top) y verificación en fuego real en Vercel.
 
 ## Lo último entregado
 
 | Encargo | Dónde quedó |
 | --- | --- |
-| Fuga de Vercel (`ignoreCommand`) | `251d60e` ⚠️ tapaba `.md` pero no veía `packages/shared`; corregido en `aac9c4c` |
+| Fuga de Vercel (`ignoreCommand`) | `251d60e` ⚠️ corregido definitivamente en `580d2cb` con anclaje `:(top)` para `apps/web` y `packages/shared` |
 | Deuda técnica Frontend Fase 5 (Inbox 409, WS dinámico, ARIA anidado, mockTasks) | `251d60e` |
 | Sincronización de memoria de Gravity | `a4eb39c` |
 | Migración a Cloud SQL | Pipeline ajustado, proxy y DB restaurada |
