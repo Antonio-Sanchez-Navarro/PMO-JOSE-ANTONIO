@@ -330,12 +330,23 @@ Tres cosas que hay que saber y no se leen en el JSON:
   diferencia y habrían entrado en el mismo incidente, con **un solo** mensaje.
   Cerrar pronto hace que el fallo del día siguiente vuelva a sonar. Que cada
   fallo cuente su historia es tarea de la capa de dentro, no de esta.
-- **El bloque `documentation` no es adorno**: es lo que Google Chat enseña
-  dentro del mensaje. Lleva los comandos de diagnóstico en orden, dice cuál de
-  las dos condiciones disparó y qué significa cada una, y recuerda mirar la
-  versión de Cloud SQL contra `PG_MAJOR` si el respaldo se rompe de golpe sin
-  haber tocado nada. Una alerta que no dice qué hacer a las 3 de la mañana es
-  media alerta.
+- **⚠️ Del bloque `documentation`, Chat solo enseña `subject`.** Comprobado con
+  fuego real el 2026-08-20: la tarjeta usa `subject` como título y **descarta el
+  `content` entero** — los comandos de diagnóstico, el orden en que mirarlos y el
+  aviso de `PG_MAJOR` contra la versión de Cloud SQL no aparecen, ni siquiera
+  desplegando «Mostrar más», que solo añade los *Incident Labels*. El `content`
+  sigue sirviendo en la consola de Monitoring y en el canal de correo; en Chat,
+  no. Este README decía lo contrario hasta ese día.
+
+  Consecuencia práctica: **quien reciba la tarjeta a las 3 de la mañana no sabe
+  qué hacer** — sabe que el respaldo está mal y tiene un botón a la consola. Si
+  se quiere que diga algo accionable, tiene que ir en `subject`, que es el único
+  campo que viaja.
+- **⚠️ El `displayName` de la condición tampoco viaja.** El cuerpo de la tarjeta
+  es el texto autogenerado. Lo único que distingue hoy a las dos condiciones es
+  la etiqueta `result` de los *Incident Labels* — y en la de ausencia dirá
+  **`result = succeeded`**, que de madrugada se lee como lo contrario de lo que
+  pasa.
 - **`notificationChannels` va en el archivo, y es la línea que más importa.**
   Ver justo aquí debajo.
 

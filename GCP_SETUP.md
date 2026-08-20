@@ -221,6 +221,11 @@ Lleva **dos condiciones** unidas por `OR`, porque hacen preguntas distintas:
   saltado a diario. **Si alguien vuelve a tocar la cadencia del Scheduler, este
   número se toca con ella.**
 
+> ⚠️ **Al escribir el `documentation` de una política, cuenta solo con
+> `subject`.** Comprobado el 2026-08-20: la tarjeta de Google Chat usa `subject`
+> como título y **descarta el `content`**. Lo accionable va en `subject` o no
+> llega. El `content` sí sirve en la consola y en el canal de correo.
+
 La razón de que todo esto exista fuera del script —habiendo ya un aviso dentro de
 `respaldo.sh`— está contada entera en
 [`infra/backup/README.md`](infra/backup/README.md#6-la-vigilancia--quién-avisa-cuando-esto-se-rompe).
