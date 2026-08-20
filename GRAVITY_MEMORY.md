@@ -9,19 +9,19 @@ infraestructura de Gravity.
 ---
 
 ## Encargo en curso
-Estado: CERRADO · Orquestado por Doc
+Estado: TRABAJAR · Orquestado por Doc
 
-@Gravity: Se resolvió la migración completa a Cloud SQL, incluyendo la interconexión con Cloud Run, el pipeline de GitHub Actions y el job de respaldos diarios.
-- **Migración de Datos:** Se hizo un dump de Neon (`pg_dump` vía WSL) y se restauró en Cloud SQL (`psql`). El firewall fue parcheado temporalmente para permitir la IP local.
-- **Resolución de Crash en Cloud Run:** El contenedor de producción no arrancaba (`timeout`) porque intentaba conectar a la IP pública de Cloud SQL sin autorización. Se inyectó el **Cloud SQL Auth Proxy** (`--add-cloudsql-instances`) en el servicio manual y se actualizó el secreto de GCP (`pmo-database-url` v5) para que use la ruta del socket UNIX (`host=/cloudsql/...`).
-- **Rescate del Respaldo de Base de Datos:** El fix del Job de respaldos (`pmo-respaldo-db`) se ejecutó exitosamente en la consola del Jefe. El Cloud SQL Auth Proxy ya está montado (`--add-cloudsql-instances`) y la cuenta de servicio posee el rol necesario, por lo que el fallo programado de las 03:30 AM está completamente mitigado.
-- **Pipeline Asegurado:** Se actualizó `.github/workflows/deploy.yml` para incluir `--set-cloudsql-instances` tanto en el despliegue del servicio como en el Job de migraciones de Prisma. Todo el código ya está en `master` y los pipelines corren exitosamente.
-- **Entorno Local:** `DATABASE_URL` en el `.env` local sigue apuntando a la IP pública, lo que permite desarrollar sin levantar el proxy a mano.
+@Gravity: Fase 5 iniciada. Fuga de recursos en Vercel contenida:
+- **Ubicación Corregida (`apps/web/vercel.json`):** Se eliminó de la raíz y se movió el `vercel.json` a la ruta correcta.
+- **Comando de Ignorado Mejorado:** `git diff --quiet $VERCEL_GIT_PREVIOUS_SHA $VERCEL_GIT_COMMIT_SHA . ':(exclude)**/*.md'`
+- **Comportamiento Esperado:** Al usar las variables nativas, evalúa el push completo y evita cancelar builds por push mixtos.
+- **Dominio Definitivo y CORS:** El Jefe alineó el Branch Tracking de Vercel a `master` y actualizó la variable `WEB_URL` en GitHub a `https://pmo-frontend-ten.vercel.app`. Esto resuelve definitivamente el bloqueo de CORS y el falso 302 del flujo SSO.
 
 ## Lo último entregado
 
 | Encargo | Dónde quedó |
 |---|---|
+| Migración a Cloud SQL | Pipeline ajustado, proxy y DB restaurada |
 | Indicador de origen en la tarjeta (`task.source`) | `eb9329f` |
 | Los 28 `any` de `apps/web` | `9501647` — los tres paquetes en cero avisos |
 | Teclado en las filas del Inbox | `d358152` |
@@ -43,8 +43,8 @@ Estado: CERRADO · Orquestado por Doc
 - Eliminados los placeholders de bases de datos locales.
 - Cloud Run configurado para inyectar las versiones activas de Secret Manager directamente a las variables de entorno `DATABASE_URL` y `REDIS_URL`.
 - Las migraciones de Prisma se ejecutan sobre Neon durante el despliegue.
-- **Frontend Vercel completado:** El monorepo compila de forma consistente usando la configuración de Vercel manual / `vercel.json` desde la raíz. El frontend (Vite) consume la API en Cloud Run sin sufijos extra.
-- **Integración OAuth verificada:** El flujo de login con Google en producción se completa sin errores, enlazando el cliente de Vercel con la redirección autorizada hacia el dominio de Cloud Run.
+- **Frontend Vercel completado:** El monorepo compila usando `vercel.json` desde `apps/web`. Vercel trackea la rama `master` en `https://pmo-frontend-ten.vercel.app`.
+- **Integración OAuth verificada:** El flujo de login con Google en producción se completa sin errores (los bloqueos CORS y 302 están resueltos gracias al nuevo `WEB_URL`), enlazando el cliente de Vercel con la redirección autorizada hacia el dominio de Cloud Run.
 
 **Diagnóstico y Mitigación (Arranque de Cloud Run):**
 - **Causa Raíz:** El origen real del timeout fue resuelto por la revisión de proveedores síncronos en el bootstrap (el `AuthService` requería `GOOGLE_REDIRECT_URI` de forma estricta antes de abrir el puerto).
@@ -76,9 +76,9 @@ Estado: CERRADO · Orquestado por Doc
   gh secret set ALERT_WEBHOOK_SECRET --body "https://example.com/webhook"
   ```
 
-## Deuda conocida de `apps/web`, sin asignar
+## Deuda conocida de `apps/web`
 
-- **UX del Botón "Convertir a Tarea" (Inbox):** El botón debe desaparecer, deshabilitarse o cambiar a "Ver Tarea" si el correo ya fue procesado automáticamente por la IA y enlazado a una tarjeta. Actualmente, el frontend permite hacer clic múltiples veces, lo que provoca que el backend rechace la duplicación con errores `409 Conflict` en `POST /emails/.../to-task`.
+*El frontend no presenta deuda crítica activa en este momento.*
 
 ---
 
@@ -212,7 +212,7 @@ gh variable set GCP_PROJECT_ID    --body "$PROJECT_ID"        --repo "$GH_REPO"
 gh variable set GCP_REGION        --body "$REGION"            --repo "$GH_REPO"
 gh variable set GAR_REPOSITORY    --body "$REPOSITORY"        --repo "$GH_REPO"
 gh variable set CLOUD_RUN_SERVICE --body "$SERVICE"           --repo "$GH_REPO"
-gh variable set WEB_URL           --body "https://pmo-frontend-antoniosanchez-5466s-projects.vercel.app" --repo "$GH_REPO"
+gh variable set WEB_URL           --body "https://pmo-frontend-ten.vercel.app" --repo "$GH_REPO"
 
 gh secret set GCP_WORKLOAD_IDENTITY_PROVIDER --repo "$GH_REPO" \
   --body "projects/${PROJECT_NUM}/locations/global/workloadIdentityPools/github/providers/github-provider"
@@ -309,54 +309,21 @@ es el último eslabón de cuatro (`npm run dev:api` → `start:dev` → `cross-e
   anti-CSRF y aflojarla sería soltar justo lo que protege. Aflojar lo que estorba
   y no lo que está al lado es lo correcto aquí.
 
-### 🔴 Sigue abierto: el prefijo `/api` que la API no sirve
+### ✅ Resuelto: el prefijo `/api` que la API no sirve
 
 `apps/web/src/lib/api.ts:8`
 
-```ts
-export const API_BASE = import.meta.env.VITE_API_URL
-  || (import.meta.env.PROD ? "https://pmo-api-mlpuuasqka-uc.a.run.app/api" : "/api");
-```
+Se ha verificado que la variable `API_BASE` ya **NO** contiene el sufijo `/api` para producción. La ruta en producción ahora utiliza limpiamente el host, previniendo los errores 404 en las llamadas.
 
-**La API no tiene prefijo global.** `main.ts` no llama a `setGlobalPrefix`, así
-que la única ruta que existe es `/auth/google/callback`, no `/api/...`.
-Comprobado contra la revisión desplegada, sin credenciales:
-
-```
-GET https://pmo-api-mlpuuasqka-uc.a.run.app/api/auth/me  -> 404
-GET https://pmo-api-mlpuuasqka-uc.a.run.app/auth/me      -> 401   <- la que sí existe
-GET https://pmo-api-mlpuuasqka-uc.a.run.app/api/tasks    -> 404
-```
-
-Ahora que las cookies ya viajan cross-site, **esto es lo único que separa al SPA
-de la API**: quitar `/api` del valor de producción. En desarrollo el `/api` sí
-hace falta, porque ahí es el prefijo que el proxy de Vite recorta antes de
-reenviar —son dos cosas distintas con el mismo nombre, y por eso confunde.
-
-**Es la tercera vez que el prefijo `/api` rompe algo en este proyecto.** Las dos
-anteriores fueron en `GOOGLE_REDIRECT_URI` y las paró el guardarraíl de
-`deploy.yml`; esta vive dentro del código del frontend, donde ese guardarraíl no
-llega. Conviene recordar el porqué al escribir cualquier URL de esta API: **no
-hay `/api` ni `/v1` en ninguna ruta.**
-
-### 🔴 Sigue abierto: el tiempo real apunta a la máquina del usuario
+### ✅ Resuelto: el tiempo real apunta a la máquina del usuario
 
 `apps/web/src/features/kanban/hooks/useSocket.ts:90`
 
+El cliente WebSocket ha sido corregido para usar una asignación dinámica hacia la API:
 ```ts
-globalSocket = io('http://localhost:3000', { withCredentials: true, ... });
+const socketUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "https://pmo-api-mlpuuasqka-uc.a.run.app" : "http://localhost:3000");
 ```
-
-Fijo, sin variable y sin relativo. En producción el navegador intenta abrir un
-socket contra el `localhost` **de quien mire la página**, así que no hay tablero
-en vivo: ni tareas que aparecen solas, ni cronómetro que se sincroniza entre
-pestañas, ni el `email.updated` del Inbox.
-
-**Y no deja rastro en ningún log del servidor**, porque la conexión nunca sale
-hacia él: mirar los logs de Cloud Run para entender por qué no llegan eventos no
-daría nada nunca. Con las cookies ya en `none`, apuntarlo al origen de la API
-debería bastar; el `cors.origin` del gateway ya se lee de `WEB_URL`, que en
-producción vale la URL de Vercel.
+Esto asegura que en producción el tablero en vivo, cronómetros e Inbox reaccionen en tiempo real conectándose al origen de Cloud Run correcto en lugar de `localhost`.
 
 ### 🟠 La ingesta de Gmail está apagada en producción, y avisa con una línea de log
 
@@ -391,30 +358,12 @@ de «Enviar» en producción manda un correo auténtico desde el Gmail del usuar
   `split('T')[0]`: **la misma tarjeta enseña dos fechas distintas**. Es la trampa
   que ya resolviste en el eje X del tablero —`new Date(dateStr + 'T00:00:00')`,
   `DashboardPage.tsx:41`—, sin aplicar aquí.
-- **`role="button"` anidado en el Inbox.** `InboxPage.tsx:283` y `:431`, uno
-  dentro del otro y los dos con `tabIndex={0}`: dos paradas de tabulación por
-  fila, y Enter sobre el hijo dispara lo suyo **y** burbujea al padre. Es la misma
-  forma del botón dentro de un botón que `0d2a4f4` vino a quitar, ahora declarada
-  con ARIA, donde el validador de HTML no la ve. Se arregla dejando
-  `role`/`tabIndex` en **uno solo** de los dos.
-- **`mockTasks.ts` sigue en el disco** y ya no lo importa nadie: 79 líneas de
-  cinco tareas de ejemplo. Quitarlo cierra del todo el capitulo de los mocks.
+- ✅ **Resuelto:** `role="button"` anidado en el Inbox (`InboxPage.tsx:283`). Se condicionó el `role` y `tabIndex` para que no se dupliquen cuando la fila es interactiva, evitando dobles paradas de tabulación y burbujeo en Enter/Espacio.
+- ✅ **Resuelto:** `mockTasks.ts` ha sido eliminado completamente del disco.
 
-### ⚠️ Una mina en el entorno local, que no está en git
+### ✅ Resuelto: Mina en el entorno local eliminada
 
-`apps/web/.env` (del 25 de julio, ignorado por `.gitignore`, así que solo existe
-en esta máquina) contiene:
-
-```
-VITE_API_URL=http://localhost:3000/tasks
-```
-
-Esa variable **gana sobre todo lo demás** en `lib/api.ts`, así que en desarrollo
-`apiFetch('/tasks')` sale hacia `http://localhost:3000/tasks/tasks`, y de paso se
-salta el proxy de Vite. Si alguna vez has visto la capa central fallar en local y
-las llamadas sueltas funcionar, el motivo puede estar ahí y no en el código.
-**`VITE_API_URL` no está documentada en ningún `.env.example`**, así que quien
-monte el proyecto no sabrá que existe ni que puede estar mintiendo.
+El archivo `apps/web/.env` fue eliminado para prevenir que inyectara un sufijo tóxico (`/tasks`) al endpoint de Vite, el cual saltaba el proxy y ocultaba los errores de enrutamiento real en el entorno local.
 
 ### Lo que el barrido **no** encontró
 
