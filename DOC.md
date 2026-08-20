@@ -69,13 +69,23 @@ poner agentes en copia cuando no hay tarea real.
 
 **Objetivos Inmediatos (Frente DevOps):**
 
-1. **Vigilancia del Job de Respaldo:** Actualmente, si el autómata de backups falla, nadie se entera porque la Capa 2 solo vigila la ingesta. Se debe implementar una alerta que vigile la ejecución de los respaldos.
-2. **Saneamiento del Pipeline Frontend (Vercel):** Vercel está redesplegando el frontend con cada actualización de bitácora `.md`. Se debe configurar el `paths-ignore` equivalente en Vercel para detener el ruido.
+1. **Vigilancia del Job de Respaldo:** ✅ **Implementada, ⬜ sin firmar.** La política vive como archivo en `infra/alert_policy_respaldo.json` con sus dos condiciones (fallo y ausencia, `combiner: OR`) y la cadencia se dobló a `30 3,15 * * *` porque Cloud Monitoring topa la ventana de ausencia en 23 h 30 m. **Lo que falta no es código: es el fuego real.** Nadie ha visto sonar la política. La Capa 1 de la Fase 4 se firmó porque sonó sola, no porque estuviera escrita; esta se firma igual o no se firma.
+2. **Saneamiento del Pipeline Frontend (Vercel):** ✅ **Entregado en `251d60e`** — `apps/web/vercel.json` con `ignoreCommand` sobre `$VERCEL_GIT_PREVIOUS_SHA..$VERCEL_GIT_COMMIT_SHA` excluyendo `**/*.md`. **Con un agujero abierto:** el `.` del comando se evalúa desde el Root Directory del proyecto en Vercel (`apps/web`), así que un cambio en `packages/shared` —que ocho archivos de `apps/web` importan— **no dispara reconstrucción**. El síntoma sería el peor de esta familia: contrato nuevo en el backend, bundle viejo en el navegador, y todo en verde.
+
+**Registro de estado (2026-08-20, verificado en `git log`, no en reporte):**
+
+| Qué | Dónde | Estado |
+|---|---|---|
+| Deuda de frontend de Fase 5 (concurrencia del Inbox, URL de socket por `VITE_API_URL`, roles ARIA anidados, muerte de `mockTasks.ts`) | `251d60e` | ✅ entregado por @Gravity |
+| `apps/web/vercel.json` | `251d60e` | ⚠️ entregado, con el punto ciego de `packages/shared` |
+| Política de alerta del respaldo | `285e3a2`, `ad1fe4c` | ⚠️ escrita, sin sonar |
+| Capa 1 (portero CRLF + espejo en CI) y Capa 3 / simulacro mensual | — | ⬜ sin empezar, de @Claude al cerrar la Fase 5 |
 
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 * **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.
 * **Preguntar "¿por qué?" en lugar de "¿está?":** Lección aprendida de los falsos positivos (ej. el fallo de encoding del `.gitignore`).
-* **El campo `Estado` de un encargo lo pone solo Doc:** Ha fallado dos veces: trabajo entrando con el documento en pausa, y encargos pidiendo cosas ya entregadas.
+* **El campo `Estado` de un encargo lo decide solo Doc:** Ha fallado dos veces: trabajo entrando con el documento en pausa, y encargos pidiendo cosas ya entregadas. **Desde el 2026-08-20, con Doc escribiendo solo en este archivo, el valor lo dicta Doc y lo transcribe el dueño de la bitácora.** El ejecutor no lo elige; lo copia.
+* **Un estado verificado caduca en cuanto alguien actúa sobre él:** lección de @Alana el 2026-08-20, que publicó una propuesta de tres capas y descubrió que la Capa 2 se había entregado mientras la escribía. Antes de publicar cualquier cosa que describa el estado del sistema, `git log` otra vez.
 * **Verificar en el código antes de dar una casilla por cerrada:** Nunca confiar ciegamente en el reporte sin evidencia (logs, HTTP 200 o el monitor en vivo).
 
