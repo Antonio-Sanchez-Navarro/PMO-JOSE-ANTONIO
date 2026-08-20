@@ -4204,3 +4204,194 @@ Directory* del proyecto, y la segunda se comprueba con un empujón de dos commit
 —código y luego `.md`— y viendo si el frontend recoge el cambio. **Las dos hay
 que probarlas tirando del cable**, que es lo único que ha funcionado en esta
 semana. Se lo paso a Doc y a Gravity; no lo cierro yo.
+
+---
+
+## 36. Propuesta para Doc: las tres capas de vigilancia (2026-08-20)
+
+**Una corrección de entrada, porque cambia el calendario:** esto no se ejecuta
+entero «al terminar la Fase 5». **La capa 2 *es* la Fase 5** —es su objetivo 1,
+ya escrito en `DOC.md` §4—, así que no espera a nada. Las que se ejecutan
+después son la 1 y la 3. Lo digo antes del esquema para que nadie planifique dos
+veces el mismo trabajo.
+
+### 36.1 El problema, en una frase
+
+Los errores de este proyecto no avisan cuando ocurren: avisan días después,
+cuando alguien intenta usar la pieza. El respaldo llevaba **más de un día**
+escribiendo archivos irrecuperables y el tablero estaba en verde.
+
+Tres capas, porque **ninguna sirve para lo que hacen las otras dos**: una es
+rápida y tonta, otra es incansable y ciega, y la tercera tiene criterio pero hay
+que despertarla.
+
+### 36.2 El esquema
+
+```
+   ESCRITORIO                GITHUB                 PRODUCCIÓN
+  ──────────────────────────────────────────────────────────────────
+   escribes
+      │
+      ├─► git commit ──┐
+      │                │
+      │          ╔═════╧══════╗
+      │          ║ 1 PORTERO  ║  bloquea aquí, en 0,2 s, gratis
+      │          ╚═════╤══════╝  CRLF · secretos · polizones
+      │                │
+      └─► git push ────┴──► CI ══╗
+                                 ║  1' el mismo control, pero en el
+                                 ║     servidor: este no se salta
+                                 ╚═══► despliegue ──► corre solo
+                                                          │
+                                                    03:30 ▼
+                                                  ╔═══════════════╗
+                                                  ║ 2 VIGILANTE   ║
+                                                  ╚═══════╤═══════╝
+                                                          │ si falla
+                                                          │ o si calla
+                                                          ▼
+                                                      tu teléfono
+
+        ╔══════════════════════════════════════════════════════╗
+        ║ 3 REPASO (Alana) — a mano, después de un empujón     ║
+        ║ lo que ninguna regla puede ver:                      ║
+        ║ «está puesto, pero no está conectado»                ║
+        ╚══════════════════════════════════════════════════════╝
+```
+
+### 36.3 Capa 1 — El portero: dos reglas nuevas en el gancho que ya existe
+
+`.githooks/pre-commit` ya bloquea la mezcla de dueños en un commit, y
+`core.hooksPath` está apuntando ahí. Se le añaden **dos reglas, y las dos nacen
+de un incidente real de esta semana**:
+
+**Regla A — un `.sh` con retornos de carro.** Mató el job de respaldo el 19-08
+(`$'\r': command not found`, §33.1).
+
+```sh
+# Se mira el archivo EN DISCO, no el que va al commit. El repositorio nunca
+# estuvo mal: `.gitattributes` normaliza a LF al indexar, así que el blob
+# staged sale limpio. Lo que `gcloud builds submit` sube es el ÁRBOL DE
+# TRABAJO — y ahí es donde Git en Windows dejó el CRLF.
+for f in $(git diff --cached --name-only --diff-filter=ACM -- '*.sh'); do
+  [ -f "$f" ] || continue
+  if grep -q "$(printf '\r')" "$f"; then
+    echo "BLOQUEADO: $f tiene retornos de carro (CRLF) en el árbol de trabajo."
+    echo "  Arréglalo con:  sed -i 's/\r$//' $f && git add $f"
+    exit 1
+  fi
+done
+```
+
+**Regla B — credenciales o volcados sueltos.** El 18-08 aparecieron en la raíz
+un `dump.sql` de producción y un `new_db_url.txt` con la cadena de conexión.
+`.gitignore` los tapa, pero **`git add -f` se lo salta sin decir nada.**
+
+```sh
+# Por nombre: lo que .gitignore ya cubre, pero que un `git add -f` colaría.
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+  case "$f" in
+    apps/api/prisma/migrations/*) continue ;;
+    *.example) continue ;;
+    *.dump|*.sql|*db_url*|.env|.env.*)
+      echo "BLOQUEADO: $f no debería viajar en un commit."
+      exit 1 ;;
+  esac
+done
+
+# Por contenido: una cadena de conexión con contraseña de verdad, una clave
+# privada, una clave de API. Patrones estrechos a propósito.
+patron='(postgres(ql)?|rediss?)://[^:@/ ]+:[^@ ]{6,}@'
+patron="$patron"'|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+patron="$patron"'|AIza[0-9A-Za-z_-]{35}|sk-ant-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{36}'
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+  case "$f" in *.example) continue ;; esac
+  if git show ":$f" | grep -qE "$patron"; then
+    echo "BLOQUEADO: $f parece llevar una credencial dentro."
+    exit 1
+  fi
+done
+```
+
+**Dos cosas que hay que aceptar al aprobar esto**, o no vale la pena ponerlo:
+
+1. **Si sale un falso positivo, se afina el patrón — no se usa `--no-verify`.**
+   Un gancho que se salta una vez se salta siempre, y a partir de ahí es
+   decoración.
+2. **El gancho solo protege al clon que lo tenga configurado.** Por eso va
+   acompañado de **1'**: las mismas dos comprobaciones como un paso de `ci.yml`,
+   sobre el árbol completo. El gancho es rápido y evitable; CI es lento e
+   inevitable. Se necesitan los dos, y no es redundancia: son dos alcances
+   distintos.
+
+### 36.4 Capa 2 — El vigilante: es el objetivo 1 de la Fase 5
+
+Hoy, si el respaldo de las 03:30 revienta, **no lo ve nadie**. La alerta de
+Capa 2 de la Fase 4 vigila la ausencia de push de Pub/Sub, que es otra cosa.
+
+Son **dos políticas, y la segunda es la que importa**:
+
+| | Qué vigila | Por qué |
+|---|---|---|
+| **A. Fallo** | Ejecuciones fallidas del job `pmo-respaldo-db` | La fácil. El 19-08 hubo tres seguidas entre 22:12 y 22:54, y se supieron porque había alguien delante |
+| **B. Ausencia** | Que **no haya** ejecución correcta en 26 h | 🔴 La que de verdad hace falta. **El silencio de un respaldo que no corrió es idéntico al de uno que salió bien.** Cubre el cron desactivado, el job borrado y el que ni llegó a arrancar |
+
+Dos condiciones para darla por hecha, y las dos son lección ya pagada:
+
+- **La política va como archivo en `infra/alertas/`**, aplicada con
+  `gcloud ... policies create --policy-from-file`. La Fase 4 sacó el job de
+  respaldo de la consola por este mismo motivo: lo que vive en un panel se
+  pierde, y nadie sabe que existía.
+- **No se firma hasta que suene en fuego real.** Se provoca un fallo del job a
+  propósito y se ve llegar el mensaje. Exactamente como se firmó la Capa 1 de la
+  Fase 4 — que sonó sola y se verificó por `request_id`.
+
+### 36.5 Capa 3 — El repaso, y lo único que encuentra los archivos muertos
+
+**A mí se me despierta, no se me programa.** Un barrido diario gasta todos los
+días para encontrar algo una vez por semana. Dos disparadores bastan: **después
+de un empujón grande**, y **antes de cerrar cualquier fase**.
+
+Y una casilla recurrente que pido que entre en `TASKS.md`, porque no es un extra:
+
+> **Repetir el simulacro de restauración una vez al mes y después de cada
+> migración de esquema.**
+
+Es lo único que encuentra un volcado que pasa su propia verificación y no sirve.
+Ninguna de las otras dos capas puede verlo.
+
+### 36.6 Quién impulsa cada cosa
+
+| Capa | Quién la hace | Quién la aprueba | Cuándo |
+|---|---|---|---|
+| **1 · Portero** (gancho + espejo en CI) | **Claude Code** — es configuración estática, su dominio en `AI_ROLES.md` | Doc | **Al cerrar la Fase 5** |
+| **2 · Vigilante** (las dos políticas) | **Gravity** — operador DevOps, afinidad con GCP. El Jefe ejecuta lo que necesite consola | Doc reparte · **la firma un fallo provocado**, no un informe | **Ya: es la Fase 5** |
+| **3 · Repaso** | **Alana**, despertada por el Jefe | — | Continuo |
+| **3b · Simulacro mensual** | Quien lleve infraestructura | Doc lo escribe en `TASKS.md` | Mensual, y tras cada migración |
+
+### 36.7 Qué habría atrapado cada capa, del registro real
+
+No es teoría: todo esto ya pasó.
+
+| Lo que pasó | Quién lo habría atrapado |
+|---|---|
+| `respaldo.sh` con CRLF tumbando el job (19-08) | **1** — en el commit, no en la tercera ejecución fallida |
+| `dump.sql` y `new_db_url.txt` en la raíz (18-08) | **1** |
+| `ALANA.md` de polizón, tres veces | **1** — ya lo hace |
+| Tres ejecuciones fallidas del respaldo, 22:12–22:54 (19-08) | **2** |
+| Respaldos de Cloud SQL configurados y **apagados** (§31.2) | **3** |
+| El webhook con el texto de relleno dentro del secreto (§30) | **3** |
+| El `vercel.json` de hoy, puesto donde quizá no se lee (§35.7) | **3** |
+
+### 36.8 Y lo que ninguna capa atrapa
+
+**Los cuatro volcados irrecuperables.** Ni el portero, ni el vigilante, ni yo
+leyendo el diff. Los cuatro tenían el índice legible, el job salía en verde y la
+comprobación pasaba. **Lo encontró una sola cosa: alguien intentando usarlos.**
+
+Por eso el simulacro mensual de §36.5 no es el apéndice de esta propuesta: es la
+única parte que cubre el fallo que más cerca estuvo de costar la base de datos.
+Las tres capas hacen que no vuelvan los errores que ya conocemos. El simulacro
+es lo que encuentra el que todavía no conocemos.
+
+**Un respaldo no se audita: se restaura.**
