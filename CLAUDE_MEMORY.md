@@ -9,6 +9,189 @@
 
 ---
 
+## 🔴 Vigilancia del respaldo: el vigilante no puede vivir dentro de lo vigilado (2026-08-20)
+
+**Apertura de la Fase 5.** El 2026-08-19 el job `pmo-respaldo-db` estuvo roto
+**42 minutos en silencio absoluto**. Los hechos, sacados de la nube y no de la
+memoria de nadie:
+
+| Ejecución | Inicio (UTC) | Tulum | Resultado |
+|---|---|---|---|
+| `pmo-respaldo-db-tgzzf` | `22:09:45Z` | 17:09 | ❌ falló |
+| `pmo-respaldo-db-df7hl` | `22:33:08Z` | 17:33 | ❌ falló |
+| `pmo-respaldo-db-t5297` | `22:52:42Z` | 17:52 | ✅ correcta |
+
+Se supo porque había alguien delante mirando. Esa es toda la detección que había.
+
+### Lo que hay que entender, porque el aviso YA estaba puesto
+
+`respaldo.sh` tenía —desde el 18-08— su función `avisar` mandando al webhook de
+Chat en cada `fallar`. Y aun así: silencio. El primero de los dos fallos fueron
+**los retornos de carro**: `bash` murió en la primera línea del archivo, cuando
+la función `avisar` **todavía no se había definido**.
+
+> **Un vigilante que vive dentro de lo vigilado comparte su suerte.**
+
+No es un caso raro, es una familia entera. Nada de esto puede avisar desde dentro
+del script, porque el script no llega a correr o no llega a terminar:
+
+- CRLF, un error de sintaxis, un `ENTRYPOINT` mal puesto → `bash` muere en la línea 1
+- la imagen no se descarga, el contenedor no arranca
+- `OOM` (SIGKILL: no corre ni un `trap`)
+- `--task-timeout=900s` agotado
+- el secreto ya no se puede leer → Cloud Run ni arranca el contenedor
+- **el Scheduler no dispara** → no hay ejecución, no hay fallo, no hay nada que avisar
+
+Ese último es el que cierra el argumento: **una alerta que vive dentro del job
+jamás puede detectar un job que no se ejecutó.**
+
+### El diseño: dos capas que no comparten suerte
+
+Deliberadamente **no** se sustituyó una por otra. Se dejaron las dos porque ven
+cosas distintas:
+
+| | Quién | Qué garantiza | Su punto ciego |
+|---|---|---|---|
+| **Dentro** | `avisar`/`fallar` + el `trap` nuevo de `respaldo.sh` | dice **por qué** falló, con el texto de la comprobación concreta | todo lo anterior a que `bash` lea el archivo |
+| **Fuera** | Política de Cloud Monitoring | garantiza que **te enteras**, sea cual sea la causa | no sabe el motivo: solo que la ejecución acabó en rojo |
+
+La de dentro da el diagnóstico; la de fuera da la garantía. Quitar cualquiera de
+las dos deja un agujero que la otra no tapa.
+
+### Capa de fuera: la política
+
+`infra/alert_policy_respaldo.json` → desplegada como
+`projects/pmo-dashboard-503418/alertPolicies/2425639254030427438`.
+
+```
+metric.type="run.googleapis.com/job/completed_execution_count"
+resource.type="cloud_run_job"
+resource.label."job_name"="pmo-respaldo-db"
+metric.label."result"="failed"
+→ ALIGN_SUM 300s · COMPARISON_GT 0 · duration 0s · trigger 1
+```
+
+Salta con **una sola** ejecución fallida y sin esperar: no hay umbral que afinar
+porque no existe «un poco de respaldo fallido». Se eligió
+`completed_execution_count` y no `completed_task_attempt_count` a propósito —
+con `--max-retries=2`, el segundo cuenta cada intento y avisaría de reintentos
+que acaban bien.
+
+**Está comprobado contra los hechos, no deducido.** La serie temporal de aquel
+día tiene los dos puntos que la política mira:
+
+```
+result=failed  2026-08-19T22:20:00Z = 1
+result=failed  2026-08-19T22:40:00Z = 1
+```
+
+Con esta política puesta, el chat habría sonado a los **11 minutos** del apagón
+en vez de a los 42.
+
+**`autoClose: 1800s`**, que es el mínimo que admite la API, y no es un detalle
+cosmético: un incidente abierto **se traga los avisos siguientes**. Los dos
+fallos del 19-08 iban con 24 minutos de diferencia y habrían caído dentro del
+mismo incidente → **un solo mensaje para dos averías**. Cerrar pronto hace que
+el fallo del día siguiente vuelva a sonar. Que cada fallo cuente su historia es
+tarea de la capa de dentro, no de esta.
+
+La política lleva además un bloque `documentation`, que es lo que Google Chat
+enseña dentro del mensaje: los tres comandos de diagnóstico en orden y el aviso
+de mirar **la versión de Cloud SQL contra `PG_MAJOR`** antes que nada si el
+respaldo se rompe de golpe sin haber tocado nada. Una alerta que no dice qué
+hacer a las 3 de la mañana es media alerta.
+
+### Capa de dentro: el `trap`, y un hueco que no habíamos visto
+
+Además del CRLF, `respaldo.sh` tenía un segundo modo de fallar callado que sí se
+podía arreglar desde dentro. Todas las comprobaciones acaban en `|| fallar` —
+pero `set -e` mata el script en **cualquier** línea que devuelva error sin pasar
+por `fallar`. Las dos que había:
+
+- `: "${DATABASE_URL:?falta DATABASE_URL}"` — muere ahí, en silencio.
+- la asignación de `TAMANO` con `gcloud storage ls` — igual.
+
+Job en rojo, chat mudo. Ahora hay un `trap ... EXIT` que avisa de **cualquier**
+salida distinta de 0, con un `YA_AVISADO` que evita el mensaje doble cuando el
+fallo sí pasó por `fallar`. Probado en los cuatro caminos (éxito silencioso,
+fallo previsto, fallo imprevisto, variable ausente) antes de tocar nada.
+
+Dos detalles que costarían un rato si se pierden:
+
+- **`if` y no `&&` dentro del `trap`.** La condición de un `if` está exenta de
+  `set -e`; una lista `&&` que corta, no. Escrito con `&&`, el `trap` podía irse
+  sin avisar — es decir, el arreglo del silencio fallando en silencio.
+- **`avisar` ya no traga el error de `curl`.** Era `>/dev/null 2>&1 || true`: si
+  el webhook rechazaba la llamada no quedaba ni rastro. **El sistema de avisos
+  no podía avisar de que estaba roto** — exactamente lo que pasó tres días con
+  el `TO_BE_FILLED_BY_USER` de agosto. Ahora lo deja escrito en el log del job.
+
+### 🔴 Hallazgo colateral, y es el peor de todos
+
+Al ir a enganchar el canal apareció que **`alert_policy.json` —la alerta del
+watcher de Gmail, viva desde el 14-08— tenía `notificationChannels` vacío.**
+
+`enabled: true`. Evaluaba. Abría incidentes en la consola. **No se lo contaba a
+nadie. Seis días.** Y el cierre de la Fase 4 en este mismo archivo la daba por
+«✅ Operativa».
+
+Es el mismo fallo que esta fase venía a cerrar, un piso más arriba: no un
+respaldo fallando en silencio, sino **el vigilante del respaldo fallando en
+silencio**. Y era invisible por partida doble — `create` sale en verde sin el
+campo, y el campo tampoco estaba en el archivo, así que releerlo no lo delataba.
+
+Corregido el 2026-08-20 en la política viva y en el archivo. La comprobación que
+ahora es obligatoria después de desplegar cualquier política:
+
+```bash
+gcloud beta monitoring policies list --project pmo-dashboard-503418 \
+  --format="value(displayName,enabled,notificationChannels)"
+```
+
+**Tercera columna vacía = alerta que no existe.**
+
+### Lo que queda abierto
+
+**1. Que el job no llegue a ejecutarse.** Una alerta sobre fallos no puede ver
+una ejecución que nunca ocurrió. Lo natural sería un `conditionAbsent` sobre
+`result="succeeded"`, y **no cabe**. La API lo rechaza:
+
+```
+INVALID_ARGUMENT: condition_absent.duration had an invalid value of "24h":
+Durations longer than 23h30m are not supported.
+```
+
+23h30m es el techo duro de Cloud Monitoring — de ahí sale el `84600s` de la
+política de Gmail, que hasta ahora parecía un número elegido a ojo. Con un
+respaldo **diario**, esa ventana se agota 28 minutos **antes** de la ejecución
+siguiente: saltaría todos los días. Una alerta que miente a diario es peor que
+ninguna, porque enseña a ignorar el canal.
+
+**La salida no es tocar la política, es tocar la cadencia**: con el respaldo dos
+veces al día los éxitos quedan a 12 h, y 23h30m pasa a significar «se han
+perdido dos seguidos», que sí es una avería. De paso el RPO baja de 24 h a 12 h,
+que es el botón que `infra/backup/README.md` ya proponía. Es una decisión de
+Doc, así que está **sin hacer**, y la condición se quitó del JSON antes de
+desplegar en vez de dejarla dando falsos avisos a diario.
+
+**2. Nadie ha visto sonar esta alerta todavía.** La prueba está diseñada y es
+barata e inocua —`--update-env-vars TAMANO_MINIMO=999999999` en una ejecución
+suelta: sube un volcado bueno y lo rechaza en la comprobación de tamaño, así
+que ejercita el aviso de dentro y el de fuera sin destruir nada— pero el
+clasificador de permisos bloqueó ejecutarla. **Hasta que se corra, esto es una
+suposición bien fundada, no un hecho comprobado**, que es justo la distinción
+que costó cinco intentos en el simulacro de restauración.
+
+### Nota de dominio
+
+`gcloud` es de Gravity. Los tres comandos que se ejecutaron aquí —crear la
+política, engancharle el canal y parchear la del watcher— se hicieron por
+encargo directo y explícito de Doc, y quedan escritos arriba para que no sean
+configuración fantasma. Los archivos (`infra/alert_policy*.json`,
+`infra/backup/respaldo.sh`) sí son dominio propio.
+
+---
+
 ## 🔴 El simulacro de restauración: los cuatro volcados anteriores no servían (2026-08-19)
 
 **La conclusión primero, porque es la que importa:** durante **más de un día**,
