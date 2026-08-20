@@ -9,6 +9,152 @@
 
 ---
 
+## ✅ La Capa 2 firmada con fuego real: sonaron las dos (2026-08-20)
+
+**Resultado: llegaron los dos avisos, y son distintos.** Es lo que se estaba
+probando y es lo que salió bien. Lo que no salió como yo lo había escrito está
+en «Lo que no esperaba», más abajo, y me obliga a corregir tres documentos.
+
+### El simulacro
+
+`pmo-respaldo-db-mcqnv` · arrancada `2026-08-20T23:13:56Z` (18:13 de Tulum) ·
+`failedCount=1` · completada `23:19:37Z`.
+
+Vía: `--update-env-vars="BUCKET_RESPALDOS=pmo-respaldos-db-simulacro-inexistente"`
+sobre `jobs execute`, **sin tocar el job desplegado**. `pg_dump` es solo lectura y
+la subida muere en el destino, así que el fallo ocurre **antes de escribir nada**.
+
+Verificado: el bucket real pasó de **16 objetos a 17**, y el único nuevo es el de
+la ejecución de recuperación (`pmo-2026-08-20T232554Z.dump`, 311.152 bytes,
+`23:25:58Z`). Entre las `20:34Z` y las `23:25Z` no hay ningún objeto: **el
+simulacro no dejó ni un volcado a medias**.
+
+Los tres intentos, tal cual (`--max-retries=2` ⇒ tres, como estaba previsto):
+
+```
+2026-08-20T23:15:31.927248Z  Volcando a gs://pmo-respaldos-db-simulacro-inexistente/pmo-2026-08-20T231531Z.dump
+2026-08-20T23:15:35.099369Z  ERROR: (gcloud.storage.cp) gs://pmo-respaldos-db-simulacro-inexistente not found: 404.
+2026-08-20T23:15:35.264900Z  RESPALDO FALLIDO: pg_dump o la subida terminaron con error (ver los logs del job)
+2026-08-20T23:15:35.265554Z  [pmo-postgres-db] connection aborted - error writing to client: write unix …/.s.PGSQL.5432->@: write: broken pipe
+2026-08-20T23:15:35.727519Z  Container called exit(1).
+2026-08-20T23:17:34.262706Z  Volcando a gs://pmo-respaldos-db-simulacro-inexistente/pmo-2026-08-20T231734Z.dump
+2026-08-20T23:17:37.449599Z  ERROR: (gcloud.storage.cp) gs://pmo-respaldos-db-simulacro-inexistente not found: 404.
+2026-08-20T23:17:37.611359Z  RESPALDO FALLIDO: pg_dump o la subida terminaron con error (ver los logs del job)
+2026-08-20T23:17:37.611811Z  [pmo-postgres-db] connection aborted - error writing to client: write unix …/.s.PGSQL.5432->@: write: broken pipe
+2026-08-20T23:17:38.077957Z  Container called exit(1).
+2026-08-20T23:19:28.935307Z  Volcando a gs://pmo-respaldos-db-simulacro-inexistente/pmo-2026-08-20T231928Z.dump
+2026-08-20T23:19:32.133022Z  ERROR: (gcloud.storage.cp) gs://pmo-respaldos-db-simulacro-inexistente not found: 404.
+2026-08-20T23:19:32.263822Z  RESPALDO FALLIDO: pg_dump o la subida terminaron con error (ver los logs del job)
+2026-08-20T23:19:32.264474Z  [pmo-postgres-db] connection aborted - error reading from client: read unix …/.s.PGSQL.5432->@: read: connection reset by peer
+2026-08-20T23:19:32.700288Z  Container called exit(1).
+```
+
+El `broken pipe` del Auth Proxy **no es un fallo aparte**: es `pg_dump` recibiendo
+el cierre de la tubería cuando `gcloud storage cp` muere. Es el síntoma normal de
+que `pipefail` está haciendo su trabajo, no una avería de Cloud SQL. Conviene
+saberlo porque en un log de madrugada parece lo segundo.
+
+### Los dos mensajes, tal cual llegaron a «Alertas PMO»
+
+**Capa 1 — tres mensajes**, uno por intento, en segundos. Emisor `Alertas API Capa 1`:
+
+```
+🔴 Respaldo de la base de datos fallido
+pg_dump o la subida terminaron con error (ver los logs del job)
+```
+
+**Capa 2 — un mensaje**, emisor `Google Cloud Monitoring`, tarjeta:
+
+```
+El respaldo de la base de datos no esta bien
+
+Completed Executions for pmo-dashboard-503418 Cloud Run Job labels
+{project_id=pmo-dashboard-503418, job_name=pmo-respaldo-db,
+location=us-central1} is above threshold of 0.000 with a value of 1.000.
+
+!!! Critical severity
+
+Incident Labels
+    job_name     pmo-respaldo-db
+    location     us-central1
+    project_id   pmo-dashboard-503418
+    result       failed
+
+[ View ]
+```
+
+**Tres mensajes de Capa 1 y no seis: el `trap` no duplicó.** La guarda
+`YA_AVISADO` funciona en producción, no solo en la prueba de mesa.
+
+### Tiempos
+
+| Hito | Momento |
+|---|---|
+| Primer intento fallido | `23:15:35Z` |
+| Ejecución dada por fallida | `23:19:37Z` |
+| Punto en la métrica `completed_execution_count{result="failed"}` | `23:24:00Z` |
+| Mensaje de Capa 2 en Chat | entre `23:23Z` y `23:27Z` (lo vi ausente y luego «Recién») |
+
+Del primer síntoma al mensaje de Capa 2: **menos de 10 minutos**, con el grueso
+del retardo en el borde de la ventana de alineación de 300 s. En el simulacro
+anterior del día el retardo fue **de un minuto** (Capa 1 a las `18:16Z`, Capa 2 a
+las `18:17Z`), así que el retardo depende de dónde caiga el fallo dentro de la
+ventana, no de una latencia fija. **Entre 1 y 10 minutos** es el rango honesto.
+
+### 🔴 Lo que no esperaba, y me obliga a corregir tres documentos
+
+**El bloque `documentation` de la política NO aparece en la tarjeta de Chat.**
+
+Yo escribí —en `CLAUDE_MEMORY.md`, en `infra/backup/README.md` §6 y en
+`GCP_SETUP.md`— que ese bloque «es lo que Google Chat enseña dentro del mensaje»
+y que lleva «los tres comandos de diagnóstico en orden». **Es falso.** De todo el
+bloque, Chat usa **solo `documentation.subject`**, como título de la tarjeta. El
+`content` —los comandos, el orden de diagnóstico, el aviso de mirar `PG_MAJOR`
+contra la versión de Cloud SQL— no sale ni desplegando «Mostrar más», que solo
+añade los *Incident Labels*.
+
+Era exactamente la pregunta de Doc: si el que lo recibe a las 3 de la mañana sabe
+qué hacer. **Con esta tarjeta, no.** Sabe que algo del respaldo está mal y tiene
+un botón `View` a la consola. Nada más.
+
+Y hay un segundo agujero de la misma familia: **el `displayName` de la condición
+tampoco aparece.** El cuerpo es el texto autogenerado de la condición. Yo había
+escrito dentro del `content` que «cuál de las dos es, se ve en el nombre de la
+condición que disparó» — y ese nombre no viaja. Lo único que hoy distingue las
+dos condiciones en la tarjeta es la etiqueta `result`, y **con la de ausencia
+dirá `result = succeeded`**, que leído de madrugada dice justo lo contrario de lo
+que pasa.
+
+Corregido en los tres documentos el mismo día. Lo que queda como propuesta y **no
+he tocado por iniciativa propia**: meter lo accionable en `documentation.subject`,
+que es el único campo que sí se ve.
+
+### Procedencia, para que el registro no mienta
+
+Hubo **dos** tandas de simulacro este día y no son la misma:
+
+- `~18:07Z–18:35Z` (13:07–13:35 Tulum), vía `TAMANO_MINIMO=999999999` — **no son
+  míos**. Dejaron seis volcados buenos en el bucket, porque esa vía sube el
+  archivo y lo rechaza después. Sus mensajes de Capa 1 dicen «el volcado pesa
+  294937 bytes, por debajo del mínimo (999999999)».
+- `23:13Z` (18:13 Tulum), vía bucket inexistente — **mío**, y es el que no dejó
+  rastro en el bucket.
+
+La diferencia importa: **la vía del bucket inexistente es la buena** justo porque
+la otra escribe. Si algún día hay que repetir esto, que se repita con la segunda.
+
+### Deuda menor que queda anotada
+
+- **`avisar` no puede detectar un rechazo HTTP.** Usa `curl -sS` sin `--fail`, así
+  que un `400` del webhook devuelve 0 y el script lo da por enviado. Hoy no picó
+  —los mensajes llegaron— pero «no hay línea `AVISO NO ENVIADO`» prueba que la
+  llamada salió, **no que Chat la aceptara**. Un `--fail` lo cerraría.
+- **El emisor de Capa 1 se llama `Alertas API Capa 1`** y ya no avisa solo de la
+  API: lleva también los fallos del job de respaldo. El nombre engaña al leer el
+  espacio.
+
+---
+
 ## ✅ Vigilancia del respaldo: el vigilante no puede vivir dentro de lo vigilado (2026-08-20)
 
 **Apertura de la Fase 5.** El 2026-08-19 el job `pmo-respaldo-db` estuvo roto
@@ -98,11 +244,14 @@ mismo incidente → **un solo mensaje para dos averías**. Cerrar pronto hace qu
 el fallo del día siguiente vuelva a sonar. Que cada fallo cuente su historia es
 tarea de la capa de dentro, no de esta.
 
-La política lleva además un bloque `documentation`, que es lo que Google Chat
-enseña dentro del mensaje: los tres comandos de diagnóstico en orden y el aviso
-de mirar **la versión de Cloud SQL contra `PG_MAJOR`** antes que nada si el
-respaldo se rompe de golpe sin haber tocado nada. Una alerta que no dice qué
-hacer a las 3 de la mañana es media alerta.
+La política lleva además un bloque `documentation` con los comandos de
+diagnóstico en orden y el aviso de mirar **la versión de Cloud SQL contra
+`PG_MAJOR`** si el respaldo se rompe de golpe sin haber tocado nada.
+
+> ⚠️ **Corrección del 2026-08-20, con fuego real:** aquí estaba escrito que ese
+> bloque «es lo que Google Chat enseña dentro del mensaje», y **es falso**. Chat
+> usa **solo `documentation.subject`**, como título; el `content` no sale. Ver la
+> entrada del simulacro, arriba.
 
 ### Capa de dentro: el `trap`, y un hueco que no habíamos visto
 
