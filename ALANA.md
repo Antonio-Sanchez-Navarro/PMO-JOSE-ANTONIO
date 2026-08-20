@@ -4068,3 +4068,100 @@ aparecieron al tirar del cable hasta el otro extremo.
 
 **Un respaldo no se audita: se restaura.** Y una fase no se cierra porque las
 piezas estén: se cierra cuando el mensaje llega al otro lado.
+
+---
+
+## 35. Línea base de entrada a la Fase 5 (2026-08-20)
+
+Escaneo de arranque de fase. **Solo repositorio**: `git log`, `git status`,
+`git fetch`, y lectura de las cuatro bitácoras y de los dos workflows. Hoy no he
+tocado la consola de Google, así que **todo lo que digo de la infraestructura
+viva es de §34 y lleva su fecha**, no es una comprobación de esta sesión. Lo
+digo antes de la tabla porque la fase que acaba de cerrar se cerró justamente
+por confundir «lo comprobé» con «lo recuerdo».
+
+### 35.1 El árbol, comprobado
+
+| Qué | Estado |
+|---|---|
+| Rama | `master`, sin ramas paralelas |
+| Árbol de trabajo | **Limpio** — ni modificados ni sin seguir |
+| Sincronía con `origin` | 🟠 **`master` va 1 commit por delante** |
+| Volcado y proxy sueltos en la raíz | Ignorados por `.gitignore` (`*.dump`, `cloud-sql-proxy*`) — comprobado con `git check-ignore` |
+| Último commit | `96b18e5` · 2026-08-20 11:19 −05 |
+
+**El commit que falta por empujar es el mío**: `96b18e5`, el que contiene §34.
+Y §34 dice, en su propia tabla, *«Local y remoto idénticos, árbol limpio, mis
+siete commits en `origin`»*. Era verdad cuando lo escribí y dejó de serlo al
+guardarlo — la frase se invalidó a sí misma en el mismo acto que la publicaba.
+Es una versión pequeña del patrón de toda la Fase 4, y la anoto porque el tamaño
+del fallo no cambia de qué es un ejemplo: **un estado verificado caduca en cuanto
+uno actúa sobre él.**
+
+### 35.2 La Fase 5 no tiene lista, tiene párrafo
+
+`TASKS.md` **no abre sección para la Fase 5**. Lo único que hay es el párrafo de
+cierre de la Fase 4 (línea 254) y `DOC.md` §4, que fija dos objetivos:
+
+1. **Vigilancia del job de respaldo** — nadie ve que falle. Es lo que §34.2 dejó
+   marcado como lo primero, y sigue siendo lo primero.
+2. **Saneamiento del pipeline de Vercel** — redespliega el frontend con cada
+   `.md`, lo que §32.3 detectó el 18-08.
+
+Más la decisión de producto ya tomada: **WhatsApp (Sprint 7) al final absoluto de
+la cola.** Abrir la fase incluye escribir su lista en `TASKS.md`; eso es de Doc.
+
+### 35.3 Lo que el repositorio no puede contestar, y conviene saber de entrada
+
+Dos de los frentes de esta fase **no se verifican leyendo código**, y quien los
+tome debe saberlo antes de empezar y no a mitad:
+
+- **La imagen del job de respaldo.** `deploy.yml:711` despliega
+  `pmo-respaldo-db` con la etiqueta `${SHA}`, no con `v5`/`v6`. Esas dos
+  etiquetas de §33.3 describen imágenes construidas a mano y **ya no describen
+  cómo se despliega el job**. Si corre la imagen con la comprobación arreglada
+  (`96ba4af`) depende de qué SHA fue el último despliegue: es una pregunta para
+  la consola.
+- **El ruido de Vercel.** No hay `vercel.json` en el repositorio —Gravity lo
+  quitó a propósito para mandar desde la UI—, y el `paths-ignore` que existe está
+  en `ci.yml`, que es otro pipeline. **El redespliegue por `.md` lo dispara la
+  integración de Git de Vercel**, así que el arreglo vive en su panel, y desde
+  aquí no se puede comprobar que esté puesto.
+
+### 35.4 Deriva de documentación, que es lo que esta fase llama saneamiento
+
+Dos bitácoras describen un mundo que ya no existe. No las toco —no son mías—,
+pero entran en la línea base porque alguien las va a leer y a creer:
+
+- **`DOC.md`, cabecera:** *«Estado Actual: Fase 3 Completada … Transición a Fase 4»*,
+  fecha 2026-08-18. Sus propias secciones 3 y 4, más abajo en el mismo archivo,
+  dan la Fase 4 por cerrada y describen la Fase 5. **El archivo se contradice
+  consigo mismo en la primera línea**, que es justo la que se lee de un vistazo.
+- **`GRAVITY_MEMORY.md`, «Estado de la Infraestructura en Producción»:**
+  PostgreSQL en **Neon**, secreto `pmo-database-url` **v3**. La base es Cloud SQL
+  desde el 18-08 y el secreto va por la **v5**; Neon se destruyó y así consta en
+  `DOC.md` §3. El encargo de arriba del archivo (`Estado: CERRADO`) sí cuenta la
+  migración bien: es la ficha de estado la que se quedó atrás.
+
+### 35.5 Lo que sigue abierto de la Fase 4
+
+Nada de esto ha cambiado desde §34, y ninguna de las dos es mía de cerrar:
+
+| Abierto | Quién |
+|---|---|
+| **Nadie vigila los fallos del job de respaldo** | Primer objetivo de la Fase 5 |
+| **`ipv4Enabled: true`** en `pmo-postgres-db` — la puerta está cerrada (sin redes autorizadas, certificado de cliente exigido), pero la IP existe | El Jefe, con `--no-assign-ip`; **reinicia la instancia** |
+
+### 35.6 El criterio de entrada
+
+La Fase 5 se llama *Operaciones Finales y Saneamiento*, y la línea base dice que
+empieza con **un agujero de vigilancia, dos documentos que mienten en su primera
+pantalla y un objetivo que no se puede verificar desde el repositorio**.
+
+El orden que propongo se deduce solo: primero la alerta del respaldo, porque es
+el único punto donde un fallo silencioso cuesta datos; después el saneamiento
+documental, que es barato y evita que el siguiente que llegue trabaje contra un
+mapa viejo; Vercel al final, que es ruido y no riesgo.
+
+Y una regla que me aplico desde §35.1: **cada cosa que dé por cerrada en esta
+fase la comprobaré después de haberla tocado, no antes.**
