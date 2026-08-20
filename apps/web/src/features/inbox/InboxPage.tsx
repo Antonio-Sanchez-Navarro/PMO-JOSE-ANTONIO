@@ -281,8 +281,7 @@ function EmailRow({
 
   const content = (
     <div 
-      role="button"
-      tabIndex={0}
+      {...(!interactive ? { role: "button", tabIndex: 0 } : {})}
       className={`flex items-start gap-4 px-6 py-4 cursor-pointer hover:bg-slate-50 transition ${nested ? "pl-16" : ""}`}
       onClick={(e) => {
         // Evitar que el clic en botones propague el evento al div padre
@@ -404,26 +403,28 @@ function EmailRow({
               <span>✨</span>
               <span>Copiloto</span>
             </button>
-            <button
-              onClick={async (e) => {
-                e.stopPropagation();
-                setIsAnalyzing(true);
-                try {
-                  await onAnalyze();
-                } finally {
-                  setIsAnalyzing(false);
-                }
-              }}
-              disabled={isProcessed || isAnalyzing}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border
-                ${(isProcessed || isAnalyzing)
-                  ? 'bg-green-50 text-green-700 border-green-200 cursor-default' 
-                  : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
-                }
-              `}
-            >
-              {isProcessed ? "✅ Convertido a Tareas" : isAnalyzing ? "⏳ Analizando..." : "🪄 Generar Tareas (IA)"}
-            </button>
+            {!isProcessed && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  setIsAnalyzing(true);
+                  try {
+                    await onAnalyze();
+                  } finally {
+                    setIsAnalyzing(false);
+                  }
+                }}
+                disabled={isAnalyzing}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border
+                  ${isAnalyzing
+                    ? 'bg-indigo-100 text-indigo-700 border-indigo-200 cursor-default' 
+                    : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
+                  }
+                `}
+              >
+                {isAnalyzing ? "⏳ Analizando..." : "🪄 Generar Tareas (IA)"}
+              </button>
+            )}
           </div>
         )}
       </div>

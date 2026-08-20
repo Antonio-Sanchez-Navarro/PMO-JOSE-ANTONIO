@@ -87,7 +87,7 @@ export const useSocket = ({
     if (!globalSocket) {
       // Vite proxy no proxifica WebSockets por defecto, así que conectamos al host backend.
       // withCredentials asegura que enviemos la cookie pmo_session para que el backend nos asigne nuestra sala.
-      const socketUrl = import.meta.env.PROD ? "https://pmo-api-mlpuuasqka-uc.a.run.app" : "http://localhost:3000";
+      const socketUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "https://pmo-api-mlpuuasqka-uc.a.run.app" : "http://localhost:3000");
       globalSocket = io(socketUrl, {
         withCredentials: true,
         transports: ['websocket', 'polling'],

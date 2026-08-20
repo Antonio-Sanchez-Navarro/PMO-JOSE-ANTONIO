@@ -6,7 +6,7 @@ import { TagManagerModal } from './TagManagerModal';
 interface AiValidationModalProps {
   isOpen: boolean;
   proposal: EmailClassification | null;
-  onConfirm: (finalData: EmailClassification) => void;
+  onConfirm: (finalData: EmailClassification) => Promise<void> | void;
   onCancel: () => void;
 }
 
@@ -20,6 +20,7 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
   const [isCategoryModified, setIsCategoryModified] = useState(false);
   const [tasks, setTasks] = useState<ProposedTask[]>([]);
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { tags, refreshTags } = useTags();
 
   const handleToggleTag = (taskIndex: number, tagId: string) => {
@@ -88,7 +89,10 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
       delete finalPayload.category;
     }
 
-    onConfirm(finalPayload as EmailClassification);
+    setIsSubmitting(true);
+    Promise.resolve(onConfirm(finalPayload as EmailClassification)).finally(() => {
+      setIsSubmitting(false);
+    });
   };
 
   return (
@@ -222,9 +226,12 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
           </button>
           <button
             onClick={handleSubmit}
-            className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg shadow-sm hover:bg-indigo-700 hover:shadow-indigo-500/30 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 transition-all"
+            disabled={isSubmitting}
+            className={`px-5 py-2 text-sm font-medium text-white rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 transition-all ${
+              isSubmitting ? 'bg-indigo-400 cursor-wait' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/30'
+            }`}
           >
-            Aprobar e Insertar
+            {isSubmitting ? "Insertando..." : "Aprobar e Insertar"}
           </button>
         </div>
       </div>
