@@ -255,8 +255,19 @@ gcloud scheduler jobs run pmo-respaldo-db-diario --project="${PROYECTO}" --locat
 
 # Restaurar
 
-**Esto hay que probarlo una vez, ahora, no el día que haga falta.** Un respaldo
-sin una restauración probada es una suposición.
+**Probado el 2026-08-19: 394 filas devueltas** desde un volcado del bucket a una
+base vacía (`Email` 172, `Task` 145, `ChatMessage` 35).
+
+⚠️ **Costó cinco intentos, y el hallazgo fue que los cuatro volcados que había
+hasta entonces no se podían restaurar** — estaban escritos por un cliente 18
+contra un servidor 16. `pg_restore --list` decía que estaban bien y era cierto:
+**leer el índice no es devolver los datos**. Las cuatro trampas están en
+`CLAUDE_MEMORY.md`.
+
+De ahí la regla que gobierna esta sección: **un respaldo no se audita, se
+restaura.** Hay que repetir este simulacro cada vez que cambie la versión de
+Cloud SQL o el `PG_MAJOR` del `Dockerfile`, porque son justo los cambios que
+producen archivos que parecen correctos y no lo son.
 
 ```bash
 # Bajar el volcado más reciente
