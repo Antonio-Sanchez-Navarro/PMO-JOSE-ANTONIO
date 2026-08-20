@@ -182,3 +182,37 @@ Se configura una alerta para detectar si el *watch* de Gmail deja de enviar noti
    gcloud beta monitoring policies create --policy-from-file=infra/alert_policy.json
    ```
    Sustituye antes el ID del canal por el tuyo si estás levantando el proyecto de cero.
+
+4. **Comprobar que la política tiene canal.** No es opcional y no es un extra:
+
+   ```bash
+   gcloud beta monitoring policies list --project pmo-dashboard-503418 \
+     --format="value(displayName,enabled,notificationChannels)"
+   ```
+
+   > ⚠️ **Una política sin canal está encendida y muda.** El 2026-08-20 se
+   > descubrió que esta misma política del watcher llevaba desde el 14-08 con
+   > `notificationChannels` **vacío**: `enabled: true`, evaluando, abriendo
+   > incidentes en la consola y sin contárselo a nadie. Seis días. El `create`
+   > sale en verde igual, y el campo faltaba en el archivo, así que releerlo
+   > tampoco lo delataba. Ya está puesto en `infra/alert_policy.json`.
+   >
+   > Una fila con la tercera columna vacía es una alerta que no existe.
+
+### Paso E: Alerta de Cloud Monitoring (Capa 2) por Fallo del Respaldo
+
+La política vive en [`infra/alert_policy_respaldo.json`](infra/alert_policy_respaldo.json)
+y vigila el Cloud Run Job `pmo-respaldo-db`.
+
+```bash
+gcloud beta monitoring policies create \
+  --policy-from-file=infra/alert_policy_respaldo.json \
+  --project pmo-dashboard-503418
+```
+
+Al revés que la del watcher, esta **vigila el error, no la ausencia**
+(`completed_execution_count` con `result="failed"`, umbral > 0 y `duration: 0s`),
+y la razón de que exista fuera del script —habiendo ya un aviso dentro de
+`respaldo.sh`— está contada entera en
+[`infra/backup/README.md`](infra/backup/README.md#6-la-vigilancia--quién-avisa-cuando-esto-se-rompe),
+junto con el hueco que **no** cubre: que el job no llegue a ejecutarse.

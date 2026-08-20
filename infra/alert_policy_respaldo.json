@@ -1,0 +1,37 @@
+{
+  "displayName": "[Capa 2] Fallo Critico: El respaldo de la base de datos",
+  "documentation": {
+    "mimeType": "text/markdown",
+    "subject": "El respaldo diario de la base de datos no esta bien",
+    "content": "El Cloud Run Job `pmo-respaldo-db` fallo, o lleva un dia entero sin completar un volcado correcto.\n\n**Que mirar, en este orden:**\n\n1. `gcloud run jobs executions list --job pmo-respaldo-db --region us-central1`\n2. Los logs de la ejecucion fallida en Cloud Run > Jobs > pmo-respaldo-db.\n3. Si el respaldo fallo de golpe sin haber tocado nada, mira **la version de Cloud SQL** antes que ninguna otra cosa: `gcloud sql instances describe pmo-postgres-db --format='value(databaseVersion)'` tiene que coincidir con `PG_MAJOR` del `infra/backup/Dockerfile`.\n\n**El runbook completo esta en `infra/backup/README.md`.**\n\nUn respaldo roto no es una molestia: el tablero es el sistema de registro de tareas y fichajes y **no existe en ningun otro sitio**."
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "El volcado fallo",
+      "conditionThreshold": {
+        "filter": "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.type=\"cloud_run_job\" AND resource.label.\"job_name\"=\"pmo-respaldo-db\" AND metric.label.\"result\"=\"failed\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "notificationChannels": [
+    "projects/pmo-dashboard-503418/notificationChannels/1419143099601865450"
+  ],
+  "alertStrategy": {
+    "autoClose": "1800s"
+  },
+  "severity": "CRITICAL",
+  "enabled": true
+}

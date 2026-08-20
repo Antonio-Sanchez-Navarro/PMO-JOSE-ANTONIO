@@ -15,5 +15,8 @@
         ]
       }
     }
+  ],
+  "notificationChannels": [
+    "projects/pmo-dashboard-503418/notificationChannels/1419143099601865450"
   ]
 }

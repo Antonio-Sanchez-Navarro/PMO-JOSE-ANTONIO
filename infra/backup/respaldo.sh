@@ -39,13 +39,27 @@ set -o pipefail
 FECHA="$(date -u +%Y-%m-%dT%H%M%SZ)"
 DESTINO="gs://${BUCKET_RESPALDOS}/pmo-${FECHA}.dump"
 
+# Se levanta en cuanto `avisar` intenta mandar algo, para que la red de
+# seguridad de mas abajo no publique un segundo mensaje por el mismo fallo.
+YA_AVISADO=0
+
 avisar() {
-  # Reutiliza el webhook de la Capa 1. Si no está configurado, no falla: se
+  YA_AVISADO=1
+  # Reutiliza el webhook de la Capa 1. Si no esta configurado, no falla: se
   # registra igual y el job devuelve error, que es lo que ve Cloud Scheduler.
-  [ -n "${ALERT_WEBHOOK_URL:-}" ] || return 0
+  #
+  # ADVERTENCIA: antes esto era `|| true` con la salida a `/dev/null`. Si el
+  # webhook rechazaba la llamada -URL caducada, el `TO_BE_FILLED_BY_USER` de
+  # agosto, un corte de red- no quedaba ni rastro: **el sistema de avisos no
+  # podia avisar de que estaba roto**. Ahora al menos lo deja en el log del job.
+  if [ -z "${ALERT_WEBHOOK_URL:-}" ]; then
+    echo "AVISO NO ENVIADO (falta ALERT_WEBHOOK_URL): $1" >&2
+    return 0
+  fi
   curl -sS -m 10 -X POST -H 'content-type: application/json' \
     -d "{\"text\": \"🔴 *Respaldo de la base de datos fallido*\n$1\"}" \
-    "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
+    "$ALERT_WEBHOOK_URL" >/dev/null \
+    || echo "AVISO NO ENVIADO (el webhook rechazo la llamada): $1" >&2
 }
 
 fallar() {
@@ -53,6 +67,34 @@ fallar() {
   avisar "$1"
   exit 1
 }
+
+# ---------------------------------------------------------------------------
+# Red de seguridad: avisar tambien de lo que NO estaba previsto.
+#
+# Cada comprobacion de este script acaba en `|| fallar`, y `fallar` avisa. Pero
+# `set -e` mata el script en cualquier linea que devuelva error **sin pasar por
+# `fallar`**: el `${DATABASE_URL:?}` que falta, el `gcloud storage ls` que lee
+# el tamano, o la proxima linea que alguien anada sin acordarse de la tuberia
+# del aviso. Todos esos casos dejaban el job en rojo **y el chat en silencio**.
+#
+# El `trap` cierra ese hueco por dentro: cualquier salida distinta de 0 manda un
+# mensaje, haya pasado por `fallar` o no.
+#
+# ADVERTENCIA: y aun asi no basta, que es justo el motivo de la politica de
+# Cloud Monitoring. Un `trap` solo corre si el script llego a arrancar. El
+# 2026-08-19 los retornos de carro mataron a `bash` en la primera linea: a esa
+# altura `avisar` ni existia. Un vigilante que vive dentro de lo vigilado
+# comparte su suerte, y por eso el vigilante de verdad esta fuera.
+# ---------------------------------------------------------------------------
+al_salir() {
+  codigo=$?
+  # `if` y no `&&`: la condicion de un `if` esta exenta de `set -e`, y una
+  # lista `&&` que corta no lo esta. Con `&&` este trap podia irse sin avisar.
+  if [ "$codigo" -ne 0 ] && [ "$YA_AVISADO" -ne 1 ]; then
+    avisar "el respaldo termino con codigo ${codigo} en un punto que no tenia comprobacion propia (ver los logs del job)"
+  fi
+}
+trap al_salir EXIT
 
 echo "Volcando a ${DESTINO}"
 

@@ -253,6 +253,24 @@ Cerrada **con hechos comprobados, no con inferencia**, y así lo firmaron Alana 
 
 **Lo que queda abierto y pasa a la Fase 5:** nadie vigila los fallos del job de respaldo — la alerta de Capa 2 mira la ausencia de push de Pub/Sub, así que si el respaldo diario revienta no lo ve nadie. El 19-08 se vio solo porque había alguien delante. Y `ipv4Enabled` sigue en `true` en Cloud SQL, aunque sin redes autorizadas y con certificado de cliente exigido no entre nadie.
 
+> ⚠️ **Corrección del 2026-08-20 sobre la fila «Capa 2 de alertas».** Decía «con
+> canal asignado» y **no era verdad**: la política del watcher se creó el 14-08
+> con `notificationChannels` **vacío** y así siguió seis días — encendida,
+> evaluando, abriendo incidentes y sin avisar a nadie. Ya está corregida en la
+> política viva y en `infra/alert_policy.json`. La comprobación que lo destapa
+> está en `GCP_SETUP.md` (Paso D.4) y es obligatoria a partir de ahora.
+
+---
+
+## 🔄 Fase 5 — Vigilancia del respaldo (en curso, abierta el 2026-08-20)
+
+- [x] 🔴 **Alerta de Cloud Monitoring sobre los fallos del job de respaldo** (Claude Code, 2026-08-20) — Política `infra/alert_policy_respaldo.json`, desplegada y con canal `Alertas PMO` enganchado. Mira `run.googleapis.com/job/completed_execution_count` con `result="failed"` sobre `pmo-respaldo-db` y salta con **una sola** ejecución fallida (`COMPARISON_GT 0`, `duration 0s`). **Comprobada contra los hechos del 19-08**: la serie temporal de aquel día tiene los dos puntos (`22:20Z` y `22:40Z`), así que el chat habría sonado a los 11 minutos del apagón en vez de a los 42. El razonamiento de por qué esto tiene que vivir **fuera** del script —habiendo ya un aviso dentro— está en `CLAUDE_MEMORY.md` y en `infra/backup/README.md` §6: aquel día `bash` murió en la primera línea por los retornos de carro, con la función `avisar` todavía sin definir. Un vigilante que vive dentro de lo vigilado comparte su suerte.
+- [x] **Tapar los fallos mudos de `respaldo.sh`** (Claude Code, 2026-08-20) — `trap ... EXIT` que avisa de cualquier salida distinta de 0, no solo de las que pasan por `fallar`: `set -e` mataba el script en el `${DATABASE_URL:?}` y en la lectura del tamaño **sin mandar nada**. Con guarda `YA_AVISADO` para no duplicar el mensaje, y `if` en vez de `&&` porque la condición de un `if` está exenta de `set -e`. Además `avisar` ya no traga el error de `curl`: si el webhook rechaza la llamada, queda escrito en el log del job.
+- [x] **Enganchar el canal a la política del watcher de Gmail** (Claude Code, 2026-08-20) — ver la corrección de arriba.
+- [ ] 🟡 **Ver sonar la alerta.** Diseñada y sin ejecutar: `gcloud run jobs execute pmo-respaldo-db --region us-central1 --update-env-vars="TAMANO_MINIMO=999999999"` provoca un fallo real e inocuo (sube un volcado bueno y lo rechaza en la comprobación de tamaño) y ejercita las dos capas de golpe. **Hasta que se corra, la alerta es una suposición bien fundada, no un hecho** — que es exactamente la distinción que costó cinco intentos en el simulacro de restauración. _Acción de Doc o de Gravity._
+- [ ] 🟡 **Decisión de Doc: ¿respaldo dos veces al día?** Es lo que hace falta para poder vigilar también **que el job no llegue a ejecutarse**. Un `conditionAbsent` sobre `result="succeeded"` no cabe: Cloud Monitoring topa la ventana en **23h30m** y con cadencia diaria saltaría todos los días 28 minutos antes de la ejecución siguiente. Con dos respaldos al día, esa misma ventana pasa a significar «se han perdido dos seguidos», y de paso el RPO baja de 24 h a 12 h. Un comando: `gcloud scheduler jobs update http pmo-respaldo-db-diario --schedule="30 3,15 * * *" --time-zone="America/Cancun"`.
+- [ ] `ipv4Enabled` sigue en `true` en Cloud SQL (heredado de la Fase 4, sin urgencia: no hay redes autorizadas y se exige certificado de cliente).
+
 ---
 
 **Entregable:** sistema en producción, monitoreado y con métricas de PMO.
