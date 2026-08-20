@@ -9,6 +9,149 @@
 
 ---
 
+## 🔴 El simulacro de restauración: los cuatro volcados anteriores no servían (2026-08-19)
+
+**La conclusión primero, porque es la que importa:** durante **más de un día**,
+los cuatro volcados del bucket fueron la única protección de la base de datos y
+**ninguno de ellos se podía restaurar**. No estaban corruptos ni truncados —
+estaban escritos por un cliente incompatible con el servidor al que había que
+devolverlos. Nadie lo habría sabido sin ejecutar el simulacro.
+
+Y lo peor: **la comprobación automática decía que estaban bien, y no mentía.**
+`pg_restore --list` leía el índice y respondía que sí. Leer el índice no es
+devolver los datos. **Un respaldo no se audita, se restaura.**
+
+El simulacro correcto —**394 filas** desde un volcado del bucket a una base
+vacía: `Email` 172, `Task` 145, `ChatMessage` 35— costó **cinco intentos**.
+Ninguno de los cuatro primeros falló por el respaldo: fallaron por la herramienta
+que iba a comprobarlo. Cada uno es una trampa que conviene no repetir.
+
+### 1 · Un reemplazo global destrozó la ruta del socket (`688c4ce`)
+
+Fallo mío, cazado en la primera ejecución. Para restaurar sobre una base de
+pruebas había que cambiar el nombre de la base dentro de `DATABASE_URL`, y lo
+escribí como un reemplazo **global y sin anclar** (`${DATABASE_URL//\/pmo/...}`).
+
+La cadena de Cloud SQL contiene `/cloudsql/pmo-dashboard-503418:...`, que
+**también** contiene `/pmo`. El proxy acabó pidiendo una instancia llamada
+`pmo_restore_test-dashboard-503418:us-central1:pmo-postgres-db` y `pg_restore`
+murió sin socket.
+
+**El nombre de la base era prefijo de su propio proyecto.** Esa es la clase de
+coincidencia que no se ve al escribir la línea y que solo aparece al ejecutarla.
+
+Ahora el reemplazo se ancla al `?` que abre los parámetros o al final de la
+cadena —los dos únicos sitios donde puede terminar el nombre— y **si no reconoce
+ninguno, aborta en vez de adivinar**. Pero lo que de verdad cierra el agujero es
+lo otro: después de crear la base, se conecta con la cadena nueva y pregunta
+`current_database()`. Dejar de fiarse del reemplazo y **preguntarle al servidor
+dónde está** es la diferencia entre creer y saber.
+
+### 2 · 🔴 El cliente tiene que ser **la misma** major que el servidor, no «>=»
+
+**Me equivoqué el 08-18 y el simulacro lo demostró.** Razoné «cliente mayor o
+igual que el servidor» y con eso subí `PG_MAJOR` a 18. Segunda ejecución:
+
+```
+pg_restore: error: unrecognized configuration parameter "transaction_timeout"
+Command was: SET transaction_timeout = 0;
+```
+
+**`pg_dump` no escribe un archivo neutro: escribe SQL para la versión con la que
+habla.** El 18 mete `SET transaction_timeout = 0` en la cabecera, y ese parámetro
+**no existe antes de PostgreSQL 17**. Contra `POSTGRES_16` muere, y da igual con
+qué `pg_restore` se lea, porque **el problema viaja dentro del archivo**.
+
+Bajar tampoco vale: `pg_dump` se niega a volcar una base más nueva que él, y
+`pg_restore` rechaza un archivo escrito por uno más nuevo (los volcados del 18
+llevan `PGDMP` versión 1.16, ilegible para un `pg_restore` 16). **Las dos paredes
+juntas dejan un solo valor válido: el del servidor.**
+
+⚠️ **Consecuencia:** los cuatro volcados tomados con el cliente 18 **no se pueden
+restaurar en esta instancia por ningún camino**. No hay recuperación parcial ni
+truco; son papel.
+
+⚠️ **Y una consecuencia futura:** subir esta línea es **parte de la migración de
+versión de Cloud SQL**, no un detalle posterior. El día que se actualice la
+instancia hay que tomar volcado nuevo y **repetir el simulacro**.
+
+_Cómo se cometió: le hice cambiar al Jefe algo en lo que tenía razón. El
+razonamiento «mayor o igual» es correcto para conectarse y consultar; es falso
+para volcar y restaurar. **Aplicar una regla verdadera fuera de su dominio es más
+difícil de detectar que un error de bulto**, porque la regla resiste el
+escrutinio._
+
+### 3 · Los retornos de carro tumbaban el script en Cloud Build (`369676c`)
+
+```
+/usr/local/bin/respaldo.sh: line 12: $'\r': command not found
+```
+
+Git en Windows convierte los archivos a **CRLF** al ponerlos en el árbol de
+trabajo, y `gcloud builds submit` sube el árbol **tal cual**. `bash` no entiende
+el retorno de carro: muere en la primera línea con el contenedor ya arrancado y
+autenticado, **así que el error no se parece en nada a su causa**.
+
+Los scripts funcionaron mientras estuvieron recién escritos con LF y se rompieron
+en cuanto Git los normalizó al recommittearlos. El detalle que lo explica todo:
+**solo `respaldo.sh` tenía CRLF** —`restaurar.sh` seguía en LF—, y por eso el
+simulacro llegaba a ejecutarse mientras el respaldo moría en la línea 12.
+
+Arreglado en **dos capas a propósito**:
+
+- `.gitattributes` marca los `.sh` y el `Dockerfile` como `eol=lf`.
+- Y el `Dockerfile` limpia los `\r` antes del `chmod`. **Esta es la que cierra el
+  asunto**: el `.gitattributes` depende de que la configuración de Git esté bien
+  en la máquina de quien construya; esto no depende de nadie.
+
+Una sola habría bastado hoy. Las dos juntas evitan que vuelva el día que alguien
+clone el repositorio en otra máquina.
+
+### 4 · 🔴 Mi comprobación pasaba por casualidad del tamaño del búfer (`96ba4af`)
+
+Esta es la más incómoda, porque **la escribí yo como red de seguridad** y era ella
+la que fallaba.
+
+```
+ERROR: (gcloud.storage.cat) Source hash ... does not match destination hash
+1B2M2Y8AsgTpgAmY7PhCfg==
+```
+
+Ese hash de destino es **el de la cadena vacía**. La comprobación era
+`gcloud storage cat "$DESTINO" | pg_restore --list`, y **estuvo mal desde el
+primer día aunque pasara**: `pg_restore --list` lee solo el índice del archivo y
+sale, así que la tubería se cierra antes de que `gcloud` termine de escribir.
+`gcloud` lo cuenta como fallo de integridad y `pipefail` se lleva el job por
+delante.
+
+**Funcionó cuatro veces por el tamaño del búfer.** Con volcados de ~200 KB,
+`gcloud` acababa antes de que `pg_restore` cerrara. El primero de 270 KB lo
+despertó. **Una comprobación que depende de que el archivo sea pequeño no
+comprueba nada** — y lo peor de su forma: **crece hacia el fallo**. Cuantos más
+datos hay que proteger, menos protege.
+
+Ahora se baja a disco y se lee de ahí. De paso **mejora lo que prueba**: verifica
+el objeto tal como quedó guardado, ida y vuelta completa, en vez del flujo que
+acabamos de mandar.
+
+### Lo que enseña, y por qué va en esta bitácora
+
+No fue una pieza desconectada: **fue una que parecía funcionar**. Es el mismo modo
+de fallo que el `.gitignore` en UTF-16 del 08-18 y que el `git check-ignore` sin
+`-v`: **verde por la razón equivocada**. Tres veces en una semana, cada una con un
+disfraz distinto.
+
+Y hay una asimetría que conviene tener presente: de las cuatro trampas, **tres
+eran mías** —el reemplazo, el razonamiento de versiones, la comprobación— y las
+tres pasaron sus propias pruebas. Lo único que las cazó fue **ejecutar la cosa de
+verdad, de punta a punta, contra una base real**.
+
+_Nota operativa: el volcado en sí **sí** funcionaba. Las tres ejecuciones fallidas
+dejaron sus archivos en el bucket, escritos ya con el cliente 16, y son **los
+primeros restaurables que tenemos**._
+
+---
+
 ## La infraestructura del respaldo ya es código (2026-08-18)
 
 `deploy.yml` construye la imagen del respaldo y despliega el Job en cada
@@ -310,10 +453,11 @@ Una copia al día significa **hasta 24 h de pérdida** en el peor caso. Se pasa 
 «6 h de historial» a «hasta 24 h de trabajo perdido, pero recuperable». Duplicar
 la frecuencia es cambiar una línea del Scheduler.
 
-⚠️ **Y queda una prueba sin hacer: restaurar.** Un respaldo sin una restauración
-probada es una suposición — exactamente lo que era la Capa 1 hasta el 08-17. El
-procedimiento está al final de `infra/backup/README.md`; hay que ejecutarlo una
-vez sobre una base vacía, ahora, no el día que haga falta.
+⚠️ **~~Y queda una prueba sin hacer: restaurar.~~ Hecha el 2026-08-19, y encontró
+que los cuatro volcados de entonces no servían.** Ver la sección del simulacro al
+principio de este archivo. Lo que se escribió aquí —«un respaldo sin una
+restauración probada es una suposición»— resultó ser literal: la suposición era
+falsa, y costó cinco intentos descubrirlo.
 
 ---
 
