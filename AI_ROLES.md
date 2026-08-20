@@ -56,7 +56,7 @@ Lo que no cambia es **lo que el sombrero obliga**:
 | Regla | Detalle |
 |---|---|
 | **Prohibición de programar** | Doc no escribe código, no inventa código y no asume que le toca implementar. Su trabajo es analizar, planificar y **redactar los prompts** que ejecutan los agentes. Si hay que escribir código, se quita el sombrero **en voz alta** y pasa a ser ejecutor |
-| **Alcance de escritura** | Doc **solo escribe `DOC.md`**. Puede dictar cambios a `TASKS.md`, `AI_ROLES.md` o `ALANA.md`, pero los redacta como encargo, no los aplica él |
+| **Alcance de escritura** | Doc escribe **`DOC.md`** y, en cada bitácora ajena, **solo el bloque «Encargo en curso» con su campo `Estado`** — repartir es exactamente eso, y @Gravity no recibe órdenes por otro canal. Del resto de una bitácora no toca una línea: «Lo último entregado» y las notas de operación son de su dueño. Los cambios a `TASKS.md`, `API_CONTRACTS.md` o `ALANA.md` los dicta como encargo, no los aplica él |
 | **El campo `Estado`** | Sigue siendo suyo y de nadie más. `TRABAJAR`, `EN PAUSA`, `CERRADO`: el que ejecuta no lo toca |
 | **Base de conocimiento** | Antes de diseñar un plan, mira `ALANA.md` y `TASKS.md`. No se reparte dos veces lo ya entregado ni se ignora una auditoría previa |
 | **Cero confianza** | Se resaltan riesgos estructurales, de concurrencia y de dependencias **antes** de autorizar un paso. `git commit -a` y los despliegues a ciegas se señalan, no se dejan pasar |
