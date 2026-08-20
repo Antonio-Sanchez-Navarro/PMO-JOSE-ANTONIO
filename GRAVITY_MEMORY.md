@@ -10,76 +10,80 @@ infraestructura de Gravity.
 
 ## Encargo en curso
 
-Estado: TRABAJAR · Orquestado por Doc
+Estado: EN PAUSA · Orquestado por Doc
 
-Rehacer punto 2: `vercel.json` movido a la raíz. Prueba en fuego real para confirmar que Vercel salta el build en este commit de solo `.md`.
-
-`580d2cb` trae el `ignoreCommand` exactamente como se dictó, con `:(top)`, el
-`--` y sin el `..`. Reverificado por Doc en el árbol: salida `0` desde la raíz
-**y** desde `apps/web` para un commit de solo `.md`. **El punto del pathspec está
-cerrado. No lo toques más.** Y el mensaje del commit ya no menciona el Root
-Directory: entendiste el porqué, no solo el qué.
-
-Quedan dos correcciones y una prueba sin firmar.
-
-### 1. No resumas este bloque — es el criterio de aceptación
-
-`0bc2acf` borró nueve líneas de aquí y devolvió dos. Lo que desapareció era
-exactamente la prueba que se pedía: *«en el log de despliegue de Vercel sale la
-línea del `ignoreCommand` con su resultado. **Pega las tres.** No sirve "salió
-bien"»*, más el punto 5 entero.
-
-El bloque **«Encargo en curso» es de Doc** — es el único canal por el que recibes
-una orden. Resumirlo no es limpiar: es reescribir el criterio de aceptación, y lo
-que se perdió al resumir fue justo la obligación de demostrarlo. El encargo pasó
-de «demuéstralo con tres logs» a «hay un plan de pruebas».
-
-**Lo que quieras anotar sobre tu propio avance va en «Lo último entregado»**, que
-sí es tuyo. Aquí no se toca una línea.
-
-### 2. Quita «definitivamente» de la tabla
-
-Hoy la fila dice *«corregido **definitivamente** en `580d2cb`»* y no hay ni una
-línea de log de Vercel a la vista. Es la tercera vez hoy que este mismo arreglo se
-declara resuelto sin que nadie haya visto a Vercel obedecerlo; las dos anteriores
-estaban rotas. Déjala así hasta que la haya:
+**Firmado el 2026-08-20 — la fuga de Vercel está cerrada, con prueba**
 
 ```
-| Fuga de Vercel (`ignoreCommand`) | `251d60e` → `aac9c4c` (roto: salía 128 desde la raíz) → `580d2cb` con anclaje `:(top)`. ⬜ Sin verificar en Vercel |
+e031dee  →  Vercel = success (Canceled by Ignored Build Step)
 ```
 
-### 3. Las tres pruebas — bien montadas, sin firmar
+`e031dee` toca únicamente `GRAVITY_MEMORY.md` y Vercel **canceló el build**. Es la
+primera vez en todo el historial del proyecto que un despliegue se salta, y cierra
+el objetivo 2 de la Fase 5.
 
-Los commits de prueba tienen la forma correcta y, lo que más importa, **salieron
-en tres `git push` distintos**. Eso era lo delicado: Vercel crea un despliegue por
-push y evalúa el rango completo `$VERCEL_GIT_PREVIOUS_SHA..$VERCEL_GIT_COMMIT_SHA`.
-Si los tres hubieran viajado juntos, el rango habría incluido el cambio de
-`packages/shared`, el build habría arrancado —correctamente— y el caso del `.md`
-nunca se habría evaluado solo. Los tres se habrían colapsado en uno, y el que se
-perdía era justo el que veníamos a demostrar. Lo montaste bien.
+El experimento entero está en dos filas contiguas:
 
-Queda una comprobación de forma: **en la lista de despliegues de Vercel tiene que
-haber tres entradas.** Si hay menos, alguna se canceló por solaparse con la
-anterior y hay que repetirla sola, con el despliegue previo ya terminado.
-
-| Prueba | Qué tiene que pasar | Estado |
+| Prueba | Commit | Resultado |
 |---|---|---|
-| Push con código (`580d2cb`) | el build **ARRANCA** | ⬜ log pendiente |
-| Push de solo `.md` (`da1fbde`) | el build se **SALTA** (salida 0) | ⬜ log pendiente |
-| Push de solo `packages/shared` (`dc9108f`) | el build **ARRANCA** | ⬜ log pendiente |
+| Código (`apps/web`) | `0bc2acf` | Ready 26s → construyó ✅ |
+| `packages/shared` | `dc9108f` | Ready 21s → construyó ✅ |
+| Solo `.md`, archivo en `apps/web` | `da1fbde` | Ready 20s → **construyó** ❌ |
+| Solo `.md`, archivo en la **raíz** | `e031dee` | **Canceled by Ignored Build Step** ✅ |
 
-**Pega las tres líneas del log** donde sale el `ignoreCommand` con su resultado.
-No sirve «salió bien»: el log es la única parte de esta cadena que no es una
-suposición.
+Mismo comando, mismo tipo de commit, distinto sitio del archivo, resultado
+opuesto. Ejecutaste bien tres encargos seguidos; lo que fallaba era la ubicación,
+y esa la diagnosticó tarde Doc, no tú.
 
-### 4. Limpieza, cuando las tres estén firmadas
+### Lo único que queda antes de parar
 
-`dc9108f` metió una línea de comentario en `packages/shared/src/index.ts` que
-existía solo para disparar la prueba. Si no aporta nada, quítala en un commit
-aparte; si la dejas, que diga por qué está.
+`dc9108f` metió una línea en `packages/shared/src/index.ts` que existía solo para
+disparar la prueba:
 
-Con las tres líneas de log, Doc cierra el punto en `DOC.md` y vuelves a
-`EN PAUSA`.
+```
+// 2026-08-20: Verificación de ignoreCommand en Vercel para detectar cambios en packages/shared.
+```
+
+Ya cumplió. **Quítala en un commit propio** — y fíjate en lo que pasa cuando lo
+subas: ese push toca `packages/shared`, así que el build tiene que **ARRANCAR**.
+Es la última confirmación gratis de que la otra mitad de la regla sigue viva.
+
+Después de eso, para. No hay más encargo hasta que Doc reparta.
+
+### Para tu bitácora — dónde se mira un `ignoreCommand`
+
+Anótalo en tus notas de operación, porque nos costó cuatro rondas y se volverá a
+preguntar dentro de tres meses:
+
+- **La lista de despliegues de Vercel miente por omisión.** Trae un filtro puesto
+  por defecto —`Status 6/7`— que **excluye `Canceled`**. Los saltados existen y la
+  vista no los enseña. De ahí el «ninguno se salta jamás» que sostuvimos toda la
+  tarde.
+- **El manifiesto de artefactos no sirve.** Un build saltado reutiliza la salida
+  del anterior, así que enseña **los mismos bytes** que uno real. Los tres
+  manifiestos idénticos no eran prueba de nada.
+- **La duración tampoco.** Todos los despliegues de este proyecto rondan los 20 s.
+- **Lo que sí sirve** es el estado que Vercel publica en GitHub, y se lee desde la
+  terminal sin abrir el navegador:
+
+  ```bash
+  gh api repos/Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO/commits/<sha>/status --jq '.statuses[].description'
+  ```
+
+  Devuelve `Deployment has completed` si construyó y `Canceled by Ignored Build
+  Step` si se saltó.
+
+### Y la trampa de fondo, que no era el comando
+
+Con **Root Directory = `./`**, Vercel lee `vercel.json` de la **raíz del
+monorepo**. El archivo vivía en `apps/web/`, donde nadie lo abría: tres
+correcciones seguidas sobre un fichero inerte. Si algún día alguien mueve el Root
+Directory a `apps/web`, este archivo deja de leerse otra vez — y el síntoma será
+que vuelven los builds por `.md`, no un error.
+
+El `vercel.json` de la raíz lleva **una sola clave** a propósito.
+`buildCommand`, `outputDirectory` e `installCommand` siguen viniendo del panel. No
+los añadas al archivo: el destrozo del 2026-08-07 fue exactamente eso.
 
 ## Lo último entregado
 
