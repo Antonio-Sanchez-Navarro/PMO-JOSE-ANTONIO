@@ -9,7 +9,7 @@
 
 ---
 
-## 🔴 Vigilancia del respaldo: el vigilante no puede vivir dentro de lo vigilado (2026-08-20)
+## ✅ Vigilancia del respaldo: el vigilante no puede vivir dentro de lo vigilado (2026-08-20)
 
 **Apertura de la Fase 5.** El 2026-08-19 el job `pmo-respaldo-db` estuvo roto
 **42 minutos en silencio absoluto**. Los hechos, sacados de la nube y no de la
@@ -61,7 +61,10 @@ las dos deja un agujero que la otra no tapa.
 ### Capa de fuera: la política
 
 `infra/alert_policy_respaldo.json` → desplegada como
-`projects/pmo-dashboard-503418/alertPolicies/2425639254030427438`.
+`projects/pmo-dashboard-503418/alertPolicies/2425639254030427438`, con **dos
+condiciones** unidas por `OR`. Esta primera es la que responde a «falló»; la de
+ausencia, que responde a «dejó de haber respaldos», se añadió después y está
+más abajo, porque su número gobierna la cadencia del Scheduler.
 
 ```
 metric.type="run.googleapis.com/job/completed_execution_count"
@@ -150,11 +153,14 @@ gcloud beta monitoring policies list --project pmo-dashboard-503418 \
 
 **Tercera columna vacía = alerta que no existe.**
 
-### Lo que queda abierto
+### La cadencia: por qué el RPO bajó a 12 h
 
-**1. Que el job no llegue a ejecutarse.** Una alerta sobre fallos no puede ver
-una ejecución que nunca ocurrió. Lo natural sería un `conditionAbsent` sobre
-`result="succeeded"`, y **no cabe**. La API lo rechaza:
+Faltaba la mitad que importa: **una alerta sobre fallos no puede ver una
+ejecución que nunca ocurrió**. Si el Scheduler se pausa, se borra o pierde el
+`run.invoker`, no hay fallo del que avisar — solo dejan de existir respaldos,
+calladamente, hasta el día que hagan falta.
+
+Lo natural era un `conditionAbsent` sobre `result="succeeded"`, y no cabía:
 
 ```
 INVALID_ARGUMENT: condition_absent.duration had an invalid value of "24h":
@@ -162,33 +168,81 @@ Durations longer than 23h30m are not supported.
 ```
 
 23h30m es el techo duro de Cloud Monitoring — de ahí sale el `84600s` de la
-política de Gmail, que hasta ahora parecía un número elegido a ojo. Con un
-respaldo **diario**, esa ventana se agota 28 minutos **antes** de la ejecución
+política de Gmail, que hasta ahora parecía un número elegido a ojo. Con respaldo
+**diario**, cualquier ventana admisible se agota **antes** de la ejecución
 siguiente: saltaría todos los días. Una alerta que miente a diario es peor que
 ninguna, porque enseña a ignorar el canal.
 
-**La salida no es tocar la política, es tocar la cadencia**: con el respaldo dos
-veces al día los éxitos quedan a 12 h, y 23h30m pasa a significar «se han
-perdido dos seguidos», que sí es una avería. De paso el RPO baja de 24 h a 12 h,
-que es el botón que `infra/backup/README.md` ya proponía. Es una decisión de
-Doc, así que está **sin hacer**, y la condición se quitó del JSON antes de
-desplegar en vez de dejarla dando falsos avisos a diario.
+**La salida no fue tocar la política, fue tocar la cadencia.** Doc aprobó el
+cambio el 2026-08-20 y ejecutó él mismo el Scheduler, que ya está en
+`30 3,15 * * *` (03:30 y 15:30 de Tulum) — verificado con `describe`, no
+supuesto. Con los éxitos a 12 h, la condición cabe de sobra:
 
-**2. Nadie ha visto sonar esta alerta todavía.** La prueba está diseñada y es
-barata e inocua —`--update-env-vars TAMANO_MINIMO=999999999` en una ejecución
-suelta: sube un volcado bueno y lo rechaza en la comprobación de tamaño, así
-que ejercita el aviso de dentro y el de fuera sin destruir nada— pero el
-clasificador de permisos bloqueó ejecutarla. **Hasta que se corra, esto es una
-suposición bien fundada, no un hecho comprobado**, que es justo la distinción
-que costó cinco intentos en el simulacro de restauración.
+| | |
+|---|---|
+| Cadencia | 12 h |
+| Ventana de la alerta | **14 h** (`duration: 50400s`) = una ejecución perdida + 2 h de margen |
+| Techo de la API | 23h30m — sobra sitio, ya no es la restricción |
+
+Se eligieron **14 h y no las 23h30m que caben**: 23h30m significaría «se han
+perdido dos seguidos» y tardaría casi medio día en decirlo. Con 14 h el aviso
+llega a las dos horas de la primera ausencia, y ese margen está muy por encima
+de lo que puede tardar una ejecución legítima — el peor caso real son tres
+intentos de `--task-timeout=900s`, unos 45 minutos.
+
+> ⚠️ **El RPO de 12 h salió de regalo, no fue el objetivo, y esto hay que
+> recordarlo al revés de como se cuenta solo.** Se dobló la frecuencia para
+> hacer vigilable el «no se ha ejecutado»; que la pérdida máxima bajara de 24 h
+> a 12 h vino encima. Importa porque invita al error contrario: **volver a la
+> cadencia diaria para ahorrar dos minutos de cómputo apagaría la mitad de la
+> vigilancia**, y el JSON de la política no lo dice por ningún lado. Si algún
+> día se toca la cadencia, esta ventana se toca con ella. Queda escrito también
+> en `GCP_SETUP.md` y en `infra/backup/README.md` §6, que son los dos sitios
+> donde alguien lo miraría.
+
+Detalle menor y deliberado: el Scheduler sigue llamándose `pmo-respaldo-db-diario`
+y ya no es diario. Renombrarlo obliga a borrar y recrear, y el nombre está en el
+IAM, en el README y en la documentación de la alerta. Un nombre algo viejo cuesta
+menos que un disparador que desaparece un rato.
+
+### ✅ Estado: instrumentación de respaldos CERRADA (2026-08-20)
+
+| Pieza | Estado |
+|---|---|
+| Aviso desde dentro (`avisar`/`fallar`) | ✅ con `trap EXIT`, sin caminos mudos, probado en los cuatro |
+| `avisar` ya no traga el error de `curl` | ✅ |
+| Alerta de fallo (fuera) | ✅ desplegada, **comprobada contra la serie temporal del 19-08** |
+| Alerta de ausencia (fuera) | ✅ desplegada, `50400s`, viable gracias a la cadencia de 12 h |
+| Canal enganchado a **las dos** políticas | ✅ verificado con `policies list` |
+| Cadencia a 12 h | ✅ ejecutada por Doc, verificada con `describe` |
+| RPO | **24 h → 12 h** |
+
+**La única casilla que queda, y no es de esta fase:** nadie ha visto sonar la
+política todavía. La prueba es barata e inocua —sube un volcado bueno y lo
+rechaza en la comprobación de tamaño, ejercitando las dos capas de golpe—:
+
+```bash
+gcloud run jobs execute pmo-respaldo-db --region us-central1 \
+  --update-env-vars="TAMANO_MINIMO=999999999" --async
+```
+
+Se deja escrito sin adornos, porque cerrar en falso es justo el error que esta
+entrada documenta: **el cierre de la Fase 4 dio la Capa 2 por «✅ Operativa» y
+la política llevaba seis días sin canal.** Lo de aquí está verificado contra la
+nube pieza por pieza —serie temporal, `policies list`, `describe` del
+Scheduler— pero *ver sonar el timbre* sigue siendo otra cosa que *saber que el
+cable está conectado*. Es la misma distinción que costó cinco intentos en el
+simulacro de restauración: `pg_restore --list` decía que los volcados estaban
+bien y no mentía, simplemente no probaba lo que hacía falta probar.
 
 ### Nota de dominio
 
-`gcloud` es de Gravity. Los tres comandos que se ejecutaron aquí —crear la
-política, engancharle el canal y parchear la del watcher— se hicieron por
-encargo directo y explícito de Doc, y quedan escritos arriba para que no sean
-configuración fantasma. Los archivos (`infra/alert_policy*.json`,
-`infra/backup/respaldo.sh`) sí son dominio propio.
+`gcloud` es de Gravity. Los cuatro comandos que se ejecutaron aquí —crear la
+política, engancharle el canal, parchear la del watcher y añadir la condición de
+ausencia— se hicieron por encargo directo y explícito de Doc, y quedan escritos
+arriba para que no sean configuración fantasma. **El del Scheduler lo ejecutó
+Doc en su terminal**, que es donde corresponde. Los archivos
+(`infra/alert_policy*.json`, `infra/backup/respaldo.sh`) sí son dominio propio.
 
 ---
 
