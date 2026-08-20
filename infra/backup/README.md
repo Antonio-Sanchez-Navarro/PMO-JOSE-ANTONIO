@@ -1,4 +1,4 @@
-# Respaldo diario de la base de datos
+# Respaldo de la base de datos (dos veces al día)
 
 **Paso 1 del plan de migración**, y deliberadamente independiente de él: esto
 tiene valor aunque la migración a Cloud SQL no llegue nunca.
@@ -24,7 +24,8 @@ escrito para que nadie confunda las dos cosas.
 
 ## Qué hace
 
-Un **Cloud Run Job** que corre una vez al día, disparado por Cloud Scheduler:
+Un **Cloud Run Job** que corre **dos veces al día**, disparado por Cloud
+Scheduler:
 
 1. Lee `DATABASE_URL` de Secret Manager, montada como variable de entorno.
 2. `pg_dump --format=custom` y sube el resultado a Cloud Storage **por tubería**,
@@ -58,9 +59,15 @@ que no tener respaldo, porque encima da tranquilidad.
 
 ## Lo que hay que aceptar
 
-- **Una copia al día significa hasta 24 h de pérdida** en el peor caso. Pasamos
-  de «6 h de historial» a «hasta 24 h de trabajo perdido, pero recuperable». Si
-  eso es demasiado, se duplica la frecuencia cambiando una línea del Scheduler.
+- **Dos copias al día significan hasta 12 h de pérdida** en el peor caso.
+  Pasamos de «6 h de historial» a «hasta 12 h de trabajo perdido, pero
+  recuperable».
+
+  > El RPO bajó de 24 h a 12 h el **2026-08-20**, y conviene saber que **no se
+  > hizo por el RPO**: se hizo porque con cadencia diaria la alerta de ausencia
+  > no cabía en el techo de 23h30m de Cloud Monitoring y habría saltado todos
+  > los días. Doblar la frecuencia era lo que hacía vigilable el «no se ha
+  > ejecutado». El RPO a la mitad salió de regalo. Ver §6.
 - La instancia es `db-f1-micro`, la más pequeña: un volcado grande tardará.
 
 ---
@@ -222,7 +229,7 @@ gcloud storage ls --long "gs://${BUCKET}"
 Tiene que aparecer un `.dump` con tamaño razonable y el log terminar en
 `Respaldo correcto:`.
 
-## 5. El disparador diario
+## 5. El disparador (dos veces al día)
 
 ```bash
 export SCHED_SA="pmo-scheduler@${PROYECTO}.iam.gserviceaccount.com"
@@ -233,11 +240,17 @@ gcloud run jobs add-iam-policy-binding "${JOB}" \
   --member="serviceAccount:${SCHED_SA}" \
   --role="roles/run.invoker"
 
-# 03:30 hora de Tulum, cuando no hay nadie trabajando.
+# 03:30 y 15:30 hora de Tulum. La de madrugada es la principal; la de la tarde
+# existe para que la alerta de ausencia del §6 tenga margen donde vivir.
+#
+# ⚠️ El nombre del job dice `-diario` y ya no lo es. Se deja: renombrarlo obliga
+# a borrar y recrear, y el nombre está escrito en el IAM, en este README y en la
+# documentación de la alerta. Un nombre algo viejo cuesta menos que un disparador
+# que desaparece un rato.
 gcloud scheduler jobs create http pmo-respaldo-db-diario \
   --project="${PROYECTO}" \
   --location="${REGION}" \
-  --schedule="30 3 * * *" \
+  --schedule="30 3,15 * * *" \
   --time-zone="America/Cancun" \
   --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROYECTO}/jobs/${JOB}:run" \
   --http-method=POST \
@@ -281,7 +294,8 @@ que **te enteras**.
 ### La política
 
 Vive en [`../alert_policy_respaldo.json`](../alert_policy_respaldo.json) y se
-despliega desde ahí:
+despliega desde ahí. La primera vez con `create`; después, `update` con el
+mismo archivo, que reemplaza la política entera:
 
 ```bash
 gcloud beta monitoring policies create \
@@ -289,24 +303,41 @@ gcloud beta monitoring policies create \
   --project pmo-dashboard-503418
 ```
 
-Mira la métrica `run.googleapis.com/job/completed_execution_count` con
-`result="failed"` y `job_name="pmo-respaldo-db"`, y salta con que haya **una
-sola**: `COMPARISON_GT` sobre 0, `duration: 0s`. No hay umbral que afinar porque
-no hay «un poco de respaldo fallido».
+Tiene **dos condiciones**, unidas por `OR`, y responden a preguntas distintas:
 
-**Está comprobado contra los hechos, no deducido:** la serie temporal de aquel
-día tiene los dos puntos, `22:20Z` y `22:40Z`. La política habría sonado a los 11
-minutos del apagón en vez de a los 42.
+| Condición | Qué pregunta | Cómo |
+|---|---|---|
+| **El volcado falló** | ¿hubo ejecución y acabó en rojo? | `result="failed"`, `COMPARISON_GT 0`, `duration: 0s` |
+| **No hay volcado correcto desde hace 14 h** | ¿ha dejado de haber respaldos? | `conditionAbsent` sobre `result="succeeded"`, `duration: 50400s` |
 
-Dos cosas que hay que saber y no se leen en el JSON:
+La primera salta con que haya **una sola** ejecución fallida, y sin esperar: no
+hay umbral que afinar porque no existe «un poco de respaldo fallido». La
+segunda está explicada más abajo, porque su número es el que gobierna la
+cadencia del Scheduler.
+
+Se mide `completed_execution_count` y **no** `completed_task_attempt_count`, a
+propósito: con `--max-retries=2`, el segundo cuenta cada intento y avisaría de
+reintentos que acaban bien.
+
+**La primera condición está comprobada contra los hechos, no deducida:** la
+serie temporal del 19-08 tiene los dos puntos que mira, `22:20Z` y `22:40Z`. La
+política habría sonado a los 11 minutos del apagón en vez de a los 42.
+
+Tres cosas que hay que saber y no se leen en el JSON:
 
 - **`autoClose: 1800s`** (el mínimo que admite la API). Un incidente abierto se
   come los avisos siguientes: los dos fallos del 19-08 iban con 24 minutos de
   diferencia y habrían entrado en el mismo incidente, con **un solo** mensaje.
   Cerrar pronto hace que el fallo del día siguiente vuelva a sonar. Que cada
   fallo cuente su historia es tarea de la capa de dentro, no de esta.
-- **`notificationChannels` va en el archivo, y es la línea que más importa.** Ver
-  más abajo.
+- **El bloque `documentation` no es adorno**: es lo que Google Chat enseña
+  dentro del mensaje. Lleva los comandos de diagnóstico en orden, dice cuál de
+  las dos condiciones disparó y qué significa cada una, y recuerda mirar la
+  versión de Cloud SQL contra `PG_MAJOR` si el respaldo se rompe de golpe sin
+  haber tocado nada. Una alerta que no dice qué hacer a las 3 de la mañana es
+  media alerta.
+- **`notificationChannels` va en el archivo, y es la línea que más importa.**
+  Ver justo aquí debajo.
 
 ### ⚠️ Una política sin canal está encendida y muda
 
@@ -330,36 +361,69 @@ gcloud beta monitoring policies list --project pmo-dashboard-503418 \
 
 Una fila con la tercera columna vacía es una alerta que no existe.
 
-### Lo que sigue sin cubrir: que el job no llegue a ejecutarse
+### La segunda condición: que el job no llegue a ejecutarse
 
 Una alerta sobre fallos **no puede ver una ejecución que nunca ocurrió**. Si el
-Scheduler se pausa, se borra, o pierde el `run.invoker`, no hay fallo del que
-avisar: solo deja de haber respaldos.
+Scheduler se pausa, se borra o pierde el `run.invoker`, no hay fallo del que
+avisar: solo deja de haber respaldos, calladamente, hasta el día que hagan falta.
 
-Lo natural sería un `conditionAbsent` sobre `result="succeeded"`, y **no cabe**:
+Por eso la política lleva una segunda condición, `conditionAbsent` sobre
+`result="succeeded"` con `duration: 50400s` (**14 h**).
+
+**Y ese número es el motivo por el que el respaldo corre dos veces al día.** Al
+montar esto, con cadencia diaria, la condición no cabía:
 
 ```
 INVALID_ARGUMENT: condition_absent.duration had an invalid value of "24h":
 Durations longer than 23h30m are not supported.
 ```
 
-23h30m es el techo de Cloud Monitoring —de ahí el `84600s` de la política de
-Gmail—. Con un respaldo **diario**, una ventana de 23h30m se agota 28 minutos
-antes de la ejecución siguiente: saltaría **todos los días**. Y una alerta que
-miente a diario es peor que ninguna, porque enseña a ignorar el canal.
+23h30m es el techo duro de Cloud Monitoring —de ahí sale el `84600s` de la
+política de Gmail, que hasta entonces parecía un número elegido a ojo—. Con un
+respaldo diario, cualquier ventana admisible se agota **antes** de la ejecución
+siguiente: saltaría todos los días. Y una alerta que miente a diario es peor que
+ninguna, porque enseña a ignorar el canal.
 
-La salida no es tocar la política, es **tocar la cadencia**: con el respaldo
-**dos veces al día**, los éxitos quedan a 12 h y la ventana de 23h30m pasa a
-significar «se han perdido dos seguidos», que sí es una avería. De regalo, el
-RPO baja de 24 h a 12 h — el mismo botón que este README ya proponía arriba.
+La salida no fue tocar la política, fue **tocar la cadencia**. Con dos respaldos
+al día los éxitos quedan a 12 h, y ahí sí hay sitio:
+
+| | |
+|---|---|
+| Cadencia | 12 h (03:30 y 15:30 de Tulum) |
+| Ventana de la alerta | 14 h = **una ejecución perdida + 2 h de margen** |
+| Techo de la API | 23h30m — sobra sitio, ya no es la restricción |
+
+Se eligieron 14 h y no las 23h30m que caben porque 23h30m significaría «se han
+perdido **dos** seguidos» y tardaría casi medio día en decirlo. Con 14 h te
+enteras a las dos horas de la primera ausencia, y las 2 h de margen están muy
+por encima de lo que puede tardar una ejecución legítima: el peor caso real son
+tres intentos de `--task-timeout=900s`, unos 45 minutos.
+
+> **El RPO de 12 h salió de regalo, no fue el objetivo.** Doblar la frecuencia
+> se hizo para que el «no se ha ejecutado» fuera vigilable; que la pérdida
+> máxima bajara de 24 h a 12 h vino encima. Merece estar escrito porque
+> invita al error contrario: **volver a la cadencia diaria para ahorrar dos
+> minutos de cómputo apagaría la mitad de la vigilancia**, y el JSON no lo dice.
+> Si algún día se toca la cadencia, esta ventana se toca con ella.
+
+### Lo que sigue sin estar comprobado
+
+**Nadie ha visto sonar esta política todavía.** La prueba es barata e inocua
+—sube un volcado bueno y lo rechaza en la comprobación de tamaño, así que
+ejercita el aviso de dentro y el de fuera sin destruir nada—:
 
 ```bash
-gcloud scheduler jobs update http pmo-respaldo-db-diario \
-  --project=pmo-dashboard-503418 --location=us-central1 \
-  --schedule="30 3,15 * * *" --time-zone="America/Cancun"
+gcloud run jobs execute pmo-respaldo-db --region us-central1 \
+  --update-env-vars="TAMANO_MINIMO=999999999" --async
 ```
 
-Está **sin hacer**: cambia la cadencia de los respaldos y esa decisión es de Doc.
+Tarda unos 7 minutos en darse por fallida (`--max-retries=2`) y otros pocos en
+que la política evalúe. Después conviene dejar constancia de que sonó.
+
+⚠️ **Hasta que se corra, esto es una suposición bien fundada y no un hecho.** Es
+la misma distinción que costó cinco intentos en el simulacro de restauración: la
+comprobación automática decía que los volcados estaban bien y no mentía —
+simplemente no probaba lo que hacía falta probar.
 
 ---
 

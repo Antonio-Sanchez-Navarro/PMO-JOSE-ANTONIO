@@ -210,9 +210,17 @@ gcloud beta monitoring policies create \
   --project pmo-dashboard-503418
 ```
 
-Al revés que la del watcher, esta **vigila el error, no la ausencia**
-(`completed_execution_count` con `result="failed"`, umbral > 0 y `duration: 0s`),
-y la razón de que exista fuera del script —habiendo ya un aviso dentro de
+Lleva **dos condiciones** unidas por `OR`, porque hacen preguntas distintas:
+
+- **El volcado falló** — `completed_execution_count` con `result="failed"`,
+  umbral > 0 y `duration: 0s`. Salta con una sola ejecución en rojo.
+- **No hay volcado correcto desde hace 14 h** — `conditionAbsent` sobre
+  `result="succeeded"`, `duration: 50400s`. Es la única que puede ver que el job
+  **no llegue a ejecutarse**, y la que obliga a que el respaldo corra **dos veces
+  al día**: con cadencia diaria no cabía bajo el techo de 23h30m y habría
+  saltado a diario. **Si alguien vuelve a tocar la cadencia del Scheduler, este
+  número se toca con ella.**
+
+La razón de que todo esto exista fuera del script —habiendo ya un aviso dentro de
 `respaldo.sh`— está contada entera en
-[`infra/backup/README.md`](infra/backup/README.md#6-la-vigilancia--quién-avisa-cuando-esto-se-rompe),
-junto con el hueco que **no** cubre: que el job no llegue a ejecutarse.
+[`infra/backup/README.md`](infra/backup/README.md#6-la-vigilancia--quién-avisa-cuando-esto-se-rompe).

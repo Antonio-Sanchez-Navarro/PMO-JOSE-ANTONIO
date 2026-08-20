@@ -711,13 +711,13 @@ jobs:
           gcloud run jobs deploy pmo-respaldo-db             --image="${IMAGEN_RESPALDO}:${SHA}"             --region="${REGION}"             --service-account="pmo-respaldos@${PROJECT_ID}.iam.gserviceaccount.com"             --set-cloudsql-instances="${PROJECT_ID}:${REGION}:pmo-postgres-db"             --set-env-vars="BUCKET_RESPALDOS=pmo-respaldos-db"             --set-secrets="DATABASE_URL=pmo-database-url:latest,ALERT_WEBHOOK_URL=ALERT_WEBHOOK_URL:latest"             --max-retries=2             --task-timeout=900s             --quiet
 
       # El Job queda desplegado, pero **no se ejecuta aquí**: lo dispara Cloud
-      # Scheduler a las 03:30 de Tulum. Ejecutarlo en cada despliegue haría un
-      # volcado completo por cada commit, que ni hace falta ni es gratis.
+      # Scheduler a las 03:30 y las 15:30 de Tulum. Ejecutarlo en cada despliegue
+      # haría un volcado completo por cada commit, que ni hace falta ni es gratis.
       #
       # Para probarlo a mano:
       #   gcloud run jobs execute pmo-respaldo-db --region us-central1 --wait
       - name: Recordar cómo probar el respaldo
         run: |
           echo "Job pmo-respaldo-db desplegado con la imagen ${SHA}."
-          echo "Lo dispara Cloud Scheduler (pmo-respaldo-db-diario) a las 03:30 America/Cancun."
+          echo "Lo dispara Cloud Scheduler (pmo-respaldo-db-diario) a las 03:30 y 15:30 America/Cancun."
           echo "Prueba manual: gcloud run jobs execute pmo-respaldo-db --region ${REGION} --wait"
