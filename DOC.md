@@ -26,7 +26,7 @@ de cabeza a mitad de fase. Lo que no cambia es lo que el sombrero obliga.
 * **`CLAUDE_MEMORY.md`:** Cerebro del Backend. Refactorizaciones, variables de entorno, Cloud Run y lógica de @Claude.
 * **`GRAVITY_MEMORY.md`:** Cerebro Frontend/DevOps. Estado de UI, despliegues Vercel y UI/UX de @Gravity.
 * **`ALANA.md`:** Memoria de Auditoría. Guardiana del estado real, infraestructura, seguridad y fail-safes.
-* **`DOC.md`:** (Este archivo). Memoria de alto nivel para el PM y la orquestación de agentes. **Es el único archivo que Doc escribe.**
+* **`DOC.md`:** (Este archivo). Memoria de alto nivel para el PM y la orquestación de agentes. Doc escribe **aquí** y, en las demás bitácoras, **solo el bloque «Encargo en curso»**.
 
 ## 🧠 2. Mi Rol y Funciones en el Equipo
 
@@ -70,14 +70,26 @@ poner agentes en copia cuando no hay tarea real.
 **Objetivos Inmediatos (Frente DevOps):**
 
 1. **Vigilancia del Job de Respaldo:** ✅ **Implementada, ⬜ sin firmar.** La política vive como archivo en `infra/alert_policy_respaldo.json` con sus dos condiciones (fallo y ausencia, `combiner: OR`) y la cadencia se dobló a `30 3,15 * * *` porque Cloud Monitoring topa la ventana de ausencia en 23 h 30 m. **Lo que falta no es código: es el fuego real.** Nadie ha visto sonar la política. La Capa 1 de la Fase 4 se firmó porque sonó sola, no porque estuviera escrita; esta se firma igual o no se firma.
-2. **Saneamiento del Pipeline Frontend (Vercel):** ✅ **Entregado en `251d60e`** — `apps/web/vercel.json` con `ignoreCommand` sobre `$VERCEL_GIT_PREVIOUS_SHA..$VERCEL_GIT_COMMIT_SHA` excluyendo `**/*.md`. **Con un agujero abierto:** el `.` del comando se evalúa desde el Root Directory del proyecto en Vercel (`apps/web`), así que un cambio en `packages/shared` —que ocho archivos de `apps/web` importan— **no dispara reconstrucción**. El síntoma sería el peor de esta familia: contrato nuevo en el backend, bundle viejo en el navegador, y todo en verde.
+2. **Saneamiento del Pipeline Frontend (Vercel):** ✅ **FIRMADO el 2026-08-20**, con prueba en fuego real. El commit de solo `.md` `e031dee` devuelve **`Canceled by Ignored Build Step`**. La fuga está cerrada.
+
+   **Lo que costó, y es la parte que hay que recordar.** El comando era correcto desde `580d2cb`; el archivo estaba en el sitio equivocado. Con **Root Directory = `./`**, Vercel lee `vercel.json` de la **raíz del monorepo**, y el nuestro vivía en `apps/web/`, donde nadie lo abría. Tres correcciones seguidas sobre un fichero inerte. Movido a la raíz en `adad87d`, con **una sola clave** — `buildCommand`, `outputDirectory` e `installCommand` siguen viniendo del panel, que es lo que evita repetir el destrozo del 2026-08-07.
+
+   **Dónde se mira esto, porque el panel miente.** La lista de despliegues trae un filtro por defecto (`Status 6/7`) que **excluye `Canceled`**: los saltados existen y la vista no los enseña. De ahí el «ninguno se salta jamás» que sostuvimos cuatro rondas. El dato limpio está en el estado que Vercel publica en GitHub:
+
+   ```bash
+   gh api repos/Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO/commits/<sha>/status --jq '.statuses[].description'
+   ```
+
+   Ni el manifiesto de artefactos ni la duración sirven: un build saltado reutiliza la salida del anterior, así que enseña los **mismos bytes** que uno real.
+
+   **Y un error mío, anotado para no repetirlo:** descarté la pregunta del Root Directory —«con `:(top)` la respuesta deja de importar»— y era la pregunta que decidía todo. Hice robusto el pathspec de un archivo que nadie leía. **Antes de arreglar cómo se ejecuta algo, comprueba que se ejecuta.**
 
 **Registro de estado (2026-08-20, verificado en `git log`, no en reporte):**
 
 | Qué | Dónde | Estado |
 |---|---|---|
 | Deuda de frontend de Fase 5 (concurrencia del Inbox, URL de socket por `VITE_API_URL`, roles ARIA anidados, muerte de `mockTasks.ts`) | `251d60e` | ✅ entregado por @Gravity |
-| `apps/web/vercel.json` | `251d60e` | ⚠️ entregado, con el punto ciego de `packages/shared` |
+| `vercel.json` — fuga de builds por `.md` | `251d60e` → `580d2cb` → `adad87d` (a la raíz) | ✅ **firmado**: `e031dee` sale `Canceled by Ignored Build Step` |
 | Política de alerta del respaldo | `285e3a2`, `ad1fe4c` | ⚠️ escrita, sin sonar |
 | Capa 1 (portero CRLF + espejo en CI) y Capa 3 / simulacro mensual | — | ⬜ sin empezar, de @Claude al cerrar la Fase 5 |
 
