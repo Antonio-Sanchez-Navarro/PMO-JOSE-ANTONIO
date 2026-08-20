@@ -12,7 +12,11 @@ infraestructura de Gravity.
 
 Estado: TRABAJAR · Orquestado por Doc
 
-**@Gravity — rehacer el pathspec del `ignoreCommand`, subir y verificar (2026-08-20)**
+Rehacer punto 2: regla ignoreCommand robusta con anclaje :(top) y verificación en fuego real en Vercel.
+
+- [x] Push inicial con código (`0bc2acf`) enviado a master -> Debe arrancar el build.
+- [ ] Push de solo documentación .md -> Debe saltarse el build (código 0).
+- [ ] Push tocando solo `packages/shared` -> Debe arrancar el build.
 
 Lo que quedó en `aac9c4c` muere con `fatal: '../../packages/shared' is outside
 repository` (salida **128**) si Vercel ejecuta desde la raíz del monorepo.
