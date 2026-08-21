@@ -9,7 +9,7 @@ export interface CopilotThread {
 
 export const fetchThreads = async (): Promise<CopilotThread[]> => {
   const response = await fetch(`${API_BASE}/copilot/threads`, { credentials: 'include' });
-  if (!response.ok) throw new Error('Error fetching threads');
+  if (!response.ok) throw new Error('No se pudieron cargar las conversaciones');
   const json = await response.json();
   return json.data || json;
 };
@@ -23,7 +23,7 @@ export interface ThreadMessage {
 
 export const fetchThreadMessages = async (id: string): Promise<ThreadMessage[]> => {
   const response = await fetch(`${API_BASE}/copilot/threads/${id}`, { credentials: 'include' });
-  if (!response.ok) throw new Error('Error fetching thread messages');
+  if (!response.ok) throw new Error('No se pudieron cargar los mensajes de la conversación');
   const json = await response.json();
   return json.data || json;
 };

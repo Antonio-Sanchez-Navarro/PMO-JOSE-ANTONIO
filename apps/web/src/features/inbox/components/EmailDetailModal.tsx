@@ -23,7 +23,7 @@ export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze, readOnly
       fetchEmail(emailId)
         .then(setEmail)
         .catch((e) => {
-          console.error(e);
+          console.error('No se pudo cargar el detalle del correo:', e);
           setError("Error al cargar el detalle del correo.");
         })
         .finally(() => setLoading(false));

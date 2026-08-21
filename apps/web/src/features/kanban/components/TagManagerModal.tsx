@@ -34,7 +34,7 @@ export const TagManagerModal: React.FC<TagManagerModalProps> = ({ isOpen, onClos
       await createTag(name.trim(), color);
       setName('');
     } catch (error) {
-      console.error('Error creating tag', error);
+      console.error('No se pudo crear la etiqueta:', error);
     } finally {
       setIsSubmitting(false);
     }

@@ -11,7 +11,7 @@ export const useTags = () => {
       const data = await tagsApi.getTags();
       setTags(data);
     } catch (e) {
-      console.error('Error fetching tags', e);
+      console.error('No se pudieron cargar las etiquetas:', e);
     } finally {
       setIsLoading(false);
     }

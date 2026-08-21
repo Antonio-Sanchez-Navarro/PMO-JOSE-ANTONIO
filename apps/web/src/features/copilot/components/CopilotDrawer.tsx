@@ -57,7 +57,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
             if (firstReady) setProvider(firstReady.provider);
           }
         })
-        .catch(err => console.error('Error fetching copilot providers:', err));
+        .catch(err => console.error('No se pudieron cargar los proveedores del copiloto:', err));
     }
   }, [isOpen]);
 
@@ -125,7 +125,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
           try {
             data = JSON.parse(dataStr);
           } catch {
-            console.error('Failed to parse SSE data', dataStr);
+            console.error('No se pudo interpretar el evento SSE:', dataStr);
           }
 
           if (evento === 'token' && data.text) {
