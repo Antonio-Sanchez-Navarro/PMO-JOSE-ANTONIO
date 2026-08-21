@@ -4806,3 +4806,111 @@ siguiente que llegue no va a ir a comprobarlo — va a leerlo y a creerlo.
 
 Un respaldo no se audita, se restaura. Un comentario tampoco se audita: se
 comprueba contra lo que hace el código.
+
+---
+
+## 38. Reverificación de los 19 hallazgos (2026-08-21)
+
+Doce commits después de §37. **Comprobado en el código, archivo por archivo, no
+en los mensajes de commit** — que es la regla de la casa y hoy tocaba
+aplicármela a mí, porque el informe era mío y la tentación de darlo por hecho es
+mayor.
+
+**Estado de la suite tras los arreglos:** `lint` limpio en los tres paquetes ·
+**621 pruebas en 30 suites, todas en verde** (eran 614; el arreglo de Gmail trajo
+**199 líneas de pruebas nuevas**, que es lo que hace creíble el resto).
+
+### 38.1 Los nueve cerrados, con la línea que lo demuestra
+
+| § | Qué era | Comprobado |
+|---|---|---|
+| **37.1** 🔴 | El marcador de Gmail avanzaba sobre correos no guardados | `gmail.service.ts:336-343`: `quedaPendiente` retiene el marcador, `PersistResult` separa `guardados`/`encolados`/`fallidos`/`sinEncolar`, y el `add` a Redis salió del `try` del `upsert` (`:551-560`). **Y avisa** por `AlertService` cuando se atasca |
+| **37.2** 🔴 | Cola sin `attempts` ni `removeOnComplete` | `app.module.ts:107-120`: `defaultJobOptions` con `attempts: 3`, `backoff` exponencial, `removeOnComplete: {count: 1_000, age: 24 h}` y `removeOnFail: {count: 5_000, age: 7 d}`. **Y el comentario que prometía el reintento inexistente ya no está** (`ai.processor.ts:113`) |
+| **37.3** 🔴 | Paginación de Gmail sin tope | `MAX_PAGINAS_HISTORIAL = 20` (`:94`), bandera `truncado`, caída a `backfill` y aviso |
+| **37.9** 🟡 | Una petición por tecla | `KanbanBoard.tsx:48-53`: `debounce` de 300 ms sobre `searchInput`, **más** `reqIdRef` contra respuestas desordenadas **y** `hasLoadedRef` para que el tablero no vuelva a parpadear. Las tres cosas, no solo el `debounce` |
+| **37.10** 🟡 | Mover sin revertir | `:263` captura `previousTasks`, `:283-287` revierte y avisa con `toast` |
+| **37.11** 🟡 | Carrera al cambiar de pestaña | `useInbox.ts:50-72`, mismo contador de generación |
+| **37.12** 🟡 | 401 detectado por texto | `useInbox.ts:66`: `err instanceof ApiError && err.status === 401` |
+| **37.13** 🟡 | Refresco sin cerrojo | `api.ts:26-42`: una sola promesa en vuelo, limpiada en `finally`. Revisado el caso que suele romperse —una promesa fallida cacheada para siempre— y **no ocurre**: se limpia igual |
+| **37.14** 🟡 | La URL de producción duplicada | `api.ts:8` exporta `PROD_API_URL` y `useSocket.ts:5` la importa |
+
+Los seis de frontend con **un commit por hallazgo**, que es lo que permite
+revisarlos de uno en uno.
+
+### 38.2 Uno contestado con un dato, y me deja a mí corregida
+
+**§37.20 — el `vercel.json` de la raíz.** Yo dejé viva la sospecha de que si el
+*Root Directory* del proyecto era `apps/web`, ese archivo no se leería. **Doc
+entró al panel: es `./`.** El archivo se lee, y hay prueba de que funciona —el
+despliegue `e031dee` salió `Canceled by Ignored Build Step`.
+
+Mi §37.20 se escribió sin ese dato y la sospecha era razonable, pero la lección
+es la de siempre y vale igual cuando me toca a mí: **la pregunta se cerró
+mirando, no razonando.**
+
+### 38.3 Uno decidido y todavía sin hacer
+
+**§37.7 — escalar a cero apaga los workers.** Decidido con el Jefe y escrito en
+`DOC.md`: ni `--min-instances=1` (15–25 USD al mes fijos) ni un ping —que con
+`--no-cpu-throttling` cuesta casi lo mismo sin dar la garantía— sino **un barrido
+de reconciliación en Cloud Scheduler cada 15 minutos**.
+
+Es mejor solución que la que yo insinuaba, y por un motivo que no está en mi
+informe: **el barrido despierta el contenedor *y además* recoge los correos
+guardados sin encolar de §37.1**, que es el hueco que ni `min-instances` ni un
+ping ven nunca, porque ahí el trabajo **nunca llegó a existir en la cola**.
+
+Iba secuenciado después del Encargo A. **El Encargo A ya está hecho** (`337340e`,
+`3e43af5`), así que esto es lo siguiente y ya no está bloqueado.
+
+### 38.4 Los nueve que siguen abiertos, comprobados hoy
+
+| § | Estado | Repartido |
+|---|---|---|
+| **37.4** 🟠 `trust proxy` | Sigue sin estar: lo busqué en todo el backend y no aparece | Sí — Encargo C, aparte a propósito |
+| **37.5** 🟠 `--timeout` vs 10 min del copiloto | `TIMEOUT_MS` sigue en `10 * 60_000` y `deploy.yml` sigue sin `--timeout` | Sí — Encargo B |
+| **37.6** 🟠 `--max-instances` + `connection_limit` | Ninguno de los dos | Sí — Encargo B |
+| **37.8** 🟠 Socket: reconexión infinita sin refresco | Ni `connect_error` ni `reconnectionAttempts` en `useSocket.ts` | **No** — partido entre dominios, lo coordina Doc |
+| **37.15** 🟡 `findMany` sin `take` | Igual que ayer: `time`, `tags`, `copilot-audit`, `overdue`, `gmail` | No |
+| **37.16** 🟡 `decryptJson` sin captura | `crypto.service.ts:67-69` intacto | No |
+| **37.17** 🔵 Cinco derivas de documentación | **Las cinco siguen** (ver abajo) | No |
+| **37.18** 🔵 Mensajes en inglés | Siguen, y **son seis, no cinco**: se me pasaron los dos de `copilot.api.ts:12,26` | No |
+| **37.19** 🔵 Scripts sin bit de ejecución | Siguen en `100644` | No |
+
+### 38.5 Y lo que me parece que hay que decir de este reparto
+
+**Los cinco puntos de §37.17 siguen exactamente donde estaban.** `prisma.service.ts`
+y `respaldo.sh` siguen explicándose por los arranques en frío de **Neon**;
+`useInbox.ts:38` sigue diciendo que carga de `GET /gmail/inbox` cuando llama a
+`/emails`; el import comentado de `AiModule` sigue debajo del import real; y
+**`deploy.yml:606` sigue justificando el coste «con `maxScale=20`»**.
+
+Ese último es el que más me chirría, porque **el Encargo B va a abrir ese mismo
+archivo para poner `--max-instances`**. Quien lo haga va a leer, tres líneas
+arriba, un comentario que afirma que el tope ya está puesto.
+
+Y es justo el hallazgo cuyo argumento era: *en un repositorio donde los
+comentarios son tan buenos, un comentario equivocado es peor que ninguno, porque
+el siguiente no va a comprobarlo — va a creerlo.* Se repartieron los tres rojos
+y los seis amarillos, que es el orden correcto; lo que quedó sin dueño es lo
+único que cuesta cinco minutos y protege al que venga después.
+
+No es una queja del reparto: **es que los arreglos de documentación no compiten
+por prioridad con los de código, compiten por acordarse.** Van bien pegados al
+commit que toca ese archivo, y el Encargo B toca cuatro de los cinco sitios.
+
+### 38.6 El saldo
+
+**Nueve de diecinueve cerrados en un día, incluidos los tres rojos**, con
+pruebas nuevas que los sostienen y sin romper nada: de 614 a 621 en verde.
+
+Los tres rojos eran los que perdían datos, y son los que están hechos. Lo que
+queda abierto no pierde nada: son topes de configuración, una reconexión que
+gasta, y comentarios que mienten.
+
+Y la parte que no me esperaba: **§37.1 se arregló mejor de lo que yo lo
+describí.** Yo pedí separar el `catch` y no avanzar el marcador. Lo que hay
+además **avisa cuando se atasca**, y documenta dentro del código el precio de
+esa decisión —que un correo que falle siempre repite el tramo, y que los
+`historyId` caducan a la semana—. Atascarse y gritar es mejor que avanzar y
+perder, **pero solo si alguien se entera**, y eso lo añadieron ellos.
