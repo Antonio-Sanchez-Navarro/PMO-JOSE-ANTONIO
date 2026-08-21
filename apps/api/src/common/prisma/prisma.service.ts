@@ -37,10 +37,73 @@ const OPCIONES_DE_TRANSACCION = {
   timeout: 15_000,
 } as const;
 
+/**
+ * Conexiones que abre **cada instancia** contra Cloud SQL.
+ *
+ * ⚠️ **Esto no se dimensiona por tráfico, se dimensiona por el techo de la
+ * base.** Sin `connection_limit`, Prisma usa su fórmula por defecto
+ * (`núcleos × 2 + 1`), y como cada instancia de Cloud Run la calcula por su
+ * cuenta, el total real es **ese número multiplicado por las instancias vivas**.
+ * Nadie lo estaba mirando: el pipeline tampoco fijaba `--max-instances`.
+ *
+ * El presupuesto, con `--max-instances=8` en `deploy.yml`:
+ *
+ * | Quién | Conexiones |
+ * |---|---|
+ * | API: 8 instancias × 2 | 16 |
+ * | Job de migraciones (solo durante el despliegue) | ~1 |
+ * | Job de respaldo (`pg_dump`, una vez cada 12 h) | 1 |
+ * | Una sesión manual de alguien depurando | 1 |
+ * | **Total en el peor caso** | **~19** |
+ *
+ * ⚠️ **El techo asumido es 25**, que es el `max_connections` por defecto de un
+ * `db-f1-micro` — la instancia no lleva `databaseFlags`, así que rige el valor
+ * de fábrica. **No está verificado leyendo la base**, porque desde fuera no se
+ * puede: la instancia no admite conexión directa. Si alguien puede confirmarlo,
+ * la comprobación es `SHOW max_connections;` desde el Job de restauración. Si
+ * resultara ser menos de 25, lo que baja es `--max-instances`, no esto:
+ * estrangular el pool de cada instancia hace que las peticiones se peleen por
+ * una conexión en vez de repartirse.
+ *
+ * Y si algún día sube `--max-instances`, **este número se revisa con él**.
+ */
+const CONEXIONES_POR_INSTANCIA = 2;
+
+/**
+ * Devuelve la `DATABASE_URL` con el `connection_limit` puesto.
+ *
+ * Se hace **aquí y no en el secreto** a propósito: el secreto es una credencial
+ * que no se revisa en un diff, y este número es una decisión de dimensionado que
+ * sí. Escrito en código, viaja con su explicación y con el commit que lo cambie.
+ *
+ * Si la URL ya trae un `connection_limit` —porque alguien lo puso a mano en el
+ * secreto— **se respeta**: quien editó el secreto sabía algo que este archivo no.
+ */
+function urlConLimiteDeConexiones(): string | undefined {
+  const cruda = process.env.DATABASE_URL;
+  if (!cruda) return undefined;
+
+  try {
+    const url = new URL(cruda);
+    if (!url.searchParams.has('connection_limit')) {
+      url.searchParams.set('connection_limit', String(CONEXIONES_POR_INSTANCIA));
+    }
+    return url.toString();
+  } catch {
+    // Una URL que no se puede analizar no se toca: que falle al conectar, con
+    // su mensaje de siempre, en vez de fallar aquí con uno que despista.
+    return cruda;
+  }
+}
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   constructor() {
-    super({ transactionOptions: { ...OPCIONES_DE_TRANSACCION } });
+    const url = urlConLimiteDeConexiones();
+    super({
+      transactionOptions: { ...OPCIONES_DE_TRANSACCION },
+      ...(url ? { datasources: { db: { url } } } : {}),
+    });
   }
 
   async onModuleInit() {

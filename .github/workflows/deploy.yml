@@ -603,9 +603,50 @@ jobs:
           # se puede leer sin abrir Google Cloud.
           #
           # ⚠️ **Tiene precio**: se factura CPU durante toda la vida de la
-          # instancia, no solo mientras atiende. Con `maxScale=20` y escalado a
-          # cero el gasto sigue siendo pequeño, pero si algún día la factura de
-          # Cloud Run sorprende, este flag es el primer sitio donde mirar.
+          # instancia, no solo mientras atiende. Con `--max-instances=8` y
+          # escalado a cero el gasto sigue siendo pequeño, pero si algún día la
+          # factura de Cloud Run sorprende, este flag es el primer sitio donde
+          # mirar.
+          #
+          # ── Los cuatro números que faltaban (2026-08-21) ─────────────────
+          #
+          # Hasta hoy este comando no pasaba `--timeout`, `--max-instances`,
+          # `--concurrency`, `--cpu` ni `--memory`. La palabra `maxScale`
+          # aparecía **una sola vez en todo el archivo, aquí arriba en un
+          # comentario**, justificando el coste de `--no-cpu-throttling` con un
+          # número que el comando no fijaba. Es el fallo contra el que este
+          # mismo archivo advierte —configuración que solo vive fuera de él—
+          # cometido en el comentario que lo advierte.
+          #
+          # Matiz que conviene no perder: el servicio vivo **sí** tenía
+          # `maxScale=20`, puesto a mano en la consola. No regía el defecto de
+          # 100 porque `gcloud run deploy` conserva lo que no se le nombra. O
+          # sea: no estaba mal configurado, estaba configurado **en un sitio que
+          # no se revisa y que desaparece el día que alguien recree el
+          # servicio**. Que es peor de diagnosticar y exactamente igual de malo.
+          #
+          # - `--timeout=900s`. El defecto son 300 s, y el copiloto se concedía
+          #   **10 minutos por llamada al modelo**: la plataforma cortaba la
+          #   petición por debajo del código y el stream moría **sin evento
+          #   `error`**. Ahora los dos números se respetan una invariante que
+          #   está escrita también en `anthropic.strategy.ts`:
+          #     MAX_VUELTAS × TIMEOUT_MS + herramientas < timeout de Cloud Run
+          #              4 × 180 s = 720 s + margen     < 900 s
+          #
+          # - `--max-instances=8`, y **el límite no es el tráfico, es la base**.
+          #   Cada instancia abre su propio pool de Prisma; el total contra
+          #   Cloud SQL es ese pool × instancias vivas. Con `connection_limit=2`
+          #   (fijado en `prisma.service.ts`, con la tabla del reparto): 8 × 2 =
+          #   16, más el job de migraciones, el de respaldo y alguna sesión
+          #   manual ≈ 19, por debajo de las ~25 que da un `db-f1-micro`.
+          #   Veinte instancias serían 40 conexiones y la base no las admite.
+          #   Hoy es teórico —hay un usuario— pero **lo que lo dispararía es un
+          #   bucle de reintentos**, y de esos acabamos de cerrar uno.
+          #
+          # - `--concurrency=80`, `--cpu=1`, `--memory=512Mi`. Son los valores
+          #   que el servicio ya tenía: se escriben **sin cambiarlos**, para que
+          #   la aritmética de arriba se pueda leer entera aquí y para que
+          #   sobrevivan a que alguien recree el servicio.
           # ───────────────────────────────────────────────────────────────
           gcloud run deploy "${SERVICE}" \
             --image "${IMAGE}:${SHA}" \
@@ -615,6 +656,11 @@ jobs:
             --set-cloudsql-instances="pmo-dashboard-503418:us-central1:pmo-postgres-db" \
             --allow-unauthenticated \
             --no-cpu-throttling \
+            --timeout=900s \
+            --max-instances=8 \
+            --concurrency=80 \
+            --cpu=1 \
+            --memory=512Mi \
             --set-env-vars "${ENV_VARS}" \
             --set-secrets "${SECRETS}" \
             --quiet

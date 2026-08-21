@@ -31,13 +31,37 @@ const MAX_TOKENS = 64_000;
 const MAX_VUELTAS = 4;
 
 /**
- * Plazo por petición, muy por encima del de la clasificación.
+ * Plazo **por llamada al modelo**, no por turno.
  *
  * Un turno del copiloto va en streaming y puede encadenar hasta `MAX_VUELTAS`
- * llamadas con ejecución de herramientas entre medias; el plazo tiene que
- * cubrir la más lenta de ellas, no la conversación entera.
+ * llamadas con ejecución de herramientas entre medias; esto cubre la más lenta
+ * de ellas, no la conversación entera.
+ *
+ * ⚠️ **Este número está atado al `--timeout` de Cloud Run, y hasta el
+ * 2026-08-21 se contradecían.** Valía 10 min por llamada mientras Cloud Run
+ * cortaba la petición a los 5 (su valor por defecto, porque el pipeline no
+ * pasaba `--timeout`). Un turno largo lo mataba la plataforma **por debajo del
+ * código**: el backend creía que le quedaban otros cinco minutos y el usuario
+ * veía morir el stream **sin evento `error`**, porque el corte ocurría donde no
+ * había nadie para emitirlo.
+ *
+ * La relación que tiene que cumplirse, y que ahora está escrita en los dos
+ * sitios:
+ *
+ *     MAX_VUELTAS × TIMEOUT_MS  +  tiempo de herramientas  <  timeout de Cloud Run
+ *              4 × 180 s = 720 s  +  margen                 <  900 s
+ *
+ * **Se bajó este en vez de subir el de Cloud Run**, y el motivo ya estaba
+ * escrito en este proyecto: el copiloto **no frena** ante un 429 porque «al otro
+ * lado hay alguien esperando y un error a los veinte segundos es mejor que un
+ * cursor parpadeando tres minutos». Una llamada al modelo que no termina en tres
+ * minutos no está tardando: está colgada. Diez minutos no son un plazo, son una
+ * sala de espera.
+ *
+ * Si algún día sube `MAX_VUELTAS` o este plazo, **sube también el `--timeout`
+ * del servicio en `deploy.yml`** o vuelven a contradecirse.
  */
-const TIMEOUT_MS = 10 * 60_000;
+const TIMEOUT_MS = 3 * 60_000;
 
 /** El catálogo compartido, traducido al vocabulario de Anthropic. */
 const TOOLS: Anthropic.Tool[] = COPILOT_TOOLS.map((tool) => ({
