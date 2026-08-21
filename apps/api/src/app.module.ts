@@ -23,11 +23,17 @@ import { MetricsModule } from './modules/metrics/metrics.module';
 import { CronModule } from './modules/cron/cron.module';
 import { AlertModule } from './common/alerts/alert.module';
 
-// Módulos de dominio (se implementan por sprint — ver TASKS.md):
 import { TasksModule } from "./modules/tasks/tasks.module";
-// import { AiModule } from "./modules/ai/ai.module";
+
+// Lo único de dominio que falta por implementar: WhatsApp (Sprint 7), relegado
+// al final de la cola por decisión de producto.
+//
+// Aquí había además dos importaciones comentadas que ya no describían nada:
+// `AiModule` —importado de verdad quince líneas más arriba— y
+// `TimeTrackingModule`, que existe desde el Sprint 5 con otro nombre
+// (`TimeModule`). Un import comentado de algo que sí existe no es un recordatorio:
+// es una afirmación falsa que se lee al abrir el archivo.
 // import { WhatsappModule } from "./modules/whatsapp/whatsapp.module";
-// import { TimeTrackingModule } from "./modules/time-tracking/time-tracking.module";
 
 @Module({
   imports: [

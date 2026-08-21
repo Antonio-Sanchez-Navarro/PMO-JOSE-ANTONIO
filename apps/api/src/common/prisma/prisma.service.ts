@@ -2,12 +2,22 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 /**
- * Plazos de las transacciones, subidos por los arranques en frío de Neon.
+ * Plazos de las transacciones, subidos por los arranques en frío de la base.
  *
- * **El problema, medido en producción:** transacciones fallando de forma
- * intermitente con `Transaction already closed` porque el despertar de la base
- * —Neon es serverless y se suspende sin tráfico— tarda del orden de 5,3 s y el
- * plazo por defecto de Prisma es de 5 s. Fallaba por trescientas milésimas, y
+ * ⚠️ **Estos números se fijaron contra Neon, que ya no es la base.** Desde el
+ * 2026-08-18 esto habla con **Cloud SQL**, que no se suspende por falta de
+ * tráfico, así que el arranque en frío que los motivó ya no ocurre por ese
+ * lado. Se mantienen porque **el otro lado sí sigue**: Cloud Run escala a cero
+ * y la primera transacción tras un rato de calma paga el despertar del
+ * contenedor y del pool. Si algún día estorban, esta es la razón por la que
+ * bajarlos sería razonable — y la historia de abajo, la razón por la que no se
+ * pusieron a ojo.
+ *
+ * **El problema, medido en producción (con Neon):** transacciones fallando de
+ * forma intermitente con `Transaction already closed` porque el despertar de la
+ * base —Neon era serverless y se suspendía sin tráfico— tardaba del orden de
+ * 5,3 s y el plazo por defecto de Prisma es de 5 s. Fallaba por trescientas
+ * milésimas, y
  * solo cuando la base llevaba un rato dormida: nunca en local, nunca dos veces
  * seguidas, que es lo que lo hizo difícil de ver.
  *
