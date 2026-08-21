@@ -124,8 +124,20 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
+      # `install_components` no estaba, y por eso el primer intento de
+      # desplegar la politica de alerta (2026-08-21, run 32511589977) se planto
+      # en su comprobacion previa: `setup-gcloud` instala gcloud **sin** los
+      # componentes `alpha` ni `beta`, y toda la gestion de politicas de
+      # Monitoring vive en `beta`. El run salio VERDE y no hizo nada, porque el
+      # paso esta disenado para no bloquear el despliegue de la API.
+      #
+      # Es la misma leccion de siempre, aplicada al propio pipeline: **no des por
+      # hecho la herramienta**. Doc aviso de esto para `alpha` y resulto valer
+      # igual para `beta`.
       - name: Preparar gcloud
         uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: beta
 
       - name: Dar acceso a Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
@@ -737,8 +749,15 @@ jobs:
           # `alpha` **no estaba**, y este paso entero se apoya en `beta`:
           # descubrirlo el día que haga falta la alerta es tarde. Esta llamada
           # comprueba de paso que la cuenta del pipeline puede leer políticas.
-          if ! gcloud beta monitoring policies list --project "${PROJECT_ID}" --limit=1 >/dev/null 2>&1; then
-            echo "::error::gcloud beta monitoring no responde en el runner (componente ausente o sin permiso). NO se toca la politica de alerta del respaldo: queda desplegada la que hubiera. Hasta que se arregle, nadie garantiza que un respaldo fallido avise."
+          # ⚠️ Se captura la salida en vez de mandarla a `/dev/null`. La primera
+          # version tragaba el motivo, y cuando la guarda salto de verdad el log
+          # solo decia "no responde" -- que es el mismo pecado que la alerta muda
+          # que todo esto viene a arreglar: **una guarda que esconde por que salta
+          # es media guarda**.
+          if ! SALIDA=$(gcloud beta monitoring policies list --project "${PROJECT_ID}" --limit=1 2>&1); then
+            echo "Lo que respondio gcloud:"
+            printf '%s\n' "${SALIDA}"
+            echo "::error::gcloud beta monitoring no responde en el runner (componente ausente o sin permiso; el motivo exacto esta justo encima). NO se toca la politica de alerta del respaldo: queda desplegada la que hubiera. Hasta que se arregle, nadie garantiza que un respaldo fallido avise."
             exit 0
           fi
 
@@ -837,8 +856,10 @@ jobs:
 
           TRABAJO=pmo-respaldo-db-diario
 
-          if ! gcloud scheduler jobs list --project "${PROJECT_ID}" --location "${REGION}" --limit=1 >/dev/null 2>&1; then
-            echo "::error::gcloud scheduler no responde en el runner (API deshabilitada o sin permiso). NO se toca el disparador: queda el que hubiera. Si no habia ninguno, no hay respaldos automaticos."
+          if ! SALIDA=$(gcloud scheduler jobs list --project "${PROJECT_ID}" --location "${REGION}" --limit=1 2>&1); then
+            echo "Lo que respondio gcloud:"
+            printf '%s\n' "${SALIDA}"
+            echo "::error::gcloud scheduler no responde en el runner (el motivo exacto esta justo encima). NO se toca el disparador: queda el que hubiera. Si no habia ninguno, no hay respaldos automaticos."
             exit 0
           fi
 
