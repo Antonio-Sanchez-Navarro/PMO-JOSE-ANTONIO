@@ -179,6 +179,40 @@ con `--oauth-service-account-email`— **ya está cubierto** por el
 pipeline lo intenta, falla en la primera línea y lo dice; no rompe nada y no
 tapa nada.
 
+### ✅ Cerrado el mismo día: los tres roles y el `workflow_dispatch`
+
+Concedidos los tres, comprobados en el IAM antes de disparar nada. El run
+`32519401879` (`workflow_dispatch`) salió verde **y esta vez el verde sí
+significaba algo**, porque los pasos dijeron lo que hicieron:
+
+```
+Canal resuelto: .../notificationChannels/1419143099601865450 (enabled=True)
+Ya existe (.../alertPolicies/2425639254030427438): se actualiza.
+Politica desplegada y verificada. Avisa a: .../notificationChannels/1419143099601865450
+
+El disparador pmo-respaldo-db-diario: se hace update.
+Disparador pmo-respaldo-db-diario ENABLED: 03:30 y 15:30 America/Cancun.
+```
+
+Y comprobado **en la nube, no en el log**, que es lo que de verdad cierra esto:
+
+| Qué | Resultado |
+|---|---|
+| Políticas con ese `displayName` | **1**, y con el **mismo id** que ya tenía → actualizó, no duplicó. La idempotencia era justo lo que se probaba |
+| `notificationChannels` | no vacío, apunta a «Alertas PMO» |
+| Disparador | `ENABLED`, `30 3,15 * * *`, `America/Cancun`, `pmo-scheduler@` |
+
+**Condición de Doc al conceder `cloudscheduler.admin`**, escrita ya como
+comentario en el propio paso (`61368de`): **solo `create` o `update`, nunca
+`delete` ni `pause`**. Ese rol es el mínimo que existe —Cloud Scheduler no admite
+IAM por trabajo— y da poder para borrar el disparador; un disparador que no
+dispara es el punto ciego exacto que la condición de ausencia cubre, así que un
+`delete` aquí convertiría un error de tecleo en «se acabaron los respaldos», y
+tardaría 14 h en notarse.
+
+**El vigilante ya nace del pipeline.** Si alguien lo borra en la consola, el
+siguiente despliegue lo repone.
+
 ---
 
 ## ✅ La Capa 2 firmada con fuego real: sonaron las dos (2026-08-20)
