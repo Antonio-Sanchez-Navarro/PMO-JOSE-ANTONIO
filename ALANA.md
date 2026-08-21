@@ -4993,3 +4993,96 @@ fallo era que el código decía lo que no era. Lo encontró alguien preguntando 
 qué el marcador avanzaba, y lo contó alguien ejecutando el barrido.
 
 Se mira, y luego se ejecuta. En ese orden, y las dos cosas.
+
+---
+
+## 40. Los cinco sin dueño, cerrados — y dos eran míos (2026-08-21)
+
+Encargo del Jefe: cerrar los cinco hallazgos que nadie se había llevado.
+**Cerrados los cinco, en cinco commits, uno por hallazgo.** Verde: `lint` limpio
+en los tres paquetes, **627 pruebas en 30 suites**, y `tsc -b apps/web` sin
+errores.
+
+Pero el resultado no es el que yo anunciaba, y esa es la parte que importa:
+**dos de los cinco no había que arreglarlos, porque no estaban rotos.**
+
+### 40.1 §37.15 — la mitad de las consultas «sin tope» sí lo tenían
+
+Lo detecté con `grep -c "take:"` por archivo. Dos errores en esa sola línea:
+cuenta **por archivo y no por consulta**, y `take:` **no encuentra la forma
+abreviada `take,`**, que es como está escrita en la mitad de los sitios.
+
+Contadas de verdad, una a una: de las catorce `findMany` del backend, **once
+llevan tope** —`time.findAll` (`take = 50` del DTO), `copilot-audit.list`
+(`take = 50`), `tasks.findAll`, los hilos del copiloto, `search_emails`,
+`listForTriage`— y tres no. Las tres que faltan **están bien así**, y ponerles un
+`take` habría metido justo el fallo que llevamos un mes persiguiendo:
+
+| Consulta | Qué pasaría con un tope |
+|---|---|
+| `renovarWatchDeTodos` (`gmail.service.ts:813`) | Los usuarios que quedaran fuera verían **caducar su `watch` a los 7 días** y su ingesta se apagaría sin un error. Es literalmente el fallo que esa función existe para evitar |
+| Candidatas del barrido (`overdue.service.ts:70`) | Las tareas recortadas se quedan en su columna **como si no hubiera vencido nada**, y el barrido sale en verde |
+| `columnOf` en el movimiento (`tasks.service.ts:287`) | Lee la columna entera para renumerar `position`: con tope quedan tarjetas con posiciones ya reasignadas |
+
+Las tres llevan ahora escrito **por qué no llevan tope y qué las acota en su
+lugar** —el `horizon`, el filtro por estado, una columna de un usuario— y qué
+hacer el día que no quepan: **paginar cubriéndolas todas, que no es lo mismo que
+recortar la lectura.**
+
+Un hallazgo que, aplicado, habría creado tres agujeros nuevos.
+
+### 40.2 §37.16 — ya estaba capturado, y con el mensaje correcto
+
+Dije que `decryptJson` no captura y que rotar `TOKEN_ENCRYPTION_KEY` mataría
+Gmail «con un 500 opaco» y sin camino de volver a autorizar.
+
+**Lo hay, y es exactamente el que pedí.** `UsersService.getGoogleCredentials`
+(`users.service.ts:56-62`) lo envuelve en un `try`, registra la causa probable
+—«suele indicar que `TOKEN_ENCRYPTION_KEY` cambió: el usuario debe volver a
+autorizar»— y devuelve `null`. Y `AuthService.getAuthorizedClient` convierte ese
+`null` en un **401** con «debe volver a autorizar».
+
+Leí `crypto.service.ts` y **no seguí la única llamada que tiene**. Eso es todo lo
+que pasó. Queda anotado en el propio archivo quién recoge el `throw`, para que el
+siguiente que lo lea —o yo dentro de un mes— no vuelva a reportarlo.
+
+### 40.3 Los tres que sí eran reales
+
+- **§37.17** — cuatro sitios corregidos. `prisma.service.ts` explicaba sus plazos
+  por los arranques en frío de **Neon**: se conserva la historia —que es lo que
+  impide volver a ponerlos a ojo— y se dice que la base es Cloud SQL y que lo
+  que sigue justificándolos es el escalado a cero de Cloud Run. `respaldo.sh`
+  decía que la credencial viajaba «de ahí a Neon», **tres días después de que
+  Neon dejara de existir**. `useInbox.ts` decía cargar de `GET /gmail/inbox`
+  cuando llama a `/emails` —y no es un matiz de nombre: una va a la API de Google
+  y la otra lee la tabla ingerida, que es la única con el estado de triage por el
+  que ese hook filtra—. Y `app.module.ts` tenía comentados los imports de
+  `AiModule` (importado de verdad quince líneas más arriba) y de
+  `TimeTrackingModule` (existe desde el Sprint 5, con otro nombre).
+- **§37.18** — siete mensajes en inglés traducidos, incluido un
+  `console.error(e)` pelado que no decía ni qué estaba cargando.
+- **§37.19** — los dos `.sh` a `100755`. Hoy no cambia nada porque el
+  `Dockerfile` hace `chmod`; el día que alguien simplifique esa línea, sí.
+
+### 40.4 Lo que enseña, y va sin adorno
+
+**Dos de cinco eran míos.** Los dos por la misma causa: **miré un archivo y no
+seguí la llamada.** `grep -c "take:"` en vez de leer las catorce consultas;
+`crypto.service.ts` en vez de su único llamador.
+
+Y hay una simetría incómoda con §39.3, donde ya me corregí por deducir el
+comportamiento de `gcloud` en lugar de comprobarlo. Van tres errores míos en tres
+secciones seguidas, **todos de la misma forma**: una inferencia razonable sobre
+una pieza, sin ir a ver la pieza de al lado.
+
+Es exactamente lo que este proyecto lleva un mes aprendiendo, y resulta que a un
+informe se le aplica igual que a un respaldo: **una pieza que parece rota vista
+sola puede estar perfectamente conectada, y solo se sabe tirando del cable.**
+
+Lo que salva el informe no es que acertara: es que **§37.1 tenía 27 correos
+dentro**. Doce hallazgos ciertos y tres equivocados siguen siendo un buen
+informe. Pero los tres equivocados habrían costado tres agujeros nuevos si
+alguien los hubiera aplicado sin mirar — y por poco: el encargo fue «ciérralos»,
+no «compruébalos».
+
+**Un hallazgo tampoco se audita: se comprueba antes de arreglarlo.**
