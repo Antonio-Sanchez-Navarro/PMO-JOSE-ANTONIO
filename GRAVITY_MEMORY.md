@@ -23,6 +23,12 @@ infraestructura de Gravity.
 
 | Encargo | Dónde quedó |
 | --- | --- |
+| §37.10: Rollback y toast en fallo de movimiento de tarjeta (`moveTask`) | `9ddecfa` |
+| §37.11: Cancelación de peticiones obsoletas al cambiar pestaña en Inbox (contador de generación) | `809d8e3` |
+| §37.9: Debounce en buscador de Kanban, eliminación de parpadeo de carga y descarte de respuestas desordenadas | `59f61b7` |
+| §37.12: Detección tipada de 401 usando `ApiError.status` en vez de substring | `5aa1802` |
+| §37.13: Cerrojo de refresco (`refreshPromise`) para evitar llamadas concurrentes a `/auth/refresh` | `dc45460` |
+| §37.14: Centralización de URL de producción en constante única `PROD_API_URL` | `b259c27` |
 | Fuga de Vercel (`ignoreCommand`) | `adad87d` — Movido `vercel.json` a la raíz del monorepo con anclaje `:(top)` para `apps/web` y `packages/shared`. Verificación observable directamente en la columna de estado/duración de la lista de despliegues de Vercel (debe indicar Ignored/Canceled/Skipped en commits de solo `.md`). |
 | Deuda técnica Frontend Fase 5 (Inbox 409, WS dinámico, ARIA anidado, mockTasks) | `251d60e` |
 | Sincronización de memoria de Gravity | `a4eb39c` |
