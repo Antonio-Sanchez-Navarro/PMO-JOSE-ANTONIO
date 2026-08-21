@@ -4914,3 +4914,82 @@ además **avisa cuando se atasca**, y documenta dentro del código el precio de
 esa decisión —que un correo que falle siempre repite el tramo, y que los
 `historyId` caducan a la semana—. Atascarse y gritar es mejor que avanzar y
 perder, **pero solo si alguien se entera**, y eso lo añadieron ellos.
+
+---
+
+## 39. Escaneo de arranque: el agujero tenía 27 correos dentro (2026-08-21)
+
+Cuatro commits desde §38. Árbol limpio, `master` a la par de `origin`, nadie con
+trabajo a medias. Comprobado en el código, no en los mensajes.
+
+### 39.1 Lo que confirma la auditoría entera
+
+**§37.1 no era teórico: había 27.** La primera ejecución del barrido de
+reconciliación —forzada para comprobar la audiencia OIDC— devolvió 200 y
+**27 reencolados de 27 candidatos**. Veintisiete correos llevaban guardados en la
+base **sin trabajo asociado en la cola**, y uno de ellos traía dentro una tarea
+que nunca llegó al tablero.
+
+Es la frase «pierde correos en silencio» **medida**. Y es el argumento entero de
+por qué el barrido gana al ping y a `min-instances`: esos veintisiete no estaban
+atascados ni fallidos. **Su trabajo nunca existió.** No había nada que
+reintentar, así que ningún worker vivo, por despierto que estuviera, los habría
+recogido jamás.
+
+### 39.2 Cerrados desde §38
+
+| § | Comprobado |
+|---|---|
+| **37.5** | `deploy.yml:659` pasa `--timeout=900s`, y `anthropic.strategy.ts:64` baja `TIMEOUT_MS` a **3 min**. Los dos números por fin se ordenan, y con margen |
+| **37.6** | `--max-instances=8`, `--concurrency=80`, `--cpu=1`, `--memory=512Mi`, y el `connection_limit` resuelto en `prisma.service.ts:73-90` |
+| **37.7** | `/cron/reconciliar` cada 15 min, con gracia de 30 min para no pisar trabajos en vuelo. **Verificado en fuego real**, no desplegado y supuesto |
+| **37.17** | El comentario del `maxScale` en `deploy.yml:606` ya dice `--max-instances=8` |
+
+### 39.3 Y una corrección mía, que es la parte que me toca
+
+En §37.6 escribí que, al no pasar `--max-instances`, **regía el defecto de 100
+instancias**. Es falso, y el commit `5a6bf38` lo explica mejor de lo que yo lo
+investigué: **el servicio vivo sí tenía `maxScale=20`**, puesto a mano en la
+consola, porque `gcloud run deploy` **conserva lo que no se le nombra**.
+
+Así que no había cien instancias posibles ni el riesgo de agotar conexiones que
+yo describí con ese número. Mi conclusión —que el valor tiene que estar en el
+archivo— seguía siendo la correcta, y por una razón que el propio commit dice
+mejor: no estaba mal configurado, **estaba configurado en un sitio que no se
+revisa y que desaparece el día que alguien recree el servicio**.
+
+Pero el mecanismo que afirmé estaba mal. **Deduje el comportamiento de `gcloud`
+en vez de comprobarlo**, que es exactamente lo que le reproché a la regla de la
+versión del cliente de Postgres en §33. La ironía es que lo escribí en el mismo
+informe donde denunciaba comentarios que afirman cosas sin comprobar.
+
+### 39.4 Lo que queda, y ya son solo seis
+
+**Doce de diecinueve cerrados**, más el `maxScale` de §37.17.
+
+| § | Qué | Repartido |
+|---|---|---|
+| **37.4** 🟠 | `trust proxy`: el límite «por IP» sigue siendo un cubo global | Sí — Encargo C |
+| **37.8** 🟠 | El socket reintenta cada 5 s para siempre sin refrescar sesión | Con Doc |
+| **37.15** 🟡 | `findMany` sin `take` en `time`, `tags`, `copilot-audit`, `overdue`, `gmail` | No |
+| **37.16** 🟡 | `decryptJson` sin captura: rotar la clave apaga Gmail con un 500 opaco | No |
+| **37.17** 🔵 | Cuatro sitios: `prisma.service.ts` (×2) y `respaldo.sh` siguen explicándose por **Neon**; `useInbox.ts:38` sigue diciendo `GET /gmail/inbox`; el import comentado de `AiModule` | No |
+| **37.18** 🔵 | Seis mensajes en inglés en una base en español | No |
+| **37.19** 🔵 | Los dos `.sh` en `100644` | No |
+
+Los dos naranjas tienen dueño. Los cinco de abajo siguen sin repartir desde
+§38.5, y sigue valiendo lo que dije entonces: **no compiten por prioridad,
+compiten por acordarse.** Cuestan una tarde entre todos.
+
+### 39.5 Lo que enseña
+
+Los tres rojos de §37 eran los que perdían datos, y los tres están cerrados. Uno
+de ellos dejó una cifra: **27**.
+
+Que un informe acierte no es noticia. Lo que sí lo es: **el agujero llevaba
+abierto desde que existe la ingesta, la suite estaba en verde, y ninguna de las
+614 pruebas lo veía** — porque probaban que el código hace lo que dice, y el
+fallo era que el código decía lo que no era. Lo encontró alguien preguntando por
+qué el marcador avanzaba, y lo contó alguien ejecutando el barrido.
+
+Se mira, y luego se ejecuta. En ese orden, y las dos cosas.
