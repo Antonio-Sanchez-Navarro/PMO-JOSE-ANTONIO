@@ -56,6 +56,34 @@ export class CronController {
   }
 
   /**
+   * Barrido de reconciliación: recoge los correos que se quedaron por el camino.
+   *
+   * **Es la alternativa elegida a `--min-instances=1` y al ping**, y no por
+   * precio: por lo que hace de más. Cloud Run escala a cero y con la instancia
+   * se apagan los workers de BullMQ, así que un trabajo rezagado espera al
+   * siguiente correo y no a un temporizador. Cualquier petición periódica
+   * despierta el contenedor y arregla eso.
+   *
+   * Lo que **solo** arregla esto es el otro agujero: un correo que se guardó y
+   * cuyo `add` a la cola falló no está atascado ni fallido, es que **su trabajo
+   * nunca existió**. Un worker vivo no lo recoge nunca, porque no hay nada que
+   * recoger. Por eso el barrido gana al ping: despierta y además reencola.
+   *
+   * Idempotente: el `jobId` es el id del correo, así que dos barridos seguidos
+   * no duplican trabajo, y el procesador se salta lo que ya tiene `processedAt`.
+   */
+  @Post('reconciliar')
+  @HttpCode(200)
+  async reconciliar() {
+    const resultado = await this.gmail.reconciliarSinClasificar();
+    this.logger.log(
+      `Reconciliación: ${resultado.reencolados} reencolado(s) de ` +
+        `${resultado.candidatos} candidato(s), ${resultado.fallidos} fallido(s)`,
+    );
+    return { ok: true, ...resultado };
+  }
+
+  /**
    * Registra o renueva la suscripción push de Gmail de todos los usuarios.
    *
    * **Sirve para las dos cosas a propósito**, y no es un detalle de comodidad:

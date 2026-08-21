@@ -330,3 +330,110 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
     expect(alertas.avisar).toHaveBeenCalled();
   });
 });
+
+/**
+ * `reconciliarSinClasificar` — la red que recoge lo que ningún worker recoge.
+ *
+ * **Por qué existe.** Cuando el `upsert` va bien y el `add` a la cola falla, el
+ * correo queda en la base y **su trabajo nunca llegó a existir**: no está
+ * atascado, no está fallido, no está. Ni `--min-instances=1` ni un ping lo ven
+ * nunca, porque los dos parten de que hay algo que reintentar.
+ *
+ * Lo que se prueba aquí es el contrato que hace que esto sea seguro de correr
+ * cada 15 minutos: la ventana de gracia (para no duplicar clasificaciones sobre
+ * correos que están en la cola ahora mismo), el tope por vuelta, y el
+ * `remove`+`add` con `jobId` que decide bien sin preguntar en qué estado está
+ * el trabajo anterior.
+ */
+describe('GmailService · barrido de reconciliación', () => {
+  function crear(opciones: { huerfanos?: string[]; add?: jest.Mock; remove?: jest.Mock } = {}) {
+    const findMany = jest
+      .fn()
+      .mockResolvedValue((opciones.huerfanos ?? ['e1', 'e2']).map((id) => ({ id })));
+    const add = opciones.add ?? jest.fn().mockResolvedValue({});
+    const remove = opciones.remove ?? jest.fn().mockResolvedValue(undefined);
+
+    const prisma = { email: { findMany } };
+    const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
+
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn() } as never,
+      prisma as never,
+      { add, remove } as never,
+      alertas as never,
+    );
+
+    return { service, findMany, add, remove, alertas };
+  }
+
+  it('solo mira correos sin `processedAt` y con antigüedad: no toca los recién llegados', async () => {
+    // Sin la ventana de gracia reencolaría correos que están en la cola ahora
+    // mismo, y dos trabajos a la vez sobre el mismo correo pueden crear las
+    // tareas por duplicado.
+    const { service, findMany } = crear();
+
+    await service.reconciliarSinClasificar();
+
+    const filtro = findMany.mock.calls[0][0].where;
+    expect(filtro.processedAt).toBeNull();
+    expect(filtro.receivedAt.lt).toBeInstanceOf(Date);
+    expect(Date.now() - filtro.receivedAt.lt.getTime()).toBeGreaterThanOrEqual(29 * 60_000);
+  });
+
+  it('acota cuánto trabajo hace en una vuelta', async () => {
+    // Corre dentro de una petición HTTP con el timeout de Cloud Run encima:
+    // tiene que terminar.
+    const { service, findMany } = crear();
+
+    await service.reconciliarSinClasificar();
+
+    expect(findMany.mock.calls[0][0].take).toBeLessThanOrEqual(100);
+  });
+
+  it('borra el trabajo anterior antes de encolar, y usa el id del correo', async () => {
+    // `add` con un jobId que ya existe se ignora. Eso protege del duplicado
+    // cuando el trabajo está activo, pero bloquearía el reintento cuando está
+    // terminado o fallido: por eso se intenta borrar antes.
+    const { service, add, remove } = crear({ huerfanos: ['e1'] });
+
+    await service.reconciliarSinClasificar();
+
+    expect(remove).toHaveBeenCalledWith('e1');
+    expect(add).toHaveBeenCalledWith('classify', { emailId: 'e1' }, { jobId: 'e1' });
+  });
+
+  it('si el trabajo anterior está activo y no se puede borrar, sigue igual', async () => {
+    // `remove` falla sobre un job activo. No es un error: es la señal de que
+    // está corriendo, y el `add` de después se ignora solo por el jobId.
+    const remove = jest.fn().mockRejectedValue(new Error('cannot remove active job'));
+    const { service, add } = crear({ huerfanos: ['e1'], remove });
+
+    const res = await service.reconciliarSinClasificar();
+
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(res.fallidos).toBe(0);
+  });
+
+  it('cuenta lo reencolado y lo fallido por separado', async () => {
+    const add = jest
+      .fn()
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('Redis dijo que no'));
+    const { service } = crear({ huerfanos: ['e1', 'e2'], add });
+
+    const res = await service.reconciliarSinClasificar();
+
+    expect(res).toEqual({ candidatos: 2, reencolados: 1, fallidos: 1 });
+  });
+
+  it('avisa cuando encuentra huérfanos, y calla cuando no hay nada', async () => {
+    const conHuerfanos = crear({ huerfanos: ['e1'] });
+    await conHuerfanos.service.reconciliarSinClasificar();
+    expect(conHuerfanos.alertas.avisar).toHaveBeenCalledTimes(1);
+
+    const limpio = crear({ huerfanos: [] });
+    await limpio.service.reconciliarSinClasificar();
+    expect(limpio.alertas.avisar).not.toHaveBeenCalled();
+  });
+});

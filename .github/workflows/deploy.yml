@@ -954,6 +954,94 @@ jobs:
           fi
           echo "Disparador ${TRABAJO} ${ESTADO}: 03:30 y 15:30 America/Cancun."
 
+
+      # El barrido de reconciliación, cada 15 minutos (§37.7)
+      #
+      # **Sustituye a `--min-instances=1` y al ping, y la comparación no la
+      # decidió el precio.** Cloud Run escala a cero y con la instancia se apagan
+      # los workers de BullMQ: un trabajo rezagado espera al siguiente correo, no
+      # a un temporizador, porque `stalledInterval` necesita un worker vivo para
+      # reclamar. Cualquier petición periódica arregla eso.
+      #
+      # Lo que sólo arregla el barrido es el otro agujero: un correo que se
+      # guardó y cuyo `add` a la cola falló **no tiene trabajo que reintentar**.
+      # Ni `min-instances` ni un ping lo ven nunca. El barrido despierta el
+      # contenedor **y además** reencola lo que se quedó atrás.
+      #
+      # (El ping tampoco salía barato, que era el argumento aparente: con
+      # `--no-cpu-throttling` se factura CPU mientras la instancia viva, así que
+      # un ping cada cinco minutos la mantiene despierta casi todo el día y
+      # cuesta casi lo mismo que `min-instances=1`, sin la garantía.)
+      #
+      # ⚠️ **Coste: ~0,10 USD al mes, no cero.** La decision escrita en `DOC.md`
+      # dice «el nivel gratuito cubre tres trabajos y hoy se usa uno», y hoy se
+      # usan **tres**: `pmo-respaldo-db-diario`, `pmo-gmail-watch-renew` y
+      # `pmo-overdue-sweep`. Este es el cuarto, asi que sale del nivel gratuito.
+      # Es calderilla y no cambia la decision -sigue siendo mucho mas barato que
+      # `min-instances=1`- pero el numero estaba mal y no conviene repetirlo.
+      #
+      # ⚠️ Igual que el del respaldo: **sólo `create` o `update`, nunca `delete`
+      # ni `pause`.**
+      - name: Desplegar el barrido de reconciliacion
+        run: |
+          set -eo pipefail
+
+          TRABAJO=pmo-reconciliar-clasificacion
+
+          if ! SALIDA=$(gcloud scheduler jobs list --project "${PROJECT_ID}" --location "${REGION}" --limit=1 2>&1); then
+            echo "Lo que respondio gcloud:"
+            printf '%s\n' "${SALIDA}"
+            echo "::error::gcloud scheduler no responde en el runner (el motivo exacto esta justo encima). NO se toca el barrido de reconciliacion: los correos guardados sin encolar se quedaran sin recoger."
+            exit 0
+          fi
+
+          if gcloud scheduler jobs describe "${TRABAJO}" \
+               --project "${PROJECT_ID}" --location "${REGION}" >/dev/null 2>&1; then
+            ACCION=update
+          else
+            ACCION=create
+          fi
+          echo "El barrido ${TRABAJO}: se hace ${ACCION}."
+
+          # La URL del servicio no se escribe a mano: se pregunta. Un dominio
+          # copiado aqui es la misma configuracion fantasma de siempre, y ademas
+          # cambia si alguien recrea el servicio.
+          URL=$(gcloud run services describe "${SERVICE}" \
+                  --project "${PROJECT_ID}" --region "${REGION}" --format 'value(status.url)')
+
+          if [ -z "${URL}" ]; then
+            echo "::error::No se pudo leer la URL de ${SERVICE}. NO se toca el barrido de reconciliacion."
+            exit 0
+          fi
+
+          # OIDC y no OAuth: la ruta la protege `CronAuthGuard`, que valida un
+          # token de identidad firmado por `pmo-scheduler@`.
+          #
+          # ⚠️ **La audiencia es `<URL>/cron`, no `<URL>`.** El guard compara con
+          # `CRON_OIDC_AUDIENCE`, que en el servicio vale `https://.../cron`
+          # -comprobado en la revision desplegada, y es tambien lo que llevan
+          # `pmo-overdue-sweep` y `pmo-gmail-watch-renew`-. Con la URL a secas el
+          # token se firma bien, Scheduler lo da por entregado y la ruta
+          # devuelve **401 para siempre**.
+          gcloud scheduler jobs "${ACCION}" http "${TRABAJO}" \
+            --project="${PROJECT_ID}" \
+            --location="${REGION}" \
+            --schedule="*/15 * * * *" \
+            --time-zone="America/Cancun" \
+            --uri="${URL}/cron/reconciliar" \
+            --http-method=POST \
+            --oidc-service-account-email="pmo-scheduler@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --oidc-token-audience="${URL}/cron" \
+            --quiet
+
+          ESTADO=$(gcloud scheduler jobs describe "${TRABAJO}" \
+            --project "${PROJECT_ID}" --location "${REGION}" --format='value(state)')
+          if [ "${ESTADO}" != "ENABLED" ]; then
+            echo "::error::El barrido ${TRABAJO} esta en estado ${ESTADO}, no ENABLED. Mientras siga asi, un correo guardado sin encolar no lo recoge nadie. Reanudalo con: gcloud scheduler jobs resume ${TRABAJO} --location ${REGION}"
+            exit 0
+          fi
+          echo "Barrido ${TRABAJO} ${ESTADO}: cada 15 min contra ${URL}/cron/reconciliar"
+
       # El Job queda desplegado, pero **no se ejecuta aquí**: lo dispara Cloud
       # Scheduler a las 03:30 y las 15:30 de Tulum. Ejecutarlo en cada despliegue
       # haría un volcado completo por cada commit, que ni hace falta ni es gratis.

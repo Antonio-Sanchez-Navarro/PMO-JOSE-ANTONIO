@@ -93,6 +93,31 @@ const BACKFILL_SIZE = 25;
  */
 const MAX_PAGINAS_HISTORIAL = 20;
 
+/**
+ * Antiguedad minima para que el barrido de reconciliacion toque un correo.
+ *
+ * No es cortesia: es lo que evita **duplicar clasificaciones**. Un correo recien
+ * guardado puede estar en la cola esperando turno, y reencolarlo daria dos
+ * trabajos simultaneos sobre el mismo correo, los dos capaces de pasar la
+ * comprobacion de `processedAt` y crear las tareas por duplicado.
+ *
+ * Media hora es muy superior a lo que tarda el camino normal: tres intentos con
+ * espera exponencial de 2 s se agotan en menos de un minuto. Lo que siga sin
+ * clasificar despues de 30 min no esta en camino, se perdio.
+ */
+const GRACIA_RECONCILIACION_MS = 30 * 60_000;
+
+/**
+ * Tope de correos que reencola un solo barrido.
+ *
+ * El barrido corre dentro de una peticion HTTP con el `--timeout` de Cloud Run
+ * encima, asi que tiene que **terminar**. Con 100 por vuelta y una vuelta cada
+ * 15 minutos, un atasco de mil correos se drena en dos horas y media sin que
+ * ninguna peticion se acerque al plazo. Preferimos tardar a que la plataforma
+ * corte a mitad, que es como se llega a un bucle de reintentos.
+ */
+const MAX_RECONCILIADOS = 100;
+
 @Injectable()
 export class GmailService {
   private readonly logger = new Logger(GmailService.name);
@@ -549,7 +574,12 @@ export class GmailService {
       // aparte es lo que permite distinguir «no llego» de «llego y nadie lo
       // miro», que es justo lo que el `catch` compartido borraba.
       try {
-        await this.classifyQueue.add('classify', { emailId: upsertedEmail.id });
+        // `jobId` determinista: BullMQ ignora un alta cuyo id ya existe, asi
+        // que reprocesar el mismo tramo -que ahora pasa a proposito cuando el
+        // marcador se retiene- no encola el mismo correo dos veces. Es tambien
+        // lo que impide que el barrido de reconciliacion duplique un trabajo
+        // que ya esta en vuelo.
+        await this.classifyQueue.add('classify', { emailId: upsertedEmail.id }, { jobId: upsertedEmail.id });
         resultado.encolados++;
       } catch (err) {
         resultado.sinEncolar++;
@@ -561,6 +591,103 @@ export class GmailService {
     }
 
     return resultado;
+  }
+
+
+  /**
+   * Barrido de reconciliación: reencola los correos que se quedaron guardados y
+   * sin clasificar.
+   *
+   * ── Por qué existe ────────────────────────────────────────────────────────
+   *
+   * Tapa **dos agujeros a la vez**, y esa es la razón de que sea un barrido y no
+   * un ping.
+   *
+   * **1. Cloud Run escala a cero y con la instancia se apagan los workers.** Un
+   * trabajo que se quede atrás espera al **siguiente correo**, no a un
+   * temporizador: `stalledInterval` no lo reclama porque reclamar exige un
+   * worker vivo. Cualquier petición periódica despierta el contenedor, así que
+   * esto ya bastaría.
+   *
+   * **2. Y además recoge lo que ningún worker vivo recogería.** Cuando el
+   * `upsert` va bien y el `add` a la cola falla, el correo queda en la base y
+   * **el trabajo nunca llegó a existir**. No hay nada que reintentar: no está
+   * atascado, no está fallido, no está. Ni `--min-instances=1` ni un ping ven
+   * eso nunca. Esto sí.
+   *
+   * ── Qué busca ─────────────────────────────────────────────────────────────
+   *
+   * `processedAt` es el marcador de «la IA ya pasó por aquí» y lo escribe
+   * `email-classification.service`. Un correo con `processedAt` en nulo y con
+   * cierta antigüedad es, por definición, uno que no se clasificó.
+   *
+   * ⚠️ **La ventana de gracia no es un margen de cortesía, es lo que evita
+   * duplicar clasificaciones.** Sin ella, este barrido reencolaría correos que
+   * están **en la cola ahora mismo** esperando su turno, y dos trabajos
+   * simultáneos sobre el mismo correo pueden pasar los dos la comprobación de
+   * `processedAt` y crear las tareas por duplicado. Media hora es mucho más de
+   * lo que tarda el camino normal —tres intentos con espera exponencial de 2 s
+   * se agotan en menos de un minuto—, así que lo que quede después es que algo
+   * se perdió de verdad.
+   */
+  async reconciliarSinClasificar(): Promise<{
+    candidatos: number;
+    reencolados: number;
+    fallidos: number;
+  }> {
+    const limite = new Date(Date.now() - GRACIA_RECONCILIACION_MS);
+
+    const huerfanos = await this.prisma.email.findMany({
+      where: { processedAt: null, receivedAt: { lt: limite } },
+      select: { id: true },
+      orderBy: { receivedAt: 'asc' },
+      take: MAX_RECONCILIADOS,
+    });
+
+    let reencolados = 0;
+    let fallidos = 0;
+
+    for (const { id } of huerfanos) {
+      try {
+        // ⚠️ **El `remove` antes del `add` es lo que hace que esto funcione, y
+        // el orden importa.**
+        //
+        // El `add` usa `jobId: id`, así que BullMQ **ignora** un alta cuyo id ya
+        // existe. Eso es justo lo que se quiere frente a un trabajo **activo**
+        // —no duplicar— pero jugaría en contra frente a uno ya **terminado o
+        // fallido**, que sigue guardado (`removeOnComplete`/`removeOnFail` los
+        // conservan un tiempo) y bloquearía el reintento durante días.
+        //
+        // `remove` sobre un trabajo activo **falla**, y por eso el fallo se
+        // traga: si está corriendo, no se toca y el `add` de después se ignora
+        // solo. Si está terminado o fallido, se borra y el `add` entra. Las dos
+        // ramas hacen lo correcto sin preguntar en qué estado está.
+        await this.classifyQueue.remove(id).catch(() => undefined);
+        await this.classifyQueue.add('classify', { emailId: id }, { jobId: id });
+        reencolados++;
+      } catch (err) {
+        fallidos++;
+        this.logger.warn(
+          `Reconciliación: no se pudo reencolar el correo ${id}: ${describirError(err)}`,
+          stackDe(err),
+        );
+      }
+    }
+
+    if (reencolados > 0) {
+      // Con freno en Redis: si esto se repite cada 15 minutos porque hay un
+      // correo que falla siempre, se manda un mensaje, no noventa y seis al día.
+      await this.alertas.avisar(
+        'Barrido de reconciliación: había correos sin clasificar',
+        `${reencolados} correo(s) guardados y sin encolar se han reencolado. ` +
+          'Estaban en la base y sin trabajo asociado, asi que ningun worker los ' +
+          'habria recogido. Si esto se repite, mira los avisos de sincronizacion ' +
+          'de Gmail: el camino normal esta perdiendo el `add` a la cola.',
+        'reconciliacion-huerfanos',
+      );
+    }
+
+    return { candidatos: huerfanos.length, reencolados, fallidos };
   }
 
   // ─── Suscripción push ──────────────────────────────────────────────────
