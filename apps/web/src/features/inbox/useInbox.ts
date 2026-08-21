@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import { visibleLabels } from "./format";
 import type { EmailSnippet, EmailThread } from "./types";
@@ -47,17 +47,21 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
   const [maxResults, setMaxResults] = useState(initialMaxResults);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
 
   const load = useCallback(async (limit: number, { silent = false } = {}) => {
+    const currentReqId = ++reqIdRef.current;
     if (silent) setIsRefreshing(true);
     else setStatus("loading");
     setError(null);
 
     try {
       const data = await apiFetch<EmailSnippet[]>(`/emails?status=${activeStatus}&take=${limit}`);
+      if (currentReqId !== reqIdRef.current) return;
       setEmails(data);
       setStatus("ready");
     } catch (err) {
+      if (currentReqId !== reqIdRef.current) return;
       setError(
         err instanceof Error && err.message.includes("401")
           ? "Tu sesión con Google expiró. Vuelve a iniciar sesión."
@@ -65,7 +69,9 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
       );
       setStatus("error");
     } finally {
-      setIsRefreshing(false);
+      if (currentReqId === reqIdRef.current) {
+        setIsRefreshing(false);
+      }
     }
   }, [activeStatus]);
 
