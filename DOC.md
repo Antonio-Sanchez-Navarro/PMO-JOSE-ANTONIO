@@ -261,6 +261,46 @@ habérselo dicho, no suyo por no haberlo adivinado.
 Su contrapartida: lo que huela a decisión consciente **se pregunta en el buzón
 antes de afirmarse**.
 
+### Fallo de reparto, y es mío — los cinco hallazgos sin dueño (2026-08-21)
+
+@Alana cerró con código cinco hallazgos suyos (§37.15–§37.19) en `apps/api`,
+`apps/web` e `infra/`. Su protocolo dice que solo escribe en `ALANA.md`.
+
+**No empezó con la palabra «ciérralos». Empezó dos pasos antes, conmigo.** Repartí
+los 19 hallazgos —A/B/C a @Claude, seis a @Gravity, el §37.7 al Jefe— y **dejé
+cinco sin dueño**. Ella vio el hueco en su propia lista, se ofreció, y el Jefe
+aceptó una oferta razonable. Nadie hizo nada raro: **el defecto fue que existiera la
+categoría «sin dueño»**.
+
+Y tiene una simetría que no conviene dejar pasar: **los hallazgos huérfanos de la
+auditoría fallaron igual que los 27 correos huérfanos que la auditoría encontró.**
+Algo que nadie posee, que no da error, y que alguien acaba recogiendo por
+casualidad.
+
+**Lo que salió bien, y hay que decirlo primero:** de los cinco, **dos no estaban
+rotos**, y lo cantó ella. Los tres `findMany` que «faltaba» acotar **habrían abierto
+tres agujeros nuevos**: `renovarWatchDeTodos` habría dejado de renovar a los
+usuarios que quedaran fuera —apagando su ingesta sin un error— y el barrido de
+vencidas habría dejado tarjetas atrás **saliendo en verde**.
+
+**Lo que se corrige:**
+
+1. **@Alana encuentra y comprueba; no cierra.** El motivo no es la línea de dominio:
+   auditó y corrigió sus propios hallazgos, y eso deja a nadie fuera para decir «eso
+   que arreglaste no estaba roto». Que lo dijera ella fue honestidad, no diseño.
+2. **Ningún hallazgo se queda sin dueño.** Si es menor, tiene dueño y «más
+   adelante».
+3. **Los encargos dicen «comprueba y, si es cierto, cierra»**, nunca «ciérralos»
+   sobre hallazgos sin verificar.
+
+**Y una deuda que salió de revisar sus commits:** `36938c9` se titula «siete
+mensajes en inglés» y cambió **726 líneas** de `CopilotDrawer.tsx`. Con
+`--ignore-cr-at-eol` son **dos**. Las otras 724 son finales de línea, y el archivo
+quedó mezclado de otra forma de la que estaba. Hay `.gitattributes` desde el 19-08
+y **no lo está impidiendo** — 5 de los primeros 60 archivos de `apps/web` tienen
+finales mezclados. Repartido a @Gravity: **diagnóstico antes que normalización**,
+porque normalizar sin saber por qué falló el control garantiza que vuelva.
+
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 * **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.

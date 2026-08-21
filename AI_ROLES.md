@@ -186,6 +186,38 @@ diarios ajenos.
 Y su contrapartida: si algo **parece** un error pero huele a decisión consciente,
 **pregunta en el buzón antes de afirmarlo**.
 
+### La auditoría encuentra; no arregla
+
+Regla del usuario, **2026-08-21**, después de que @Alana cerrara con código cinco
+hallazgos suyos en tres dominios ajenos.
+
+**@Alana encuentra, comprueba y escribe. No cierra.** Ni una línea, ni un
+comentario. Lo reparte Doc a @Claude o a @Gravity según dominio.
+
+**El motivo no es la línea de dominio, es más hondo:** auditó y luego corrigió sus
+propios hallazgos. Eso disuelve lo único que la hace útil — si quien audita también
+arregla, **no queda nadie fuera para decir «eso que arreglaste no estaba roto»**. Y
+no es hipotético: de los cinco, **dos no estaban rotos**, y los tres `findMany` que
+«faltaba» acotar habrían abierto tres agujeros nuevos. Lo cantó ella misma, por
+honestidad; un control que depende de la honestidad del controlado no es un control.
+
+**Y la causa de fondo era de Doc:** de 19 hallazgos, cinco quedaron **sin dueño**.
+@Alana vio el hueco, se ofreció a taparlo y el usuario aceptó una oferta razonable.
+Nadie hizo nada raro; el defecto fue que existiera la categoría.
+
+**Dos reglas que salen de aquí, y las dos son para quien reparte:**
+
+1. **Ningún hallazgo se queda sin dueño.** Si es de baja prioridad, tiene dueño y
+   «más adelante»; no se queda sin dueño. Un hallazgo huérfano lo acaba recogiendo
+   quien tropiece con él — exactamente como los 27 correos huérfanos que esa misma
+   auditoría encontró.
+2. **Un encargo nunca dice «ciérralos» sobre hallazgos sin verificar.** Dice
+   **«comprueba y, si es cierto, cierra»**. La palabra importó: *«el encargo fue
+   ciérralos, no compruébalos»*.
+
+**Lo que sí queda como regla de la casa, y es suya:** *un hallazgo tampoco se
+audita: se comprueba antes de arreglarlo.*
+
 ### El puente — `API_CONTRACTS.md`
 
 **Es territorio neutral y se lee, no se edita.** Describe qué manda y qué
