@@ -4445,3 +4445,364 @@ principio y no volví a mirarlo antes de publicar** — exactamente lo que §35.
 dice que pasa, *un estado verificado caduca en cuanto alguien actúa sobre él*, y
 lo escribí yo hace dos horas. Antes de publicar cualquier cosa que describa el
 estado del sistema, `git log` otra vez. Cuesta dos segundos.
+
+---
+
+## 37. Auditoría completa del código (2026-08-21)
+
+Barrido de todo el árbol: `apps/api` (19 434 líneas), `apps/web` (4 815),
+`packages/shared`, `infra/`, los dos workflows y los Dockerfiles. Sobre `master`
+en `d5d2d45`, árbol limpio.
+
+**Lo que comprobé ejecutando, no leyendo:** `npm run lint` limpio en los tres
+paquetes · **614 pruebas en 30 suites, todas en verde** (45 s) · sin secretos en
+el árbol (patrones de cadena de conexión, clave privada y claves de API) · sin
+`as any`, sin `@ts-ignore`, sin un solo `catch {}` vacío · los dos `.sh` en LF ·
+`.env.example` cubre las cuatro variables que el arranque exige con `getOrThrow`.
+
+**Lo que NO comprobé, y hay que decirlo:** nada vivo en Google Cloud, ni la
+aplicación en el navegador, ni carga. Esto es lectura de código y ejecución
+local. Todo lo que digo de producción es inferencia sobre la configuración
+escrita, y va marcado como tal.
+
+**El código está muy por encima de la media.** Las sondas separadas, el cifrado
+de tokens, el alertador que nunca lanza, el Dockerfile de tres etapas, el freno
+de alertas con `SET NX EX`, la separación entre lo que el modelo propone y lo
+que ejecuta una persona: eso está bien pensado y bien escrito. Lo que sigue son
+**19 hallazgos**, y los tres primeros son de los que se pagan con datos.
+
+---
+
+### 37.1 🔴 El marcador de Gmail avanza aunque el correo no se haya guardado
+
+`gmail.service.ts:236-240` y `persistEmails` (`:325-361`).
+
+```ts
+const processed = await this.persistEmails(userId, emails);
+const newHistoryId = notifiedHistoryId ?? latestHistoryId ?? startHistoryId;
+await this.saveHistoryId(userId, newHistoryId);   // ← pase lo que pase
+```
+
+`persistEmails` **se traga los fallos correo a correo**: `catch` → `logger.warn`
+→ sigue con el siguiente. Y el marcador se guarda después, sin mirar si algo
+falló.
+
+**Un correo que falle al guardarse no se vuelve a ver nunca.** La siguiente
+sincronización arranca desde el marcador nuevo y `users.history.list` ya no lo
+menciona: no está en la base y no volverá a estarlo. No hay error, no hay 500,
+no hay reintento — hay una línea `warn` en Cloud Logging que nadie lee.
+
+**Y hay un caso peor dentro del mismo `try`:**
+
+```ts
+const upsertedEmail = await this.prisma.email.upsert({ ... });
+await this.classifyQueue.add('classify', { emailId: upsertedEmail.id });  // ← Redis
+```
+
+Si **Redis está caído o rechaza**, el correo ya está guardado y el `add` lanza:
+el `catch` se lo traga, `processedCount` no se incrementa, y ese correo queda en
+la base **sin clasificar para siempre**. Nada lo reintenta: no existe ningún
+barrido de «correos guardados sin procesar». El síntoma para el usuario es un
+correo que aparece en la bandeja y del que nunca sale una tarea.
+
+**El arreglo tiene dos mitades y las dos son pequeñas:** que el marcador avance
+solo si no hubo fallos —o solo hasta el último correo que sí se guardó—, y sacar
+el `add` de la cola del `try` del upsert, porque **son dos fallos distintos con
+consecuencias distintas** y ahora comparten el mismo `catch`.
+
+### 37.2 🔴 La cola de clasificación se encola sin opciones
+
+`gmail.service.ts:355`:
+
+```ts
+await this.classifyQueue.add('classify', { emailId: upsertedEmail.id });
+```
+
+Sin `attempts`, sin `backoff`, sin `removeOnComplete`, sin `removeOnFail`. Y
+`BullModule.forRootAsync` (`app.module.ts:81`) **no declara `defaultJobOptions`**:
+solo la conexión. Así que valen los valores de fábrica de BullMQ, y son dos:
+
+**a) `attempts` por defecto es 1: no hay reintento.** Y el worker está escrito
+como si lo hubiera — `ai.processor.ts:106`:
+
+```ts
+throw error; // Para que BullMQ lo reintente si hay redelivery configurado
+```
+
+No lo hay. Un fallo transitorio —un corte de red hacia Anthropic que no sea un
+429— manda el correo directo a fallidos y a la DLQ en el primer intento. **El
+comentario describe una red de seguridad que nadie tendió.** Y la comparación lo
+delata: sus dos vecinas sí las ponen (`gmail.controller.ts:223` con
+`attempts: 3`, `auth.controller.ts:114` igual), así que esto es un olvido, no
+una decisión.
+
+**b) `removeOnComplete` por defecto es `false`: los trabajos completados se
+quedan en Redis para siempre.** Cada correo clasificado deja un registro
+permanente. Sus vecinas también lo ponen (`removeOnComplete: 100` en el webhook,
+`true` en el login) y esta no. En un Upstash con cuota —y con la historia de
+consumo que arrastra este proyecto, §32.2— es crecimiento sin techo en el sitio
+donde ya duele.
+
+### 37.3 🔴 Bucle de paginación sin tope contra Gmail
+
+`gmail.service.ts:266-284`, `collectHistory`:
+
+```ts
+do {
+  const res = await gmail.users.history.list({ ..., maxResults: 500, pageToken });
+  ...
+  pageToken = res.data.nextPageToken ?? undefined;
+} while (pageToken);
+```
+
+**No hay límite de páginas ni de tiempo.** Es el único bucle verdaderamente
+abierto del backend —los otros tres que hay terminan solos, los revisé uno a
+uno—. Tras una caída larga, con muchos correos acumulados desde el
+`startHistoryId`, esto encadena llamadas hasta que Gmail deje de paginar.
+
+Y el bucle no se rompe solo: lo rompe **Cloud Run cortando la petición**, y
+entonces Pub/Sub reintenta el push, que vuelve a empezar **desde el mismo
+marcador** —porque el marcador solo avanza al final—. Un bucle de reintentos que
+no converge, con la DLQ como único final.
+
+La red de seguridad que sí existe cubre otro caso: si el `historyId` caducó,
+Google responde 404 y se cae a `backfill`, que está acotado. Pero eso es para el
+marcador viejo, no para el volumen. **Un tope de páginas —20, por decir un
+número— con caída a `backfill` al superarlo cierra el hueco entero.**
+
+---
+
+### 37.4 🟠 El límite «por IP» no es por IP
+
+`throttle.config.ts` se titula *«Límite de peticiones por IP»* y `main.ts`
+**no llama a `app.set('trust proxy', ...)`** en ninguna línea. Lo busqué en todo
+el backend: no está.
+
+`ThrottlerGuard` identifica al cliente por `req.ips[0] ?? req.ip`, y `req.ips`
+**solo se rellena si Express confía en el proxy**. En Cloud Run, detrás del
+frontend de Google, sin esa bandera `req.ip` es la dirección del proxy: **la
+misma para todo el mundo**. Todo el tráfico comparte un único cubo.
+
+Con N=1 no se nota. Lo que cambia es qué protege: el cubo estrecho de
+autenticación —10 por minuto— también es global, así que **cualquiera que pruebe
+contra `/auth` deja al usuario legítimo fuera**. Se arregla con una línea, y hay
+que ponerla con cuidado (`trust proxy` mal configurado permite falsear la IP con
+una cabecera).
+
+### 37.5 🟠 Cloud Run corta a los 5 minutos; el copiloto se concede 10
+
+`anthropic.strategy.ts:37`:
+
+```ts
+const TIMEOUT_MS = 10 * 60_000;   // 10 minutos
+```
+
+Y el `gcloud run deploy` de `deploy.yml:610-620` **no pasa `--timeout`**, así
+que rige el valor por defecto de Cloud Run: **300 segundos**. Un turno largo
+—hasta cuatro vueltas con herramientas entre medias, que es lo que `MAX_VUELTAS`
+permite— lo corta la plataforma a los 5 minutos mientras el backend cree que le
+quedan otros 5. El usuario ve el stream morir sin evento `error`, porque el
+corte ocurre por debajo del código.
+
+Los dos números tienen que decir lo mismo. Da igual cuál se mueva; hoy se
+contradicen.
+
+### 37.6 🟠 Sin `--max-instances`, y el comentario dice que sí lo hay
+
+El mismo bloque de `deploy.yml` explica el coste de `--no-cpu-throttling` con
+esta frase: *«Con `maxScale=20` y escalado a cero el gasto sigue siendo
+pequeño»*. **`maxScale` no está en el comando.** Ni `--max-instances`, ni
+`--concurrency`, ni `--cpu`, ni `--memory`. Rige el defecto: **100 instancias**.
+
+Es exactamente el fallo contra el que ese mismo archivo advierte dos párrafos más
+arriba —una configuración que se da por puesta y vive en otro sitio—, cometido
+en el comentario que lo advierte.
+
+Y se junta con lo siguiente: **Prisma no lleva `connection_limit`** en la cadena
+de conexión, así que cada instancia abre su pool por defecto. Cien instancias
+por un pool de cinco son quinientas conexiones contra un Cloud SQL que no las
+admite. Hoy es teórico —hay un usuario—, pero el que lo dispararía es un bucle
+de reintentos, y de esos ya hemos tenido.
+
+### 37.7 🟠 Escalar a cero apaga los workers, y nadie los despierta
+
+`--no-cpu-throttling` mantiene la CPU **mientras la instancia viva**, y el
+comentario lo explica bien. Lo que no cubre es que Cloud Run **apaga la
+instancia** tras un rato sin peticiones.
+
+Los workers de BullMQ trabajan fuera del ciclo HTTP. Si la última instancia se
+apaga con trabajos pendientes, **nadie los toma hasta que llegue otra
+petición**. Y con `stalledInterval: 600_000` (10 min, subido a propósito para
+ahorrar comandos de Upstash, §32), la reclamación tampoco ocurre: reclamar
+requiere un worker vivo.
+
+Hoy lo tapa la casualidad de que el disparador es un push HTTP —llega un correo,
+despierta el contenedor, y de paso se procesa la cola—. Pero un trabajo que se
+quede atrás **espera al siguiente correo**, no a un temporizador. Si el trabajo
+atrasado *es* el de un correo, puede esperar horas.
+
+### 37.8 🟠 El socket reconecta para siempre y la sesión no se refresca
+
+`tasks.gateway.ts:88-110` autentica el socket **una sola vez, en el handshake**,
+con el token de acceso — que dura **15 minutos** (`auth.constants.ts:24`). El
+socket no se vuelve a autenticar mientras siga abierto.
+
+El problema aparece en la reconexión. `useSocket.ts:93` crea el socket con las
+opciones por defecto de socket.io, y por defecto **`reconnectionAttempts` es
+infinito** con un tope de 5 s entre intentos. Si la conexión se cae después de
+que el token de acceso haya expirado —una pestaña abierta toda la noche, un
+cambio de red—, el backend rechaza el handshake, socket.io reintenta, el backend
+vuelve a rechazar, **y así indefinidamente**: un intento cada 5 s, unos 17 000 al
+día, cada uno despertando Cloud Run.
+
+Y no hay manejador de `connect_error` en todo el frontend. **El tablero deja de
+actualizarse en vivo y no se lo dice a nadie**: las tarjetas siguen ahí, viejas,
+con aspecto de estar bien. Es la forma de fallo de esta casa, otra vez.
+
+Lo que lo cierra: un `connect_error` que llame a `/auth/refresh` y reconecte, y
+un tope de reintentos con aviso visible al usuario.
+
+---
+
+### 37.9 🟡 El buscador del tablero lanza una petición por tecla
+
+`KanbanBoard.tsx:374` → `setSearchFilter(e.target.value)` en cada `onChange`.
+`searchFilter` es dependencia de `loadTasks` (`:45,79`), que es dependencia del
+`useEffect` (`:83`). Sin `debounce` y sin cancelación.
+
+Escribir «reunión» son **siete peticiones `GET /tasks`**, y como `loadTasks`
+empieza con `setLoading(true)`, el tablero entero **parpadea a «Cargando
+tablero…» en cada letra**. Además, sin cancelación, dos respuestas pueden llegar
+desordenadas y dejar en pantalla el resultado de una búsqueda anterior.
+
+### 37.10 🟡 Mover una tarjeta no se deshace si falla
+
+`KanbanBoard.tsx:246-264`:
+
+```ts
+moveTask(activeId, finalTask.status, positionInColumn)
+  .then((response) => { /* reconcilia */ })
+  .catch((err) => console.error("Error guardando el movimiento de tarea en BD:", err));
+```
+
+Un `console.error` y nada más. **La tarjeta se queda movida en pantalla y el
+servidor no se enteró**: al recargar vuelve a su sitio, sin que nadie haya dicho
+que el movimiento no se guardó.
+
+Lo que lo convierte en hallazgo y no en opinión es que **el mismo archivo lo hace
+bien 60 líneas más abajo**: `handleDeleteTask` (`:317-329`) guarda la tarea,
+revierte si falla y avisa con un `toast`. Dos caminos optimistas en el mismo
+componente, uno con red y otro sin ella.
+
+### 37.11 🟡 Cambiar de pestaña en la bandeja puede dejar la lista anterior
+
+`useInbox.ts:52-71`. `load` no cancela la petición en vuelo y el efecto se
+redispara al cambiar `activeStatus`. Dos peticiones vivas, la vieja resuelve
+después, `setEmails(data)` pisa a la nueva: **se ven los correos de la pestaña
+que ya no está seleccionada**. Un `AbortController` o un contador de generación
+lo cierra.
+
+### 37.12 🟡 El 401 se detecta leyendo el texto del error
+
+`useInbox.ts:65`:
+
+```ts
+err instanceof Error && err.message.includes("401")
+```
+
+Y `ApiError` **tiene un campo `status`** (`lib/api.ts:12`). Buscar «401» dentro
+de un mensaje que se construye como `` `${método} ${ruta} → ${status}` `` acierta
+hoy y falla el día que una ruta lleve 401 en el texto. El dato correcto está a
+mano.
+
+### 37.13 🟡 `apiFetch` refresca sin cerrojo
+
+`lib/api.ts:29-37`. Si cinco peticiones reciben 401 a la vez, se disparan cinco
+`/auth/refresh` simultáneos. **Hoy no rompe nada** —los JWT no se rotan ni se
+invalidan, así que los cinco tienen éxito—, pero el cubo de autenticación son 10
+por minuto (§37.4, y global), así que dos rachas seguidas rozan el límite. El día
+que se rote el refresh, esto se convierte en cierres de sesión aleatorios.
+
+### 37.14 🟡 La URL de producción está escrita a mano en dos archivos
+
+`lib/api.ts:8` y `useSocket.ts:91` llevan ambos
+`https://pmo-api-mlpuuasqka-uc.a.run.app` como valor de reserva. Es un hecho de
+infraestructura duplicado en dos sitios del código: el día que cambie el
+servicio, el frontend se queda hablando solo, y hay que acordarse de los dos.
+
+### 37.15 🟡 Consultas sin tope
+
+`time.service`, `tags.service`, `copilot-audit.service` y `overdue.service` hacen
+`findMany` sin `take`. `GET /tasks` sí pagina y el copiloto también, así que esto
+está acotado por costumbre y no por regla. Con N=1 no importa; el barrido de
+vencidas es el que primero lo notaría, porque mete todo lo leído en **una sola
+transacción con plazo de 15 s** (`prisma.service.ts:36`).
+
+### 37.16 🟡 Rotar `TOKEN_ENCRYPTION_KEY` apaga Gmail sin decir por qué
+
+`crypto.service.ts:68`, `decryptJson`, no captura: si la clave cambia, los tokens
+guardados dejan de descifrarse y cualquier operación de Gmail muere con un 500
+opaco. No hay camino de «vuelve a autorizar». No es un error de hoy: es una
+trampa de operación que conviene tener escrita antes de tocar esa variable.
+
+---
+
+### 37.17 🔵 Deriva de documentación: cinco sitios que describen un mundo anterior
+
+Es el patrón de la casa y por eso va como bloque, no como notas sueltas:
+
+| Dónde | Qué dice | Qué es |
+|---|---|---|
+| `prisma.service.ts:5-25` | Los plazos suben por *«los arranques en frío de **Neon**»* | La base es Cloud SQL desde el 18-08. Los números siguen siendo razonables; **el motivo ya no existe**, y es el motivo lo que se lee al decidir si tocarlos |
+| `infra/backup/respaldo.sh:9` | *«de Secret Manager al contenedor y de ahí a **Neon**»* | Igual |
+| `useInbox.ts:38` | *«Carga la bandeja desde `GET /gmail/inbox`»* | El código llama a `/emails` (`:59`) |
+| `deploy.yml:606` | *«Con `maxScale=20`…»* | No está en el comando (§37.6) |
+| `app.module.ts:28` | `// import { AiModule }` comentado | Está importado de verdad tres líneas arriba |
+
+### 37.18 🔵 Mezcla de idioma en los mensajes de consola
+
+La base es deliberadamente española —comentarios, identificadores, mensajes de
+error al usuario—, y quedan cinco mensajes de consola en inglés:
+`'Error fetching copilot providers'`, `'Failed to parse SSE data'`,
+`'Error creating tag'`, `'Error fetching tags'`, `console.error(e)` a secas en
+`EmailDetailModal.tsx:26`. Cosmético, pero es donde se mira cuando algo falla.
+
+### 37.19 🔵 Los scripts no llevan el bit de ejecución
+
+`infra/backup/respaldo.sh` y `restaurar.sh` están en el índice como `100644`. Hoy
+da igual porque el `Dockerfile` hace `chmod`, pero el día que alguien los
+ejecute desde el árbol o simplifique esa línea, dejan de arrancar. Un
+`git update-index --chmod=+x` y deja de ser una dependencia oculta.
+
+---
+
+### 37.20 Lo que quedó bien cerrado desde ayer
+
+Comprobado, porque también forma parte del barrido:
+
+- **El ARIA anidado del Inbox está arreglado**, y arreglado bien:
+  `InboxPage.tsx:284` lleva ahora `{...(!interactive ? { role: "button", tabIndex: 0 } : {})}`,
+  que es lo que conserva el acceso por teclado en el caso sin `onToggle`.
+- **`mockTasks.ts` ya no existe** y no queda ni una referencia.
+- **`vercel.json` usa `$VERCEL_GIT_PREVIOUS_SHA..$VERCEL_GIT_COMMIT_SHA`**, que
+  cierra el hueco de `HEAD^ HEAD` que señalé: ya mira el empujón y no el último
+  commit. ⚠️ **Pero volvió a la raíz del repositorio**, así que la pregunta de
+  §35.7 sigue viva y sin comprobar: si el *Root Directory* del proyecto en Vercel
+  es `apps/web`, ese archivo no se lee. Una mirada al panel lo resuelve.
+
+### 37.21 Lo que enseña este barrido
+
+Los tres hallazgos rojos son **la misma forma de fallo**, y es la de toda la
+Fase 4: **algo que sale en verde mientras pierde trabajo por detrás.** El
+marcador que avanza sobre un correo que no se guardó, la cola que no reintenta
+aunque el comentario diga que sí, el bucle que solo termina cuando lo corta la
+plataforma. Ninguno lanza, ninguno tiene 500, ninguno enciende una alerta.
+
+Y lo que más me interesa: **dos de ellos están documentados al revés.**
+`ai.processor.ts` explica un reintento que no existe, y `deploy.yml` justifica un
+coste con un `maxScale` que no fija. En un repositorio donde los comentarios son
+tan buenos, **un comentario equivocado es más peligroso que ninguno**, porque el
+siguiente que llegue no va a ir a comprobarlo — va a leerlo y a creerlo.
+
+Un respaldo no se audita, se restaura. Un comentario tampoco se audita: se
+comprueba contra lo que hace el código.
