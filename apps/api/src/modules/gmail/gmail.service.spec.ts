@@ -131,3 +131,202 @@ describe('GmailService · watchInbox', () => {
     expect(watch).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * `syncHistory` / `persistEmails` — el marcador de historial y los dos fallos
+ * que compartían `catch`.
+ *
+ * **Por qué existen estas pruebas.** Las 614 que ya había estaban todas en
+ * verde mientras la ingesta perdía correos, porque ninguna miraba lo que pasa
+ * cuando *guardar* o *encolar* fallan. Los tres agujeros eran:
+ *
+ * 1. El marcador se guardaba **pasara lo que pasara**. `persistEmails` se traga
+ *    los fallos correo a correo, así que un `upsert` roto significaba que ese
+ *    correo no se volvía a ver nunca: la siguiente sincronización arrancaba del
+ *    marcador nuevo y `users.history.list` ya no lo mencionaba.
+ * 2. El `upsert` y el `add` a la cola compartían `try`. Si Redis rechazaba, el
+ *    correo ya estaba en la base, el contador **no** se incrementaba, el `catch`
+ *    lo tapaba con un `warn` y el log decía un número **más bajo de lo real**
+ *    sin un solo error. Guardado y sin clasificar, para siempre.
+ * 3. `collectHistory` paginaba `while (pageToken)` sin tope. Quien lo rompía era
+ *    Cloud Run cortando la petición, y Pub/Sub reintentaba desde el mismo
+ *    marcador: un bucle que no converge.
+ *
+ * Cada `it` de aquí falla contra el código anterior. Esa es la condición para
+ * que sirvan de algo.
+ */
+describe('GmailService · syncHistory y el marcador de historial', () => {
+  const USUARIO = 'user-1';
+  const MARCADOR_VIEJO = '1000';
+
+  interface Opciones {
+    upsert?: jest.Mock;
+    add?: jest.Mock;
+    paginas?: number;
+    correos?: number;
+  }
+
+  function crear(opciones: Opciones = {}) {
+    const correos = opciones.correos ?? 1;
+    const paginas = opciones.paginas ?? 1;
+
+    const upsert = opciones.upsert ?? jest.fn().mockImplementation(({ where }) =>
+      Promise.resolve({ id: `db-${where.gmailMessageId}` }),
+    );
+    const add = opciones.add ?? jest.fn().mockResolvedValue({});
+
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ gmailHistoryId: MARCADOR_VIEJO }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      email: { upsert },
+    };
+
+    const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
+
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn() } as never,
+      prisma as never,
+      { add } as never,
+      alertas as never,
+    );
+
+    // `users.history.list` devuelve `paginas` páginas; la última sin token.
+    let llamadas = 0;
+    const historyList = jest.fn().mockImplementation(() => {
+      llamadas++;
+      const ultima = llamadas >= paginas;
+      return Promise.resolve({
+        data: {
+          history:
+            llamadas === 1
+              ? [
+                  {
+                    messagesAdded: Array.from({ length: correos }, (_, i) => ({
+                      message: { id: `msg-${i}` },
+                    })),
+                  },
+                ]
+              : [],
+          historyId: '2000',
+          nextPageToken: ultima ? undefined : `pag-${llamadas}`,
+        },
+      });
+    });
+
+    const getProfile = jest.fn().mockResolvedValue({ data: { historyId: '9999' } });
+    const messagesList = jest.fn().mockResolvedValue({ data: { messages: [{ id: 'bf-1' }] } });
+
+    (service as unknown as { getGmailClient: unknown }).getGmailClient = jest
+      .fn()
+      .mockResolvedValue({
+        users: {
+          history: { list: historyList },
+          getProfile,
+          messages: { list: messagesList },
+        },
+      });
+
+    // `fetchMessages` habla con Gmail y no es lo que se prueba aquí.
+    (service as unknown as { fetchMessages: unknown }).fetchMessages = jest
+      .fn()
+      .mockImplementation((_g: unknown, ids: string[]) =>
+        Promise.resolve(
+          ids.map((id) => ({
+            id,
+            threadId: 't',
+            from: 'a@b.c',
+            subject: 's',
+            snippet: '',
+            labels: [],
+            date: '2026-08-21T00:00:00Z',
+          })),
+        ),
+      );
+
+    return { service, prisma, add, upsert, alertas, historyList, getProfile };
+  }
+
+  it('si un correo NO se puede guardar, el marcador se queda donde estaba', async () => {
+    // El agujero original: el marcador avanzaba igual y ese correo desaparecía.
+    const upsert = jest.fn().mockRejectedValue(new Error('la base dijo que no'));
+    const { service, prisma } = crear({ upsert });
+
+    const res = await service.syncHistory(USUARIO);
+
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(res.historyId).toBe(MARCADOR_VIEJO);
+  });
+
+  it('si el correo se guarda pero NO se encola, el marcador tampoco avanza', async () => {
+    // Este es el que más costaba ver: el dato está, el procesamiento no, y el
+    // `catch` compartido lo dejaba en un `warn` con el contador sin subir.
+    const add = jest.fn().mockRejectedValue(new Error('Redis dijo que no'));
+    const { service, prisma } = crear({ add });
+
+    const res = await service.syncHistory(USUARIO);
+
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(res.historyId).toBe(MARCADOR_VIEJO);
+  });
+
+  it('un fallo al encolar NO impide que el correo quede guardado', async () => {
+    // El `upsert` va primero y en su propio `try`: perder la clasificación no
+    // puede llevarse por delante el dato.
+    const add = jest.fn().mockRejectedValue(new Error('Redis dijo que no'));
+    const { service, upsert } = crear({ add });
+
+    await service.syncHistory(USUARIO);
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('cuando queda algo pendiente, avisa en vez de callarse', async () => {
+    const add = jest.fn().mockRejectedValue(new Error('Redis dijo que no'));
+    const { service, alertas } = crear({ add });
+
+    await service.syncHistory(USUARIO);
+
+    expect(alertas.avisar).toHaveBeenCalledTimes(1);
+  });
+
+  it('si todo va bien, el marcador avanza y no avisa a nadie', async () => {
+    const { service, prisma, alertas } = crear();
+
+    const res = await service.syncHistory(USUARIO);
+
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    expect(res.historyId).toBe('2000');
+    expect(res.processed).toBe(1);
+    expect(alertas.avisar).not.toHaveBeenCalled();
+  });
+
+  it('`processed` cuenta lo encolado, no lo intentado', async () => {
+    // El log decía un número más bajo de lo real y sin error; ahora el número
+    // significa exactamente una cosa.
+    const add = jest
+      .fn()
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('Redis dijo que no'));
+    const { service } = crear({ add, correos: 2 });
+
+    const res = await service.syncHistory(USUARIO);
+
+    expect(res.processed).toBe(1);
+  });
+
+  it('un historial larguísimo se corta y cae a backfill en vez de paginar sin fin', async () => {
+    // Sin tope, el bucle sólo lo rompía Cloud Run cortando la petición, y
+    // Pub/Sub reintentaba desde el mismo marcador: nunca converge.
+    const { service, historyList, getProfile, alertas } = crear({ paginas: 50 });
+
+    const res = await service.syncHistory(USUARIO);
+
+    expect(historyList.mock.calls.length).toBeLessThanOrEqual(20);
+    expect(res.mode).toBe('backfill');
+    expect(getProfile).toHaveBeenCalled();
+    expect(alertas.avisar).toHaveBeenCalled();
+  });
+});

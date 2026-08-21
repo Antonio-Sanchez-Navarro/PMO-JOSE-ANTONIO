@@ -78,11 +78,45 @@ import { TasksModule } from "./modules/tasks/tasks.module";
     // Las rutas que dispara Cloud Scheduler. Va después de OverdueModule y
     // GmailModule porque consume lo que ambos exportan.
     CronModule,
+    /**
+     * BullMQ. Hasta el 2026-08-21 esto declaraba **solo la conexion**, y por
+     * tanto regian los valores de fabrica, que son dos malas noticias:
+     *
+     * - **`attempts` = 1: no habia reintento.** Y `ai.processor.ts` lanzaba con
+     *   el comentario «para que BullMQ lo reintente si hay redelivery
+     *   configurado». No lo habia: el comentario describia una red que nadie
+     *   habia tendido, y un fallo pasajero de la IA mandaba el correo a fallidos
+     *   a la primera. Sus dos vecinas (`gmail.controller.ts` y
+     *   `auth.controller.ts`) si ponian `attempts: 3` en el `add`, asi que esto
+     *   era un olvido y no una decision.
+     * - **`removeOnComplete` = false: los trabajos completados se quedaban en
+     *   Redis para siempre.** Crecimiento sin techo, y justo en Upstash, que es
+     *   donde ya dolio una vez.
+     *
+     * Va aqui y no en cada `add` para que **una cola nueva nazca con red**, que
+     * es el mismo criterio que el `ThrottlerGuard` global de mas abajo: lo que
+     * depende de que alguien se acuerde, se olvida. Los `add` que ya traen sus
+     * propias opciones siguen mandando sobre esto.
+     */
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         connection: {
           url: configService.get<string>('REDIS_URL') || 'redis://localhost:6379',
+        },
+        defaultJobOptions: {
+          // Tres intentos, los mismos que ya usaban las dos vecinas.
+          attempts: 3,
+          // Con espera creciente: un reintento inmediato contra un servicio
+          // saturado es una segunda forma de saturarlo.
+          backoff: { type: 'exponential', delay: 2_000 },
+          // El techo que faltaba. Se guarda algo de historial reciente para
+          // poder mirar que paso, pero acotado por numero **y** por edad.
+          removeOnComplete: { count: 1_000, age: 24 * 3_600 },
+          // Los fallidos duran mas -son los que se investigan- pero tampoco
+          // para siempre. Los oyentes de la DLQ ya avisaron cuando ocurrieron,
+          // asi que borrarlos a los 7 dias no pierde el aviso.
+          removeOnFail: { count: 5_000, age: 7 * 24 * 3_600 },
         },
       }),
       inject: [ConfigService],

@@ -104,7 +104,13 @@ export class AiProcessor extends WorkerHost {
       }
 
       this.logger.error(`Falló la clasificación del email ${emailId}: ${describirError(error)}`, stackDe(error));
-      throw error; // Para que BullMQ lo reintente si hay redelivery configurado
+      // Se relanza para que BullMQ lo reintente. Desde el 2026-08-21 eso es
+      // cierto: `attempts: 3` con espera exponencial esta en las
+      // `defaultJobOptions` de `app.module.ts`. **Antes no lo era** -regia el
+      // `attempts: 1` de fabrica- y este comentario describia una red que nadie
+      // habia tendido. Si alguien quita esas opciones, esta linea vuelve a
+      // mentir y el correo se va a fallidos al primer tropiezo.
+      throw error;
     }
   }
 

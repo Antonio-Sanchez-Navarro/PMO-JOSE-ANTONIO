@@ -40,10 +40,58 @@ export interface SyncResult {
   historyId?: string;
 }
 
+/**
+ * Lo que salio de intentar guardar y encolar una tanda de correos.
+ *
+ * Son cuatro numeros y no uno porque **guardar y encolar fallan distinto**:
+ * `fallidos` significa que el correo no esta en ninguna parte, y `sinEncolar`
+ * que esta guardado pero nadie lo va a clasificar. El primero obliga a no
+ * mover el marcador de historial; el segundo tambien, pero por otro motivo
+ * (que el reintento lo recoja), y los dos merecen decirse por separado en el log.
+ */
+export interface PersistResult {
+  /** Correos que llegaron a la base. */
+  guardados: number;
+  /** De los guardados, los que ademas entraron en la cola de clasificacion. */
+  encolados: number;
+  /** El `upsert` fallo: el correo NO esta guardado. */
+  fallidos: number;
+  /** El `upsert` fue bien y el `add` no: guardado y sin clasificar. */
+  sinEncolar: number;
+}
+
 type GmailClient = gmail_v1.Gmail;
 
 /** Cuántos correos trae la primera sincronización cuando no hay `historyId` previo. */
 const BACKFILL_SIZE = 25;
+
+/**
+ * Tope de paginas de `users.history.list` en una sola sincronizacion.
+ *
+ * **Por que existe un tope.** El bucle paginaba `while (pageToken)` sin limite
+ * de paginas ni de tiempo. Tras una caida larga encadenaba llamadas hasta que
+ * Gmail dejara de paginar, y quien lo rompia no era el codigo: era **Cloud Run
+ * cortando la peticion**. Entonces Pub/Sub reintentaba el push, que volvia a
+ * empezar **desde el mismo marcador** -porque el marcador solo avanza al final-
+ * y el resultado era un bucle de reintentos que no converge, con la DLQ como
+ * unico final.
+ *
+ * **Por que 20 y no otro numero.** Cada pagina pide `maxResults: 500`, asi que
+ * 20 paginas son hasta **10.000 entradas de historial** en una pasada. Con un
+ * solo usuario (alcance N=1) eso es mucho mas de lo que cabe entre dos
+ * notificaciones push, que llegan por correo recibido: llegar a este tope no
+ * significa "buzon activo", significa **"el marcador lleva tanto tiempo parado
+ * que ya no merece la pena alcanzarlo pagina a pagina"**.
+ *
+ * El limite real no es este numero, es el tiempo: 20 llamadas a Gmail mas el
+ * `fetchMessages` de lo que traigan caben con holgura en los 300 s que Cloud Run
+ * da por defecto, y el objetivo es **decidir nosotros** antes de que la
+ * plataforma decida por nosotros a mitad de escritura.
+ *
+ * Si algun dia hay mas de un usuario o el buzon recibe mucho mas, esto es lo
+ * primero que hay que revisar -junto con el `--timeout` del servicio-.
+ */
+const MAX_PAGINAS_HISTORIAL = 20;
 
 @Injectable()
 export class GmailService {
@@ -230,19 +278,90 @@ export class GmailService {
     }
 
     try {
-      const { messageIds, latestHistoryId } = await this.collectHistory(gmail, startHistoryId);
+      const { messageIds, latestHistoryId, truncado } = await this.collectHistory(
+        gmail,
+        startHistoryId,
+      );
+
+      // El historial es mas largo de lo que se puede recorrer de una sentada.
+      // Seguir seria encadenar llamadas hasta que Cloud Run corte la peticion a
+      // mitad, y entonces Pub/Sub reintenta desde el mismo marcador: un bucle
+      // que no converge. Se rehace con backfill, que es finito y termina.
+      //
+      // ⚠️ **Y esto pierde correos**, hay que decirlo: el backfill trae los
+      // ultimos BACKFILL_SIZE (25) de la bandeja, no el tramo que faltaba. Se
+      // elige porque la alternativa -el bucle- no trae ninguno y ademas no
+      // termina. Por eso avisa: la decision de que hacer con el hueco es de una
+      // persona, no de este `if`.
+      if (truncado) {
+        await this.alertas.avisar(
+          'Historial de Gmail demasiado largo: se rehace con backfill',
+          `Usuario ${userId}: el historial desde ${startHistoryId} supera ` +
+            `${MAX_PAGINAS_HISTORIAL} paginas. Se cae a backfill de los ultimos ` +
+            `${BACKFILL_SIZE} correos, asi que el tramo intermedio NO se ingiere. ` +
+            'Suele significar que la ingesta estuvo caida mucho tiempo.',
+          `gmail-historial-truncado:${userId}`,
+        );
+        return this.backfill(userId, gmail);
+      }
 
       const emails =
         messageIds.length > 0 ? await this.fetchMessages(gmail, messageIds, 'full') : [];
-      const processed = await this.persistEmails(userId, emails);
+      const recuento = await this.persistEmails(userId, emails);
 
-      const newHistoryId = notifiedHistoryId ?? latestHistoryId ?? startHistoryId;
-      await this.saveHistoryId(userId, newHistoryId);
+      // ─── El marcador solo avanza si NO se quedo nada atras ──────────────
+      //
+      // Antes esto era una linea: se guardaba el marcador nuevo pasara lo que
+      // pasara. Y como `persistEmails` se traga los fallos correo a correo, un
+      // correo que fallara al guardarse **no se volvia a ver nunca**: la
+      // siguiente sincronizacion arrancaba del marcador nuevo y
+      // `users.history.list` ya no lo mencionaba. Perdida de datos silenciosa,
+      // con el log diciendo un numero mas bajo y ningun error.
+      //
+      // Ahora, si algo quedo pendiente, **el marcador se queda donde estaba** y
+      // la siguiente pasada vuelve a traer el mismo tramo. Repetir es barato y
+      // seguro: el `upsert` es idempotente por `gmailMessageId` y el `add` se
+      // reintenta solo, asi que un fallo pasajero de Redis se cura en la
+      // siguiente vuelta sin que nadie haga nada.
+      //
+      // ⚠️ **El precio, y hay que conocerlo:** si un correo falla *siempre*
+      // -uno con datos que la base rechaza- el marcador no avanza nunca y la
+      // sincronizacion repite ese tramo indefinidamente. Eso NO detiene la
+      // ingesta (el tramo repetido incluye los correos nuevos), pero desperdicia
+      // trabajo, y sobre todo: los `historyId` caducan a la semana. Si el atasco
+      // dura tanto, Gmail respondera 404 y se caera a `backfill`, que solo trae
+      // los ultimos BACKFILL_SIZE (25). **Por eso esto avisa en vez de callarse**:
+      // atascarse y gritar es preferible a avanzar y perder, pero solo si
+      // alguien se entera.
+      const quedaPendiente = recuento.fallidos > 0 || recuento.sinEncolar > 0;
+      const newHistoryId = quedaPendiente
+        ? startHistoryId
+        : (notifiedHistoryId ?? latestHistoryId ?? startHistoryId);
+
+      if (!quedaPendiente) {
+        await this.saveHistoryId(userId, newHistoryId);
+      }
 
       this.logger.log(
-        `Sync incremental para ${userId}: ${processed} correo(s) desde historyId ${startHistoryId} → ${newHistoryId}`,
+        `Sync incremental para ${userId}: ${recuento.encolados} encolado(s), ` +
+          `${recuento.guardados} guardado(s), ${recuento.fallidos} fallido(s), ` +
+          `${recuento.sinEncolar} sin encolar · historyId ${startHistoryId} → ${newHistoryId}` +
+          (quedaPendiente ? ' (marcador RETENIDO: se reintentara el mismo tramo)' : ''),
       );
-      return { processed, mode: 'incremental', historyId: newHistoryId };
+
+      if (quedaPendiente) {
+        await this.alertas.avisar(
+          'Sincronizacion de Gmail incompleta: el marcador no avanza',
+          `Usuario ${userId}: ${recuento.fallidos} correo(s) sin guardar y ` +
+            `${recuento.sinEncolar} guardado(s) sin encolar. El marcador se queda en ` +
+            `${startHistoryId} y se reintentara el mismo tramo. Si esto se repite, ` +
+            'mira los avisos anteriores: un correo que falla siempre atasca la ingesta ' +
+            'y los historyId caducan a la semana.',
+          `gmail-sync-incompleta:${userId}`,
+        );
+      }
+
+      return { processed: recuento.encolados, mode: 'incremental', historyId: newHistoryId };
     } catch (err) {
       if (this.isHistoryExpired(err)) {
         this.logger.warn(
@@ -258,12 +377,14 @@ export class GmailService {
   private async collectHistory(
     gmail: GmailClient,
     startHistoryId: string,
-  ): Promise<{ messageIds: string[]; latestHistoryId?: string }> {
+  ): Promise<{ messageIds: string[]; latestHistoryId?: string; truncado: boolean }> {
     const ids = new Set<string>();
     let pageToken: string | undefined;
     let latestHistoryId: string | undefined;
+    let paginas = 0;
 
     do {
+      paginas++;
       const res = await gmail.users.history.list({
         userId: 'me',
         startHistoryId,
@@ -281,9 +402,19 @@ export class GmailService {
 
       if (res.data.historyId) latestHistoryId = res.data.historyId;
       pageToken = res.data.nextPageToken ?? undefined;
+
+      if (pageToken && paginas >= MAX_PAGINAS_HISTORIAL) {
+        // Se corta y se avisa a quien llama. No se lanza: quedarse a medias del
+        // historial y avanzar el marcador seria perder justo lo que falta.
+        this.logger.warn(
+          `El historial desde ${startHistoryId} supera ${MAX_PAGINAS_HISTORIAL} paginas: ` +
+            'se corta la paginacion y se rehace con backfill.',
+        );
+        return { messageIds: [...ids], latestHistoryId, truncado: true };
+      }
     } while (pageToken);
 
-    return { messageIds: [...ids], latestHistoryId };
+    return { messageIds: [...ids], latestHistoryId, truncado: false };
   }
 
   /** Primera sincronización: trae los últimos correos y fija el marcador de historial. */
@@ -296,15 +427,37 @@ export class GmailService {
 
     const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
     const emails = ids.length > 0 ? await this.fetchMessages(gmail, ids, 'full') : [];
-    const processed = await this.persistEmails(userId, emails);
+    const recuento = await this.persistEmails(userId, emails);
 
     // El historyId del perfil marca "todo lo anterior ya está sincronizado".
+    //
+    // ⚠️ **Aqui el marcador SI avanza aunque algo falle, y es a proposito.** En
+    // el camino incremental retener el marcador sirve para reintentar el tramo;
+    // aqui no hay tramo al que volver -el `backfill` es "los ultimos N de la
+    // bandeja"- y no guardarlo dejaria al usuario sin punto de partida, es decir
+    // repitiendo el backfill entero en cada notificacion y sin pasar nunca al
+    // modo incremental. Lo que si se hace es **decirlo**.
     const profile = await gmail.users.getProfile({ userId: 'me' });
     const historyId = profile.data.historyId ?? undefined;
     await this.saveHistoryId(userId, historyId);
 
-    this.logger.log(`Backfill para ${userId}: ${processed} correo(s), historyId → ${historyId}`);
-    return { processed, mode: 'backfill', historyId };
+    this.logger.log(
+      `Backfill para ${userId}: ${recuento.encolados} encolado(s), ` +
+        `${recuento.guardados} guardado(s), ${recuento.fallidos} fallido(s), ` +
+        `${recuento.sinEncolar} sin encolar · historyId → ${historyId}`,
+    );
+
+    if (recuento.fallidos > 0 || recuento.sinEncolar > 0) {
+      await this.alertas.avisar(
+        'Backfill de Gmail incompleto',
+        `Usuario ${userId}: ${recuento.fallidos} correo(s) sin guardar y ` +
+          `${recuento.sinEncolar} guardado(s) sin encolar. El marcador avanza igual porque ` +
+          'un backfill no tiene tramo al que volver, asi que esos correos NO se recuperan solos.',
+        `gmail-backfill-incompleto:${userId}`,
+      );
+    }
+
+    return { processed: recuento.encolados, mode: 'backfill', historyId };
   }
 
   private async saveHistoryId(userId: string, historyId?: string): Promise<void> {
@@ -321,13 +474,40 @@ export class GmailService {
     return status === 404;
   }
 
-  /** Guarda los correos de forma idempotente (clave única `gmailMessageId`). */
-  private async persistEmails(userId: string, emails: EmailSnippet[]): Promise<number> {
-    let processedCount = 0;
+  /**
+   * Guarda los correos de forma idempotente (clave única `gmailMessageId`) y los
+   * encola para clasificar.
+   *
+   * ⚠️ **Devuelve un recuento y no un número, y esa es la mitad del arreglo.**
+   *
+   * Antes devolvía sólo `processedCount` y envolvía el `upsert` **y** el `add` a
+   * la cola en el **mismo** `try`. Eso juntaba dos fallos que no se parecen en
+   * nada:
+   *
+   * - **El `upsert` falla** → el correo **no está en ninguna parte**. Si el
+   *   marcador de historial avanza igual, ese correo no se vuelve a ver nunca:
+   *   la siguiente sincronización arranca del marcador nuevo y
+   *   `users.history.list` ya no lo menciona.
+   * - **El `add` falla** → el correo **sí está guardado**, pero nadie lo va a
+   *   clasificar. No se pierde el dato, se pierde el procesamiento. Y como el
+   *   `processedCount++` estaba **después** del `add`, el log decía «Sync
+   *   incremental: N correo(s)» con **N más bajo de lo real** y sin un solo
+   *   error: el operador veía un número pequeño y nada más.
+   *
+   * No hay barrido que recoja «guardados sin encolar», así que ese correo se
+   * quedaba sin clasificar para siempre. Ahora cada caso se cuenta por separado
+   * y quien decide si el marcador avanza es {@link syncHistory}, con el recuento
+   * delante.
+   */
+  private async persistEmails(userId: string, emails: EmailSnippet[]): Promise<PersistResult> {
+    const resultado: PersistResult = { guardados: 0, encolados: 0, fallidos: 0, sinEncolar: 0 };
 
     for (const email of emails) {
+      let upsertedEmail: { id: string };
+
+      // ── Primer riesgo: la base de datos ──────────────────────────────────
       try {
-        const upsertedEmail = await this.prisma.email.upsert({
+        upsertedEmail = await this.prisma.email.upsert({
           where: { gmailMessageId: email.id },
           update: {
             threadId: email.threadId,
@@ -350,17 +530,37 @@ export class GmailService {
             userId,
           },
         });
-
-        // Encolar clasificación por IA (Sprint 3)
-        await this.classifyQueue.add('classify', { emailId: upsertedEmail.id });
-
-        processedCount++;
       } catch (err) {
-        this.logger.warn(`Error guardando correo ${email.id} en BD para usuario ${userId}: ${describirError(err)}`, stackDe(err));
+        // El correo NO esta guardado. Es el caso grave: si el marcador avanza,
+        // desaparece para siempre.
+        resultado.fallidos++;
+        this.logger.warn(
+          `Error guardando correo ${email.id} en BD para usuario ${userId}: ${describirError(err)}`,
+          stackDe(err),
+        );
+        continue;
+      }
+
+      resultado.guardados++;
+
+      // ── Segundo riesgo: Redis ────────────────────────────────────────────
+      // Va en su propio `try` a proposito. Si esto falla, el correo ya esta en
+      // la base: no se pierde el dato, se pierde la clasificacion. Contarlo
+      // aparte es lo que permite distinguir «no llego» de «llego y nadie lo
+      // miro», que es justo lo que el `catch` compartido borraba.
+      try {
+        await this.classifyQueue.add('classify', { emailId: upsertedEmail.id });
+        resultado.encolados++;
+      } catch (err) {
+        resultado.sinEncolar++;
+        this.logger.warn(
+          `Correo ${email.id} guardado para ${userId} pero NO encolado para clasificar: ${describirError(err)}`,
+          stackDe(err),
+        );
       }
     }
 
-    return processedCount;
+    return resultado;
   }
 
   // ─── Suscripción push ──────────────────────────────────────────────────
