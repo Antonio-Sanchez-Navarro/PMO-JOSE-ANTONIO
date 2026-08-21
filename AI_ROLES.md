@@ -143,13 +143,48 @@ parada que nadie sabe que está parada.
   archivo es su única fuente. Nada de encargos por chat: si no está en el prompt,
   no existe.
 - **@Alana** solo despierta con la instrucción literal **«despierta alana»**, y
-  al despertar revisa, anota y para.
+  al despertar revisa, anota y para. Recibe su alcance por `PROMPT_ALANA.md` y
+  **no lee las bitácoras de los demás** — ver arriba.
 - **Doc marca el arranque y el alto.** Cada **prompt** lleva un campo **Estado**
   que **solo Doc cambia**: `TRABAJAR` cuando hay que ponerse, `EN PAUSA` cuando
   toca esperar a una pieza que aún no existe, `CERRADO` cuando el ciclo acabó.
   Ha fallado en los dos sentidos —trabajo entrando con el documento en pausa, y
   encargos pidiendo cosas ya entregadas—, así que el que ejecuta no lo toca y el
   que reparte lo revisa antes de cerrar.
+
+### La auditoría no lee bitácoras ajenas
+
+Regla del usuario, **2026-08-21**. **@Alana no lee `CLAUDE_MEMORY.md`,
+`GRAVITY_MEMORY.md` ni `DOC.md`.**
+
+**Por qué cambió.** Nació leyendo las tres porque Doc vivía fuera de este entorno
+—Gemini en Chrome— y necesitaba sus ojos dentro. Desde que todo se opera en
+Antigravity, Doc ve lo mismo que ella y esa razón desapareció. Lo que queda es el
+coste: **un auditor que lee la bitácora del ejecutor hereda su relato** — sus
+palabras, su orden de importancia y su convicción de que algo está resuelto.
+
+No es teoría. Su §37 fue fuerte donde leyó **código**; su §36.9 —proponer una capa
+ya entregada— salió de trabajar sobre estado leído, y su §37.20 dejó viva una
+pregunta ya contestada por deducirla de documentos en vez de mirar el panel.
+
+**Lo que sigue leyendo es casi todo**: el código entero, git, la nube (`gcloud`,
+`gh`, las sondas), `ALANA.md` que es suya, y **los documentos neutrales y
+compartidos** — `AI_ROLES.md`, `TASKS.md`, `API_CONTRACTS.md`, `ARCHITECTURE.md`,
+`GCP_SETUP.md`, `infra/`, `docs/` —, que son verdad del proyecto y no relato de un
+agente. Se cierran **las tres bitácoras**, nada más.
+
+**Dos modos, y los fija Doc:** barrido completo, o alcance dirigido.
+
+**La carga se mueve a Doc, y esto es lo que hay que entender de la regla.** Las
+bitácoras también guardan el *porqué* de lo deliberado: el `stalledInterval` de 10
+minutos no es un descuido, se subió para ahorrar comandos de Upstash. Si @Alana no
+lo sabe, lo marcará como defecto. **Cuando una restricción deliberada importe para
+lo que se le pide, Doc se la escribe en `PROMPT_ALANA.md`.** No es que ella deje de
+tener contexto: es que el contexto se le entrega en vez de que lo infiera de los
+diarios ajenos.
+
+Y su contrapartida: si algo **parece** un error pero huele a decisión consciente,
+**pregunta en el buzón antes de afirmarlo**.
 
 ### El puente — `API_CONTRACTS.md`
 

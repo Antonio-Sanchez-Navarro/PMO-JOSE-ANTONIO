@@ -239,6 +239,28 @@ excepción de `handleDragEnd` en `AI_ROLES.md` —abierta desde el 2026-07-27, *
 funciona por suerte, no por diseño»*— describía el mundo anterior. `moveTask` ya
 no se llama dentro del updater. Corregida ahí mismo.
 
+### Decisión — @Alana audita sin leer bitácoras ajenas (2026-08-21)
+
+**Del Jefe.** @Alana deja de leer `CLAUDE_MEMORY.md`, `GRAVITY_MEMORY.md` y **este
+archivo**. Nació leyendo los tres porque Doc vivía en Chrome y necesitaba sus ojos
+dentro del entorno; desde la mudanza a Antigravity esa razón ya no existe, y lo que
+queda es el coste: **hereda el relato del que ejecutó**.
+
+Sigue leyendo el código, git, la nube y los documentos neutrales —`AI_ROLES.md`,
+`TASKS.md`, `API_CONTRACTS.md`, `ARCHITECTURE.md`, `GCP_SETUP.md`, `infra/`,
+`docs/`—. Se cierran las tres bitácoras y nada más. Dos modos: barrido completo, o
+alcance dirigido por Doc.
+
+**Lo que esto me obliga a mí, y es el punto entero de la regla:** las bitácoras
+guardan también el *porqué* de lo deliberado — el `stalledInterval` de 10 minutos
+se subió para ahorrar comandos de Upstash, no por descuido. **Cuando una
+restricción deliberada importe para lo que le pido, se la escribo en su prompt.**
+Si un día marca como defecto algo que era una decisión, el fallo será mío por no
+habérselo dicho, no suyo por no haberlo adivinado.
+
+Su contrapartida: lo que huela a decisión consciente **se pregunta en el buzón
+antes de afirmarse**.
+
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 * **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.
