@@ -283,6 +283,11 @@ export class TasksService {
       const from = task.status;
       const to = dto.status;
 
+      // ⚠️ **Sin `take`, y es obligatorio que sea así.** Esto lee la columna
+      // entera para renumerar `position`: con un tope, las tarjetas que
+      // quedaran fuera conservarían posiciones que ya se han reasignado, y el
+      // tablero saldría con dos tarjetas en el mismo hueco o con huecos que no
+      // se pueden ordenar. Lo acota una columna de un usuario, no un número.
       const columnOf = (status: TaskStatus) =>
         tx.task.findMany({
           where: { userId, status },

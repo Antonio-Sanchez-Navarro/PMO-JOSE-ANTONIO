@@ -67,6 +67,15 @@ export class OverdueService {
     // `adjustPriority` no cambiaría nada y la tarea aún no ha vencido.
     const horizon = new Date(now.getTime() + HIGH_WINDOW_HOURS * HOUR_MS);
 
+    // ⚠️ **Sin `take` a propósito.** Un tope aquí dejaría tareas vencidas sin
+    // mover y sin escalar, y el barrido saldría en verde igualmente: no hay
+    // error que dé, solo tarjetas que se quedan en su columna como si nada
+    // hubiera vencido. Lo que acota esto es el `horizon` —no se mira más allá
+    // de la ventana de escalado— y el filtro por estado, no un número.
+    //
+    // Lo que sí tiene techo es la transacción de `sweepUser` (15 s, ver
+    // `PrismaService`): si algún día no cabe, se parte por usuario o por lotes
+    // **cubriéndolos todos**, que no es lo mismo que recortar la lectura.
     const candidates = await this.prisma.task.findMany({
       where: { status: { in: ADJUSTABLE }, dueDate: { lt: horizon } },
       select: { id: true, userId: true },

@@ -63,7 +63,18 @@ export class CryptoService {
     return this.encrypt(JSON.stringify(value));
   }
 
-  /** Descifra y parsea un objeto cifrado con {@link encryptJson}. */
+  /**
+   * Descifra y parsea un objeto cifrado con {@link encryptJson}.
+   *
+   * **Lanza, y está bien que lance**: si la etiqueta de autenticación no cuadra
+   * o el JSON no se puede parsear, devolver algo sería peor que fallar.
+   *
+   * Quién lo recoge: `UsersService.getGoogleCredentials`, que lo captura,
+   * registra la causa probable —`TOKEN_ENCRYPTION_KEY` cambió— y devuelve
+   * `null`; y `AuthService.getAuthorizedClient` convierte ese `null` en un 401
+   * con «debe volver a autorizar». **Es el único sitio que llama aquí**, y se
+   * anota porque leyendo este archivo solo parece un `throw` sin red.
+   */
   decryptJson<T>(payload: string): T {
     return JSON.parse(this.decrypt(payload)) as T;
   }

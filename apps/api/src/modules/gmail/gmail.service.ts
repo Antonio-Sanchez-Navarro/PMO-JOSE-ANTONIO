@@ -810,6 +810,11 @@ export class GmailService {
    * el de los demás.
    */
   async renovarWatchDeTodos(): Promise<{ candidatos: number; renovados: number }> {
+    // ⚠️ **Sin `take`, y tiene que seguir sin él.** Un tope aquí dejaría a los
+    // usuarios de la cola sin renovar, su `watch` caducaría a los 7 días y su
+    // ingesta se apagaría **en silencio** — exactamente el fallo que esta
+    // función existe para evitar, reintroducido por el arreglo. Si algún día
+    // esta lista crece, se pagina y se recorre entera; no se recorta.
     const usuarios = await this.prisma.user.findMany({
       // Sin credenciales de Google no hay buzón que observar. Filtrar aquí evita
       // una llamada condenada al 401 por cada usuario que nunca entró con Google.
