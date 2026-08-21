@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   DndContext,
@@ -38,12 +38,25 @@ export const KanbanBoard: React.FC = () => {
   const [managingTimeTaskId, setManagingTimeTaskId] = useState<string | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   
+  const [searchInput, setSearchInput] = useState('');
   const [searchFilter, setSearchFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatus | ''>('');
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | ''>('');
+  const hasLoadedRef = useRef(false);
+  const reqIdRef = useRef(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchFilter(searchInput);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   const loadTasks = useCallback(async () => {
-    setLoading(true);
+    const currentReqId = ++reqIdRef.current;
+    if (!hasLoadedRef.current) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const filters: FetchTasksFilters = {};
@@ -52,11 +65,13 @@ export const KanbanBoard: React.FC = () => {
       if (priorityFilter) filters.priority = priorityFilter;
 
       const data = await fetchTasks(filters);
+      if (currentReqId !== reqIdRef.current) return;
       
       // Hydrate active timer
       let fetchedTasks = data || [];
       try {
         const activeEntry = await getActiveTimeEntry();
+        if (currentReqId !== reqIdRef.current) return;
         if (activeEntry && activeEntry.taskId) {
           fetchedTasks = fetchedTasks.map(t => 
             t.id === activeEntry.taskId 
@@ -68,14 +83,19 @@ export const KanbanBoard: React.FC = () => {
         console.error("No se pudo obtener el timer activo", err);
       }
 
+      if (currentReqId !== reqIdRef.current) return;
       setTasks(fetchedTasks);
+      hasLoadedRef.current = true;
     } catch (error) {
+      if (currentReqId !== reqIdRef.current) return;
       console.error("Error al cargar tareas:", error);
       setError('Error al cargar las tareas. Por favor, reintente.');
       toast.error('Error de conexión con el servidor');
       setTasks([]);
     } finally {
-      setLoading(false);
+      if (currentReqId === reqIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [searchFilter, statusFilter, priorityFilter]);
 
@@ -373,8 +393,8 @@ export const KanbanBoard: React.FC = () => {
             type="text"
             placeholder="Buscar tareas..."
             className="px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-600 dark:text-white w-full sm:w-64"
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
           />
           <select
             className="px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-600 dark:text-white"
