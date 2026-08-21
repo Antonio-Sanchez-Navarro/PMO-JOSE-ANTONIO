@@ -710,6 +710,172 @@ jobs:
         run: |
           gcloud run jobs deploy pmo-respaldo-db             --image="${IMAGEN_RESPALDO}:${SHA}"             --region="${REGION}"             --service-account="pmo-respaldos@${PROJECT_ID}.iam.gserviceaccount.com"             --set-cloudsql-instances="${PROJECT_ID}:${REGION}:pmo-postgres-db"             --set-env-vars="BUCKET_RESPALDOS=pmo-respaldos-db"             --set-secrets="DATABASE_URL=pmo-database-url:latest,ALERT_WEBHOOK_URL=ALERT_WEBHOOK_URL:latest"             --max-retries=2             --task-timeout=900s             --quiet
 
+
+      # ─────────────────────────────────────────────────────────────────────
+      # El vigilante también nace del pipeline (2026-08-21)
+      #
+      # Hasta hoy `deploy.yml` desplegaba el Job y nada más: la política de
+      # alerta y el Cloud Scheduler vivían **solo en la consola**. Es la misma
+      # configuración fantasma que este archivo vino a eliminar, un piso más
+      # arriba — y con un agravante: si alguien borra el vigilante, git no se
+      # entera, y lo que desaparece es justo lo que avisaría de que algo falta.
+      #
+      # **Los dos pasos van al final y salen con 0 cuando no pueden trabajar.**
+      # La API ya está desplegada y comprobada a estas alturas; un problema con
+      # el respaldo no debe tumbar el despliegue del producto. El precio es que
+      # el paso figura como correcto, así que **el texto del `::error::` es lo
+      # único que avisa** — por eso cada uno dice qué quedó sin hacer, no solo
+      # que algo falló.
+      - name: Desplegar la politica de alerta del respaldo
+        run: |
+          set -eo pipefail
+
+          POLITICA='[Capa 2] Fallo Critico: El respaldo de la base de datos'
+          CANAL_NOMBRE='Alertas PMO'
+
+          # `beta` no se da por hecho. En la máquina de Doc el componente
+          # `alpha` **no estaba**, y este paso entero se apoya en `beta`:
+          # descubrirlo el día que haga falta la alerta es tarde. Esta llamada
+          # comprueba de paso que la cuenta del pipeline puede leer políticas.
+          if ! gcloud beta monitoring policies list --project "${PROJECT_ID}" --limit=1 >/dev/null 2>&1; then
+            echo "::error::gcloud beta monitoring no responde en el runner (componente ausente o sin permiso). NO se toca la politica de alerta del respaldo: queda desplegada la que hubiera. Hasta que se arregle, nadie garantiza que un respaldo fallido avise."
+            exit 0
+          fi
+
+          # ── El canal, por nombre y no por id ──────────────────────────────
+          # El id de consola no viaja en el repositorio: sólo significa algo en
+          # este proyecto y, si el canal se recrea, cambia sin que nada avise.
+          CANAL=$(gcloud beta monitoring channels list \
+            --project "${PROJECT_ID}" \
+            --filter="displayName=\"${CANAL_NOMBRE}\"" \
+            --format='value(name)')
+
+          # ⚠️ El `|| true` **no es decorativo**: `grep -c` sale con 1 cuando no
+          # cuenta nada, y el shell de Actions corre con `-e`. Sin él, el caso
+          # «no hay canal» mataría el paso aquí mismo con un error genérico, y
+          # nunca se llegaría a imprimir el `::error::` que explica qué pasa.
+          NUM=$(printf '%s\n' "${CANAL}" | grep -c . || true)
+
+          if [ "${NUM}" -eq 0 ]; then
+            echo "::error::Canal '${CANAL_NOMBRE}' no encontrado. NO se toca la politica: mejor la vieja que una muda."
+            exit 0
+          fi
+          if [ "${NUM}" -gt 1 ]; then
+            echo "::error::Hay ${NUM} canales llamados '${CANAL_NOMBRE}'. NO se toca la politica: elegir a ciegas entre dos destinos es como se queda muda sin que se note."
+            exit 0
+          fi
+
+          # Tercera forma de quedarse mudo: el canal existe y está apagado. Va
+          # aparte y **no en el filtro** — filtrando, un canal desactivado daría
+          # cero coincidencias y este paso diría «no encontrado» de algo que
+          # está delante. «No encontrado» manda a buscar; «existe pero está
+          # apagado» manda a encenderlo.
+          ACTIVO=$(gcloud beta monitoring channels describe "${CANAL}" \
+            --project "${PROJECT_ID}" --format='value(enabled)')
+          if [ "${ACTIVO}" != "True" ] && [ "${ACTIVO}" != "true" ]; then
+            echo "::error::El canal '${CANAL_NOMBRE}' EXISTE pero esta DESACTIVADO (enabled=${ACTIVO}). La politica apunta a el y no llegara nada a nadie. Reactivalo en Monitoring > Notification channels."
+            exit 0
+          fi
+
+          echo "Canal resuelto: ${CANAL} (enabled=${ACTIVO})"
+
+          # ── Crear o actualizar, nunca duplicar ────────────────────────────
+          # Un `create` repetido **no falla**: crea una segunda política igual.
+          # A partir de ahí cada fallo avisa dos veces, y el final de esa
+          # historia es alguien silenciando el canal.
+          ID=$(gcloud beta monitoring policies list \
+            --project "${PROJECT_ID}" \
+            --filter="displayName=\"${POLITICA}\"" \
+            --format='value(name)')
+          NUMP=$(printf '%s\n' "${ID}" | grep -c . || true)
+
+          if [ "${NUMP}" -gt 1 ]; then
+            echo "::error::Hay ${NUMP} politicas llamadas '${POLITICA}'. NO se toca ninguna: actualizar una y dejar la otra deja avisos duplicados y una politica huerfana. Borra las sobrantes a mano en Monitoring > Alerting."
+            exit 0
+          fi
+
+          jq --arg canal "${CANAL}" '.notificationChannels = [$canal]' \
+            infra/alert_policy_respaldo.json > /tmp/politica.json
+
+          if [ "${NUMP}" -eq 0 ]; then
+            echo "No existe: se crea."
+            gcloud beta monitoring policies create \
+              --project "${PROJECT_ID}" \
+              --policy-from-file=/tmp/politica.json
+          else
+            echo "Ya existe (${ID}): se actualiza."
+            gcloud beta monitoring policies update "${ID}" \
+              --project "${PROJECT_ID}" \
+              --policy-from-file=/tmp/politica.json
+          fi
+
+          # ── Releer, porque una politica muda parece sana ──────────────────
+          # `enabled: true` y `notificationChannels: []` es indistinguible de
+          # una política correcta desde fuera. Ya pasó: la del watcher de Gmail
+          # estuvo así seis días. No se da por hecho lo que se acaba de escribir.
+          FINAL=$(gcloud beta monitoring policies list \
+            --project "${PROJECT_ID}" \
+            --filter="displayName=\"${POLITICA}\"" \
+            --format='value(notificationChannels)')
+          if [ -z "${FINAL}" ]; then
+            echo "::error::La politica '${POLITICA}' quedo SIN CANAL despues de desplegarla. Esta encendida y es muda: evalua, abre incidencias y no se lo cuenta a nadie. Arreglalo antes de fiarte de la alerta."
+            exit 0
+          fi
+          echo "Politica desplegada y verificada. Avisa a: ${FINAL}"
+
+      # El disparador, que hasta hoy tampoco estaba en ningún sitio versionado.
+      #
+      # ⚠️ **`--schedule` y la ventana de la alerta van atados.** La condición de
+      # ausencia de la política salta a las **14 h** sin un volcado correcto, y
+      # ese número sólo es sostenible porque hay **dos** respaldos al día. Con
+      # cadencia diaria la alerta saltaría todas las noches y alguien acabaría
+      # apagándola. Si algún día se toca esta línea, se toca la `duration` de
+      # `infra/alert_policy_respaldo.json` en el mismo commit.
+      - name: Desplegar el disparador del respaldo
+        run: |
+          set -eo pipefail
+
+          TRABAJO=pmo-respaldo-db-diario
+
+          if ! gcloud scheduler jobs list --project "${PROJECT_ID}" --location "${REGION}" --limit=1 >/dev/null 2>&1; then
+            echo "::error::gcloud scheduler no responde en el runner (API deshabilitada o sin permiso). NO se toca el disparador: queda el que hubiera. Si no habia ninguno, no hay respaldos automaticos."
+            exit 0
+          fi
+
+          # `create` falla si existe y `update` falla si no existe, así que hay
+          # que preguntar antes. `describe` es la pregunta más barata.
+          if gcloud scheduler jobs describe "${TRABAJO}" \
+               --project "${PROJECT_ID}" --location "${REGION}" >/dev/null 2>&1; then
+            ACCION=update
+          else
+            ACCION=create
+          fi
+          echo "El disparador ${TRABAJO}: se hace ${ACCION}."
+
+          gcloud scheduler jobs "${ACCION}" http "${TRABAJO}" \
+            --project="${PROJECT_ID}" \
+            --location="${REGION}" \
+            --schedule="30 3,15 * * *" \
+            --time-zone="America/Cancun" \
+            --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/pmo-respaldo-db:run" \
+            --http-method=POST \
+            --oauth-service-account-email="pmo-scheduler@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
+            --quiet
+
+          # ── Pausado no es lo mismo que roto, pero se parece bastante ──────
+          # `update` **no reanuda** un trabajo pausado, y el pipeline no lo
+          # reanuda por su cuenta: alguien pudo pausarlo a propósito. Lo que sí
+          # hace es decirlo, porque un disparador pausado no deja ni un rastro
+          # de error en ningún log — sólo dejan de existir respaldos.
+          ESTADO=$(gcloud scheduler jobs describe "${TRABAJO}" \
+            --project "${PROJECT_ID}" --location "${REGION}" --format='value(state)')
+          if [ "${ESTADO}" != "ENABLED" ]; then
+            echo "::error::El disparador ${TRABAJO} esta en estado ${ESTADO}, no ENABLED. No se reanuda solo por si se pauso a proposito, pero mientras siga asi NO HAY RESPALDOS AUTOMATICOS. Reanudalo con: gcloud scheduler jobs resume ${TRABAJO} --location ${REGION}"
+            exit 0
+          fi
+          echo "Disparador ${TRABAJO} ${ESTADO}: 03:30 y 15:30 America/Cancun."
+
       # El Job queda desplegado, pero **no se ejecuta aquí**: lo dispara Cloud
       # Scheduler a las 03:30 y las 15:30 de Tulum. Ejecutarlo en cada despliegue
       # haría un volcado completo por cada commit, que ni hace falta ni es gratis.

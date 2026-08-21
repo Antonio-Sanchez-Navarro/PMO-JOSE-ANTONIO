@@ -204,11 +204,13 @@ Se configura una alerta para detectar si el *watch* de Gmail deja de enviar noti
 La política vive en [`infra/alert_policy_respaldo.json`](infra/alert_policy_respaldo.json)
 y vigila el Cloud Run Job `pmo-respaldo-db`.
 
-```bash
-gcloud beta monitoring policies create \
-  --policy-from-file=infra/alert_policy_respaldo.json \
-  --project pmo-dashboard-503418
-```
+> ⚠️ **Desde el 2026-08-21 la despliega `deploy.yml`, no tú.** El pipeline
+> resuelve el canal por `displayName` y lo inyecta con `jq`, así que **el JSON
+> del repositorio no se puede desplegar tal cual**: lleva un marcador en
+> `notificationChannels` que la API rechaza a propósito, para que un despliegue
+> manual falle ruidosamente en vez de crear una política encendida y muda. El
+> procedimiento manual, si alguna vez hace falta, está en
+> [`infra/backup/README.md`](infra/backup/README.md) §6.
 
 Lleva **dos condiciones** unidas por `OR`, porque hacen preguntas distintas:
 

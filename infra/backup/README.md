@@ -229,7 +229,16 @@ gcloud storage ls --long "gs://${BUCKET}"
 Tiene que aparecer un `.dump` con tamaño razonable y el log terminar en
 `Respaldo correcto:`.
 
-## 5. El disparador (dos veces al día)
+## 5. El disparador (dos veces al día) — **lo hace el pipeline**
+
+> ⚠️ **Desde el 2026-08-21 esto tampoco se ejecuta a mano.** `deploy.yml` crea
+> o actualiza el Cloud Scheduler en cada despliegue, con la misma lógica que la
+> política de alerta. Lo de abajo queda como **referencia de lo que hace el
+> pipeline** y para levantar el proyecto de cero — el `add-iam-policy-binding`
+> sí sigue siendo manual, como todo el IAM de este README.
+>
+> Si cambias la cadencia aquí, **cambia también `--schedule` en `deploy.yml` y la
+> `duration` de la condición de ausencia**. Ver §6.
 
 ```bash
 export SCHED_SA="pmo-scheduler@${PROYECTO}.iam.gserviceaccount.com"
@@ -291,17 +300,93 @@ Por eso la vigilancia está en **dos capas que no comparten suerte**:
 Ninguna sustituye a la otra: la de dentro dice **por qué**, la de fuera garantiza
 que **te enteras**.
 
-### La política
+### La política — **la despliega el pipeline** ⚠️
 
-Vive en [`../alert_policy_respaldo.json`](../alert_policy_respaldo.json) y se
-despliega desde ahí. La primera vez con `create`; después, `update` con el
-mismo archivo, que reemplaza la política entera:
+Vive en [`../alert_policy_respaldo.json`](../alert_policy_respaldo.json), y desde
+el **2026-08-21 ya no se despliega a mano**: lo hace `deploy.yml` en cada
+despliegue, igual que el Job. Antes de eso vivía solo en la consola, que es la
+misma configuración fantasma que este README lleva media vida denunciando — con
+el agravante de que lo que desaparecía sin dejar rastro era **el vigilante**.
 
-```bash
-gcloud beta monitoring policies create \
-  --policy-from-file=infra/alert_policy_respaldo.json \
-  --project pmo-dashboard-503418
+**El canal no está en el archivo, y es a propósito.** El campo dice:
+
+```json
+"notificationChannels": ["EL-PIPELINE-RESUELVE-ESTE-CANAL-POR-DISPLAYNAME"]
 ```
+
+El pipeline busca el canal **por nombre** (`displayName="Alertas PMO"`) y lo
+inyecta con `jq` antes de desplegar. Un id de consola en el repositorio sólo
+significa algo en este proyecto, y si el canal se recrea cambia sin que nada
+avise.
+
+> ⚠️ **Por eso este archivo, tal cual, no se puede desplegar a mano.** Y falla
+> **ruidosamente**, que es la única razón por la que el marcador es ese y no una
+> cadena vacía: la API responde `Name must begin with
+> 'projects/{project_id}/notificationChannels/{channel_id}'` y no toca nada. Con
+> `[]` habría creado una política **encendida y muda**, que es indistinguible de
+> una sana desde fuera. Comprobado el 2026-08-21.
+>
+> Si aun así hace falta desplegarla a mano, hay que hacer lo mismo que el
+> pipeline:
+>
+> ```bash
+> CANAL=$(gcloud beta monitoring channels list \
+>   --project pmo-dashboard-503418 \
+>   --filter='displayName="Alertas PMO"' --format='value(name)')
+>
+> jq --arg canal "$CANAL" '.notificationChannels = [$canal]' \
+>   infra/alert_policy_respaldo.json > /tmp/politica.json
+>
+> gcloud beta monitoring policies update "$ID_DE_LA_POLITICA" \
+>   --project pmo-dashboard-503418 --policy-from-file=/tmp/politica.json
+> ```
+
+**El grupo es `channels`, no `notification-channels`** — ese subcomando no existe
+en ninguna pista de `gcloud`. Y es `beta`: `alpha` no está instalado en todas las
+máquinas, así que el paso del pipeline lo comprueba antes de apoyarse en él.
+
+#### Lo que hace el paso, y por qué cada guarda
+
+El pipeline **busca por `displayName` y hace `update` si existe, `create` si no**.
+Un `create` repetido no falla: crea una **segunda política idéntica**, y a partir
+de ahí cada fallo avisa dos veces hasta que alguien silencia el canal.
+
+Antes de escribir nada comprueba **cuatro formas distintas de quedarse mudo**, y
+ninguna es teórica — las cuatro han pasado o casi pasan en este proyecto:
+
+| Guarda | Qué evita |
+|---|---|
+| `beta` no responde | apoyarse en un componente que puede no estar en el runner |
+| 0 canales con ese nombre | dejar la política apuntando a la nada |
+| >1 canal con ese nombre | elegir a ciegas y avisar a un sitio que nadie mira |
+| canal **existe pero `enabled: false`** | dar por bueno un destino apagado |
+| `notificationChannels` vacío al releer | dar por buena una política encendida y muda |
+
+Sobre la tercera: el `enabled` se comprueba **aparte, con `describe`**, y no
+metiéndolo en el filtro. La API rechaza `enabled` en el filtro con un 400 — pero
+aunque colara sería peor: filtrando, un canal apagado da **cero coincidencias** y
+el paso diría *«no encontrado»* de un canal que está delante. *«No encontrado»*
+manda a buscar; *«existe pero está apagado»* manda a encenderlo.
+
+**Cuando una guarda salta, el paso sale con 0 y deja un `::error::`.** No bloquea
+el despliegue de la API a propósito — el respaldo no debe tumbar el producto—,
+pero eso significa que **el paso figura como correcto y el texto es lo único que
+avisa**. Por eso cada mensaje dice qué quedó sin hacer, no sólo que algo falló.
+
+#### Y el disparador, en el mismo sitio
+
+`deploy.yml` despliega también el Cloud Scheduler, con la misma lógica de
+crear-o-actualizar (`create` falla si existe, `update` falla si no).
+
+> ⚠️ **`--schedule` y la ventana de la alerta van atados, y el YAML lo dice.** La
+> condición de ausencia salta a las **14 h**, y ese número sólo se sostiene
+> porque hay **dos** respaldos al día. Volver a la cadencia diaria haría saltar
+> la alerta todas las noches. Si se toca una, se toca la otra en el mismo commit.
+
+**Un disparador pausado no se reanuda solo.** Alguien pudo pausarlo a propósito,
+así que el pipeline no decide por él — pero lo **grita**, porque un Scheduler
+pausado no deja ni una línea de error en ningún log: sólo dejan de existir
+respaldos.
 
 Tiene **dos condiciones**, unidas por `OR`, y responden a preguntas distintas:
 
