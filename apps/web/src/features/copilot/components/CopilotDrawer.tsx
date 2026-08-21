@@ -135,7 +135,8 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
               }
               return msg;
             }));
-          } else if (evento === 'tool_call') {            const payload = data.payload;
+          } else if (evento === 'tool_call') {
+            const payload = data.payload;
             if (data.toolName === 'draft_email' && payload) {
               setMessages((prev) => prev.map(msg => {
                 if (msg.id === assistantMessageId) {
