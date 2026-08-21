@@ -301,6 +301,39 @@ y **no lo está impidiendo** — 5 de los primeros 60 archivos de `apps/web` tie
 finales mezclados. Repartido a @Gravity: **diagnóstico antes que normalización**,
 porque normalizar sin saber por qué falló el control garantiza que vuelva.
 
+### Estado del reparto — cierre del 2026-08-21
+
+| Capa | Estado | En qué |
+|---|---|---|
+| **@Claude** | `TRABAJAR` | **§37.8, el contrato del socket** y su mitad. Último hallazgo vivo de la auditoría |
+| **@Gravity** | `EN PAUSA` | Sin encargo. La mitad cliente del socket es suya y espera al contrato |
+| **@Alana** | `TRABAJAR` | Los 27 huérfanos: el texto de los `warn` en Cloud Logging, si es pico o goteo, y si sigue tras `337340e` |
+
+**El hallazgo que desbloquea el §37.8, y no estaba en ningún informe.**
+`tasks.gateway.ts` rechaza dentro de `handleConnection` llamando a
+`client.disconnect()`. Eso significa que **la conexión se establece y después se
+cae**: desde el cliente no es un rechazo, es un `connect` seguido de un
+`disconnect`, o sea **una caída de red normal**. Y ante una caída normal,
+reconectar indefinidamente es exactamente lo correcto.
+
+O sea que **el reintento infinito del frontend no es un defecto del frontend**, y
+la ausencia de manejador de `connect_error` **no es un olvido de @Gravity**: ese
+evento **no se dispara nunca**. El arreglo empieza por rechazar en middleware, y
+por eso el contrato va antes que las dos mitades.
+
+Decisión de Doc que va con él: el socket **se revalida periódicamente**. Hoy se
+autentica una sola vez con un token de 15 minutos y luego vive indefinidamente —
+un socket abierto toda la noche sigue oyendo con una sesión caducada, y si el
+usuario cierra sesión **sigue oyendo igual**.
+
+**Cerrado hoy también: los finales de línea de `apps/web`.** Y el diagnóstico de
+@Gravity fue mejor que el encargo: además de que `.gitattributes` solo cubría
+`*.sh`, **`CopilotDrawer.tsx` estaba clasificado como binario en el índice** por
+los `` sueltos — y a un binario `--renormalize` no lo toca. Aunque el archivo de
+atributos hubiera estado completo, ese fichero habría seguido igual. Verificado por
+Doc: los 40 de `apps/web/src` en `i/lf w/lf`, y sin `.bat`/`.cmd`/`.ps1` que el
+`eol=lf` pudiera romper.
+
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 * **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.
