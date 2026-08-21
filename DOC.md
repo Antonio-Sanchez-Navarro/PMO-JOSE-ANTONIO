@@ -189,6 +189,56 @@ reintento que no existe y `deploy.yml` justifica un coste con un `maxScale` que 
 fija. En un repositorio donde los comentarios son tan buenos, **un comentario
 equivocado es peor que ninguno**: el siguiente no va a comprobarlo, va a creerlo.
 
+### Decisión — §37.7: barrido de reconciliación, no ping ni `min-instances` (2026-08-21)
+
+**Decidido con el Jefe.** El problema: Cloud Run escala a cero, con la instancia se
+apagan los workers de BullMQ, y un trabajo que se quede atrás **espera al siguiente
+correo**, no a un temporizador — con `stalledInterval` en 10 min, la reclamación
+tampoco ocurre, porque reclamar exige un worker vivo.
+
+**Lo que se descartó, y por qué:**
+
+- **`--min-instances=1`** — ~15–25 USD al mes, fijos, para un proyecto de N=1.
+- **Un ping periódico a secas** — y aquí está el detalle que cambia la
+  comparación entera: el servicio va con **`--no-cpu-throttling`**, que asigna CPU
+  **mientras la instancia viva**, no solo mientras atiende. Un ping cada cinco
+  minutos la mantiene despierta casi todo el día y **cuesta casi lo mismo que
+  `min-instances=1`, sin la garantía**. Un ping poco frecuente ya no es solución:
+  es la misma latencia disfrazada.
+- La preferencia por quedarnos en Google **no decidía**: las dos opciones son
+  Google nativo. Decidió el coste y, sobre todo, lo que sigue.
+
+**Lo elegido: un barrido de reconciliación en Cloud Scheduler, cada 15 minutos.**
+La diferencia con el ping es que el ping despierta el contenedor y ya; el barrido
+**despierta el contenedor y además recoge lo que se quedó atrás**. Tapa dos
+agujeros en vez de uno: el de §37.7 y el que ni `min-instances` ni un ping ven
+nunca — los **correos guardados y sin encolar** de §37.1, que un worker vivo no
+reprocesa porque el trabajo **nunca llegó a existir**.
+
+Y encaja con lo que ya hay: el módulo `cron` con `CronAuthGuard` y sus rutas
+`/cron/overdue` y `/cron/gmail-watch`, invocadas por Cloud Scheduler con OIDC igual
+que `pmo-respaldo-db-diario`. No hay arquitectura que inventar. El trabajo nace del
+**mismo `deploy.yml`** que @Claude está tocando, así que no vivirá en la consola.
+
+Coste: **cero** — el nivel gratuito de Scheduler cubre tres trabajos y hoy se usa uno.
+
+**Secuencia, y no es negociable:** va **después del Encargo A**. Un barrido que
+reencola sobre un `persistEmails` que todavía comparte `catch` puede reencolar en
+bucle lo que vuelve a fallar. Primero la causa, luego la red.
+
+### Entrega de @Gravity — los seis de frontend (2026-08-21)
+
+Los seis hallazgos entregados, **un commit por hallazgo**, y verificados por Doc en
+el archivo: `9ddecfa` (revierte y avisa con `toast`, copiando el camino que
+`handleDeleteTask` ya hacía bien), `809d8e3` y `59f61b7` (la misma carrera, mismo
+mecanismo), `5aa1802`, `dc45460` (promesa única en vuelo, limpiada en `finally`) y
+`b259c27`. En §37.9 hizo **las tres cosas** que se pedían, no solo el `debounce`.
+
+**Y de paso apareció una deuda saldada que nadie había cerrado por escrito:** la
+excepción de `handleDragEnd` en `AI_ROLES.md` —abierta desde el 2026-07-27, *«hoy
+funciona por suerte, no por diseño»*— describía el mundo anterior. `moveTask` ya
+no se llama dentro del updater. Corregida ahí mismo.
+
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 * **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.

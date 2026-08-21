@@ -258,11 +258,16 @@ el efecto, que es la mezcla de dueños; y no protege a quien no lo activó.
   app corriendo y se commitea ya verificado para que Gravity parta de una base
   estable en vez de un archivo con cambios locales que no ve.
 
-  **Gravity: el refactor de `handleDragEnd` es tuyo.** `moveTask()` se llama
-  dentro del updater de `setTasks`; un updater debe ser puro y React puede
-  invocarlo dos veces (`StrictMode` está activo en `main.tsx`). Hoy no duplica
-  la petición —comprobado con traza del backend y panel de red, un solo
-  `PATCH /move` por arrastre—, así que funciona por suerte, no por diseño.
+  **✅ Saldada.** El refactor pendiente —`moveTask()` se llamaba **dentro** del
+  updater de `setTasks`, que debe ser puro y que React puede invocar dos veces con
+  `StrictMode`— lo entregó @Gravity en el saneamiento de deuda de frontend, y
+  `GRAVITY_MEMORY.md` lo registra como «mutación impura en DND». **Comprobado por
+  Doc el 2026-08-21**: hoy `setTasks(newTasks)` recibe un valor plano y `moveTask`
+  se llama fuera del updater. Dejó de funcionar por suerte y funciona por diseño.
+
+  Este párrafo estuvo describiendo el mundo anterior desde que se arregló hasta
+  hoy, en el archivo que todos leemos al empezar sesión. Es la deriva del catálogo
+  de @Alana §37.17: **al cerrar una deuda, cerrarla también donde está escrita.**
 
 - **`modules/emails/`** (`POST /emails/:id/to-task`, Sprint 3): es capa REST,
   pero lo implementa **Claude** — acordado con el usuario el 2026-07-25 — porque
