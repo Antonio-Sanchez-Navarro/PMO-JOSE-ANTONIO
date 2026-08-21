@@ -52,11 +52,22 @@ avisar() {
   # webhook rechazaba la llamada -URL caducada, el `TO_BE_FILLED_BY_USER` de
   # agosto, un corte de red- no quedaba ni rastro: **el sistema de avisos no
   # podia avisar de que estaba roto**. Ahora al menos lo deja en el log del job.
+  #
+  # Y `--fail`, que es lo que hace que esa comprobacion valga de algo. Sin el,
+  # `curl` devuelve 0 ante un 400 o un 404: la llamada salio, el servidor la
+  # rechazo, y el script lo daba por enviado. En el simulacro del 2026-08-20 los
+  # mensajes llegaron y no hubo ninguna linea `AVISO NO ENVIADO` -- pero eso
+  # probaba que la peticion salio, **no que Chat la aceptara**. Con `--fail` un
+  # rechazo HTTP sale por el `||` y queda escrito.
+  #
+  # No cambia el codigo de salida del job a proposito: el `||` absorbe el fallo.
+  # Que el aviso no llegue es grave, pero el job ya venia fallando por otra cosa
+  # y su codigo de salida es lo que lee Cloud Scheduler.
   if [ -z "${ALERT_WEBHOOK_URL:-}" ]; then
     echo "AVISO NO ENVIADO (falta ALERT_WEBHOOK_URL): $1" >&2
     return 0
   fi
-  curl -sS -m 10 -X POST -H 'content-type: application/json' \
+  curl -sS --fail -m 10 -X POST -H 'content-type: application/json' \
     -d "{\"text\": \"🔴 *Respaldo de la base de datos fallido*\n$1\"}" \
     "$ALERT_WEBHOOK_URL" >/dev/null \
     || echo "AVISO NO ENVIADO (el webhook rechazo la llamada): $1" >&2
