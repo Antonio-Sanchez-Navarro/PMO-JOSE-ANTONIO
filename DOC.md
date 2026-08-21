@@ -85,7 +85,18 @@ poner agentes en copia cuando no hay tarea real.
 
 **Objetivos Inmediatos (Frente DevOps):**
 
-1. **Vigilancia del Job de Respaldo:** ✅ **Implementada, ⬜ sin firmar.** La política vive como archivo en `infra/alert_policy_respaldo.json` con sus dos condiciones (fallo y ausencia, `combiner: OR`) y la cadencia se dobló a `30 3,15 * * *` porque Cloud Monitoring topa la ventana de ausencia en 23 h 30 m. **Lo que falta no es código: es el fuego real.** Nadie ha visto sonar la política. La Capa 1 de la Fase 4 se firmó porque sonó sola, no porque estuviera escrita; esta se firma igual o no se firma.
+1. **Vigilancia del Job de Respaldo:** ✅ **FIRMADA el 2026-08-20 con fuego real.** Se provocó un fallo controlado —`pmo-respaldo-db-mcqnv`, vía bucket inexistente— y **sonaron las dos capas**: tres avisos de Capa 1, uno por intento, y uno de Capa 2. El `trap` no duplicó. El bucket pasó de 16 a 17 objetos y el nuevo es el de la recuperación: **el simulacro no dejó ni un volcado a medias**, que era la condición que puse.
+
+   **Dato de operación que hay que saber antes de dudar de la alerta:** del primer síntoma al mensaje de Capa 2 pasan **entre 1 y 10 minutos**, según dónde caiga el fallo en la ventana de alineación de 300 s. No es una latencia fija.
+
+   **Y el hallazgo, que vale más que la prueba:** **Google Chat descarta `documentation.content`**. De todo el runbook que habíamos escrito ahí dentro —los comandos de diagnóstico, el aviso de `PG_MAJOR` contra Cloud SQL— la tarjeta **solo enseña `documentation.subject`**, como título. Tampoco viaja el `displayName` de la condición. Era exactamente mi pregunta —si el que lo recibe a las 3 de la mañana sabe qué hacer— y la respuesta era **no**.
+
+   Se descartó `conditions[].documentation` **con el error de la API en la mano**, no por suposición (`Unknown name "documentation"`): la documentación es de nivel política, un solo `subject` para las dos condiciones. Por eso el `subject` no puede redactarse para el caso del fallo —sería mentiroso para el de ausencia, donde lo probable es que ni haya ejecución— y quedó: *«Respaldo de la BD en rojo - fallo o 14 h sin volcado. Mira Scheduler y ejecuciones»*.
+
+   **La lección del ciclo, y es de @Claude:** eran **cuatro** sitios, no tres. Se corrigieron los documentos y se dejó la fuente —el `content` del propio JSON, **desplegado en la política viva**— diciendo todavía lo desmentido. **Al desmentir algo, el sitio que hay que corregir primero es el que está en producción, no la prosa que lo describe.**
+
+   Cerrado también el `--fail` del `curl` en `avisar`: sin él, un `400` del webhook devolvía 0 y el script daba por enviado lo que Chat había rechazado.
+
 2. **Saneamiento del Pipeline Frontend (Vercel):** ✅ **FIRMADO el 2026-08-20**, con prueba en fuego real. El commit de solo `.md` `e031dee` devuelve **`Canceled by Ignored Build Step`**. La fuga está cerrada.
 
    **Lo que costó, y es la parte que hay que recordar.** El comando era correcto desde `580d2cb`; el archivo estaba en el sitio equivocado. Con **Root Directory = `./`**, Vercel lee `vercel.json` de la **raíz del monorepo**, y el nuestro vivía en `apps/web/`, donde nadie lo abría. Tres correcciones seguidas sobre un fichero inerte. Movido a la raíz en `adad87d`, con **una sola clave** — `buildCommand`, `outputDirectory` e `installCommand` siguen viniendo del panel, que es lo que evita repetir el destrozo del 2026-08-07.
