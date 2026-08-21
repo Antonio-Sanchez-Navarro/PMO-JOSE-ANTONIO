@@ -7,8 +7,14 @@
 # vuelca con `pg_dump` y sube el resultado al bucket **sin escribirlo en disco**.
 #
 # `DATABASE_URL` no sale de Google Cloud en ningún momento: viaja de Secret
-# Manager al contenedor y de ahí a Neon. No se registra, no se imprime, no se
-# pasa por argumento (que sería visible en la lista de procesos).
+# Manager al contenedor y de ahí a Cloud SQL por el socket del proxy. No se
+# registra, no se imprime, no se pasa por argumento (que sería visible en la
+# lista de procesos).
+#
+# Decía «y de ahí a Neon» hasta el 2026-08-21, tres días después de que Neon
+# dejara de existir. La frase seguía siendo cierta en lo que importaba —la
+# credencial no sale de Google— y falsa en el destino, que es justo el dato por
+# el que alguien vendría a leerla.
 
 set -eu
 
