@@ -5189,3 +5189,179 @@ el mensaje. **Cuesta un segundo y lo caza entero.**
 Y la lección de fondo, que es la de la casa otra vez: **miré el resultado del
 `sed` —los siete mensajes traducidos, correctos— y no miré el diff.** Comprobé lo
 que quería cambiar, no lo que cambié.
+
+### 41.4 Y una segunda causa que ninguno teníamos (aporte de @Gravity)
+
+`CopilotDrawer.tsx` estaba marcado como **binario en el índice de git**, por los
+`\r` sueltos que llevaba dentro. Y a un archivo binario **`--renormalize` no lo
+toca**.
+
+O sea: **aunque el `.gitattributes` hubiera estado completo, ese archivo no se
+habría curado.** Mi diagnóstico —que solo cubría `*.sh`— era cierto y no era
+suficiente: había dos capas, y la segunda hacía inmune al archivo contra el
+arreglo de la primera.
+
+Es la misma familia que el `maxScale` del comentario y que los respaldos de §31.2:
+**una pieza que se cree que cubre lo que no cubre**, con el agravante de que aquí
+el que quedaba fuera era invisible — nadie mira si un `.tsx` figura como binario.
+
+_Detalle de números, para que no se lea como una contradicción: yo medí **7+7**
+sobre el commit entero (cinco archivos) y Doc midió **2+2** sobre
+`CopilotDrawer.tsx` solo. Los dos son correctos; son alcances distintos._
+
+---
+
+## 42. Los 27 huérfanos: la premisa era falsa, y hay un bucle vivo (2026-08-21)
+
+Encargo de Doc. Fuente: Cloud Logging, 30 días, más el código. **Ningún dato de
+este apartado sale de una bitácora ajena.**
+
+### 42.1 La respuesta corta, porque cambia la pregunta
+
+**El `add` a Redis no falló ni una sola vez en 30 días.** La hipótesis con la que
+se abrió el encargo —«un rechazo de Redis dejaba el correo guardado y sin
+encolar»— no tiene un solo caso detrás.
+
+El `catch` de `persistEmails` dejó **una** línea en 30 días:
+
+```
+2026-08-17T13:50:08.565Z
+Error guardando correo 1a00ffbde06a9573 en BD para usuario cmsntcsn80000jn4jlxt18qag:
+code=P1001 · Can't reach database server at
+  ep-curly-heart-ayxrowqc.c-5.us-east-2.aws.neon.tech:5432
+```
+
+Es **la base**, no Redis. Y como lo que falló fue el `upsert`, ese correo **nunca
+llegó a guardarse**: no es un huérfano, es la **otra** mitad de §37.1 —el correo
+perdido con el marcador avanzando igual—. Un caso real, medido, de lo que aquel
+hallazgo describía; pero no de esto.
+
+**Lo que se le pedía a este expediente era decidir sobre Cloud Tasks. No lo
+decide: no hay ningún fallo de Redis que migrar.** Ni lo propongo ni lo descarto
+—no me toca—; digo que aquí no hay apoyo para ninguna de las dos.
+
+### 42.2 Qué pasó de verdad con los 27
+
+Del propio barrido, pasada a pasada:
+
+| Hora (UTC) | Candidatos | Reencolados |
+|---|---|---|
+| 22:37:57 | **27** | 27 |
+| 22:45:13 | 4 | 4 |
+| 23:00:11 | 4 | 4 |
+| 23:15:03 | **5** | 5 |
+| 23:30:12 | 5 | 5 |
+| 23:45:01 | 5 | 5 |
+
+**23 de los 27 se recuperaron en la primera pasada.** Tenían texto, se
+clasificaron y quedaron marcados. **El barrido funcionó, y la decisión de §37.7
+está justificada por este número solo.**
+
+Lo que no se recuperó son 4, que ahora son 5. Y ahí está el problema.
+
+### 42.3 🔴 El bucle: los mismos cinco correos, cada quince minutos, para siempre
+
+Los mismos cinco ids, en las seis pasadas seguidas:
+
+```
+cmstjc92i0003h7p0v4h7rdp7   cmsutn44e000113wk681pvq75
+cmsxwfcua0006nucgd118c6n2   cmt29a4rh000213ftj0ym9nof
+cmt3k70t0002jr3uvmxrfij40
+```
+
+y en cada pasada, la misma línea por cada uno:
+
+```
+El email <id> no tiene texto para analizar.
+```
+
+**El mecanismo, en tres piezas que por separado están bien:**
+
+1. `ai.processor.ts:82-85` — si el correo no tiene `bodyText` **ni** `snippet`,
+   el worker avisa y **hace `return` sin escribir `processedAt`**.
+2. `processedAt` solo lo escriben `email-classification.service.ts:147` y la vía
+   manual `emails.service.ts:598`. Si el worker sale por ahí, **no lo escribe
+   nadie**.
+3. El barrido busca exactamente `processedAt: null` con 30 minutos de
+   antigüedad. Los vuelve a ver a los quince minutos. Y a los treinta. Y así.
+
+**Es un bucle sin final**, y **nació hoy con el despliegue del barrido**: antes
+esos cinco correos estaban quietos en la base, sin molestar a nadie. Cada vuelta
+gasta comandos de Redis —el recurso que §32 pasó dos semanas racionando—, una
+llamada a Cloud SQL y un despertar de Cloud Run, 96 veces al día, para no hacer
+nada.
+
+**Y no es un caso raro:** el aviso aparece también el 14-08, el 15-08 y el 18-08,
+un correo cada vez. Los correos sin texto llegan solos —un adjunto suelto, un
+calendario, una notificación con todo el contenido en HTML que el extractor deja
+vacío—. **Cada uno que llegue se queda dentro del bucle para siempre.**
+
+### 42.4 🟠 Dos consecuencias que van con el bucle
+
+**a) El freno de alertas tiene margen cero.** `VENTANA_DE_FRENO_S = 900` s
+(`alert.service.ts:9`) y `pmo-reconciliar-clasificacion` corre `*/15`, que son
+**exactamente 900 s**. El freno existe, dice su propio comentario, para que «un
+fallo en bucle no dispare cientos de mensajes; un canal que grita se silencia».
+Está puesto en el mismo periodo del evento que debe frenar, así que cada pasada
+es una carrera contra el reloj.
+
+Desde los logs **no se puede saber si Chat recibió los 96 avisos del día**: la
+línea `ALERTA ·` se registra **antes** de consultar el freno, así que sale
+siempre. Lo que sí se puede afirmar es que el margen es cero, y eso ya es el
+defecto: el amortiguador no puede amortiguar un evento de su misma frecuencia.
+
+**b) `MAX_RECONCILIADOS = 100` con `orderBy: receivedAt asc`.** Cada correo sin
+texto ocupa **una plaza permanente**, y las ocupa por delante, porque son los más
+antiguos. Hoy son 5 de 100 y no pasa nada. El día que sean 100, **el barrido
+dejará de alcanzar a los huérfanos de verdad y seguirá saliendo en verde**, que
+es la forma de fallo de esta casa otra vez.
+
+### 42.5 Lo que preguntaba Doc, punto por punto
+
+| Pregunta | Respuesta |
+|---|---|
+| **El texto del error** | `P1001 · Can't reach database server` (Neon). **Una vez, el 17-08.** No es Redis |
+| **Las fechas** | Ese único caso: 17-08 13:50 UTC. Los 27 huérfanos no dejaron rastro de fallo: **no fallaron al encolarse** |
+| **Cuántos de verdad** | 27 vivos, **23 recuperados**, 4 atascados que hoy son 5 y **no crecen** por esa vía |
+| **Si el goteo sigue** | **Sí, pero es otro goteo, y es un bucle** (§42.3). Ni un solo aviso de «Sincronización de Gmail incompleta» desde `337340e`: el arreglo del marcador **no ha tenido que retener nada** |
+| **Correlación con §32 (Upstash)** | **Ninguna.** En 30 días: `OOM` 0, `maxmemory` 0, `evicted` 0, `ENOTFOUND` 0, `ECONNREFUSED` 0. Solo **2 `ECONNRESET`** sobre TLS, el 21-08 a las 15:19:32, sin traza de pino y sin caída del proceso. No coinciden con nada |
+
+### 42.6 Y la cuarta, que era la mía: ¿hay más sitios con esta forma?
+
+**El patrón literal —un efecto secundario dentro de un `try` cuyo `catch` solo
+avisa— ya no está.** Solo hay dos `add` a una cola en todo el backend
+(`gmail.service.ts:582` y `:666`) y los dos quedaron arreglados hoy.
+
+**Pero la forma de fondo es otra, y es la que hay que buscar:** *salir de una
+función sin dejar marca del estado en el que se sale.* En el worker hay cuatro
+`return` tempranos:
+
+| Línea | Caso | Deja huérfano |
+|---|---|---|
+| 60 | `!emailId` — job sin datos | No: no hay correo |
+| 72 | `!email` — el correo ya no existe | No: nada que marcar |
+| 78 | `processedAt` ya puesto | No: correcto, es la idempotencia |
+| **83** | **sin texto que analizar** | **Sí, y es el del bucle** |
+
+Tres de cuatro están bien. El cuarto es el que sostiene todo lo de arriba.
+
+### 42.7 Lo que enseña
+
+**Un arreglo correcto puede crear un bucle si el estado que arregla no tiene
+dónde escribirse.** El barrido hace lo que se diseñó —encontró 27 y recuperó
+23— y aun así dejó cinco correos girando, porque **preguntó «¿está clasificado?»
+a un campo que solo se escribe cuando la clasificación tiene éxito**. Un correo
+que no se puede clasificar no tiene forma de decirlo.
+
+No es un error de quien lo escribió: es que faltaba un estado. `processedAt` sabe
+decir «la IA pasó» y no sabe decir **«la IA pasó y aquí no había nada que
+hacer»**, que es una respuesta legítima y definitiva.
+
+Y lo otro, que me toca a mí: **abrí el expediente con la respuesta ya escrita en
+el enunciado** —«averigua por qué falló el `add`»— y lo primero que dijeron los
+logs es que el `add` no falló nunca. Si hubiera ido a buscar la confirmación en
+vez de los hechos, habría encontrado el único P1001 del mes y lo habría contado
+como prueba. Estaba ahí, con su fecha, listo para servir de prueba de lo que no
+era.
+
+**No lo arreglo. Lo reparte Doc** (§0, regla de hoy).
