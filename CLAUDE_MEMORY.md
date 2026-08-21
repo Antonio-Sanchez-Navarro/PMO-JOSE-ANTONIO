@@ -9,6 +9,118 @@
 
 ---
 
+## Encargos B, C y el barrido de reconciliación (2026-08-21)
+
+### B — los números del despliegue decían una cosa y el comando otra
+
+**B.1.** El copiloto se concedía **10 min por llamada** y Cloud Run cortaba a los
+**5** (su defecto, porque el pipeline no pasaba `--timeout`). El turno lo mataba la
+plataforma **por debajo del código**, así que el stream moría **sin evento
+`error`**: no había nadie arriba para emitirlo.
+
+**Se bajó el del copiloto a 3 min en vez de subir el de Cloud Run**, y el motivo
+ya estaba escrito en este proyecto: el copiloto no frena ante un 429 porque «al
+otro lado hay alguien esperando y un error a los veinte segundos es mejor que un
+cursor parpadeando tres minutos». Una llamada que no termina en tres minutos no
+está tardando, está colgada.
+
+La invariante queda escrita **en los dos archivos**, que es lo que evita que
+vuelvan a separarse:
+
+```
+MAX_VUELTAS × TIMEOUT_MS + herramientas < timeout de Cloud Run
+         4 × 180 s = 720 s + margen      < 900 s
+```
+
+**B.2, con una corrección al hallazgo.** El informe decía que regía el defecto de
+100 instancias. **No regía**: el servicio vivo tenía `maxScale=20`, puesto a mano
+en la consola, y `gcloud run deploy` **conserva lo que no se le nombra**. O sea que
+no estaba mal configurado — estaba configurado **en un sitio que no se revisa y
+que desaparece el día que alguien recree el servicio**. Peor de diagnosticar y
+exactamente igual de malo.
+
+Y el número que se eligió no sale del tráfico:
+
+> **`--max-instances=8`, y el límite no es el tráfico: es la base.**
+
+Cada instancia abre su propio pool de Prisma y el total contra Cloud SQL es
+`pool × instancias`. Con `connection_limit=2`: 8 × 2 = 16, más migraciones,
+respaldo y una sesión manual ≈ 19, por debajo de las ~25 de un `db-f1-micro`.
+Veinte instancias serían 40 y no caben.
+
+El `connection_limit` va en `prisma.service.ts` y **no en el secreto**: el secreto
+es una credencial que no se revisa en un diff, y esto es una decisión de
+dimensionado que sí. Si la URL ya lo trae, se respeta.
+
+⚠️ **Las ~25 son el defecto documentado del tier, NO verificado leyendo la
+base** — la instancia no admite conexión directa. Queda escrito en el código, con
+la comprobación (`SHOW max_connections;` desde el Job de restauración) y con la
+regla de qué mover si fuera menos: **baja `--max-instances`, no el pool**.
+Estrangular el pool hace que las peticiones se peleen por una conexión en vez de
+repartirse.
+
+### C — parado a propósito, en el buzón
+
+`trust proxy` no está en ninguna línea de `apps/api`, así que `req.ips` va vacío y
+todo el tráfico comparte cubo.
+
+**Lo razonado:** `trust proxy: true` queda descartado — hace que Express tome la
+entrada **más a la izquierda** de `X-Forwarded-For`, justo la que controla el
+cliente. Con `/auth` en 10 por minuto, cada intento estrenaría cubo y el límite
+dejaría de existir. Lo correcto es un **número de saltos**, porque Express cuenta
+**desde la derecha** y el cliente solo puede añadir por la izquierda.
+
+**Lo comprobado:** mandé una petición a `/health/live` con
+`X-Forwarded-For: 203.0.113.9` y el log de Cloud Run registró
+`remoteIp = 189.174.75.51` — mi IP real. **Google no se cree la cabecera.**
+
+**Lo que falta, y es un solo hecho:** que `remoteIp` sea correcto **no es lo
+mismo** que saber en qué posición queda la IP real dentro de la cabecera que ve
+Express. Si Cloud Run añade, `1` es correcto; si dejara pasar, `1` sería **igual
+de falsificable que `true`** y lo habría empeorado creyendo arreglarlo. Nada del
+código registra hoy `x-forwarded-for`, así que no se puede observar sin desplegar.
+
+Parado por instrucción expresa de Doc —«prefiero el cubo global una semana más
+que una IP falsificable»— y con la sonda de una línea propuesta en el buzón.
+
+### El barrido de reconciliación (§37.7)
+
+Ni `--min-instances=1` ni un ping: **un barrido cada 15 min**. La diferencia no es
+el precio, es lo que hace de más.
+
+- Cualquier petición periódica tapa el primer agujero: Cloud Run escala a cero,
+  con la instancia se apagan los workers, y un trabajo rezagado espera al
+  **siguiente correo** — `stalledInterval` no lo reclama porque reclamar exige un
+  worker vivo.
+- **Solo el barrido tapa el segundo**: un correo cuyo `add` falló no está
+  atascado ni fallido. **Su trabajo nunca existió.** No hay nada que reintentar, y
+  por eso ningún worker vivo lo recoge jamás.
+
+**La ventana de gracia de 30 min no es cortesía**: sin ella el barrido reencolaría
+correos que están en la cola ahora mismo, y dos trabajos simultáneos sobre el
+mismo correo pueden pasar **los dos** la comprobación de `processedAt` y crear las
+tareas por duplicado. El camino normal se agota en menos de un minuto.
+
+**El `remove` antes del `add` es lo que lo hace correcto en los dos estados.** El
+`jobId` determinista hace que BullMQ ignore un alta duplicada: bien frente a un
+trabajo **activo**, mal frente a uno **terminado o fallido**, que sigue guardado
+días y bloquearía el reintento. Y `remove` **falla** sobre un job activo — así que
+tragarse ese fallo da la rama buena **sin preguntar en qué estado está**.
+
+Dos cosas que la decisión escrita daba por sabidas y no eran:
+
+- **La audiencia OIDC es `<URL>/cron`, no `<URL>`.** El guard compara con
+  `CRON_OIDC_AUDIENCE`, que en la revisión desplegada vale `.../cron`, igual que
+  los dos disparadores que ya funcionan. Con la URL a secas el token se firma
+  bien, **Scheduler lo da por entregado** y la ruta devuelve 401 para siempre. Es
+  el modo de fallo favorito de este proyecto: verde por fuera.
+- **El coste no es cero.** `DOC.md` dice que el nivel gratuito cubre tres trabajos
+  «y hoy se usa uno»; hoy se usan **tres**. Este es el cuarto: ~0,10 USD al mes.
+  No cambia la decisión —sigue siendo mucho más barato que `min-instances=1`—
+  pero el número estaba mal y no conviene repetirlo.
+
+---
+
 ## El vigilante también nace del pipeline — escrito, probado y **bloqueado por IAM** (2026-08-21)
 
 `deploy.yml` desplegaba `pmo-respaldo-db` y **nada más**. La política de alerta y
