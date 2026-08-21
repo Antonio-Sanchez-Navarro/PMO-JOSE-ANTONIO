@@ -119,6 +119,39 @@ Dos cosas que la decisión escrita daba por sabidas y no eran:
   No cambia la decisión —sigue siendo mucho más barato que `min-instances=1`—
   pero el número estaba mal y no conviene repetirlo.
 
+#### 🔴 El agujero no era teórico: había 27
+
+Forcé la primera ejecución nada más desplegarlo, para comprobar la audiencia OIDC.
+Devolvió **200** —`Ejecución de cron autorizada para pmo-scheduler@…`— y de paso
+contestó una pregunta que nadie había hecho:
+
+```
+Reconciliación: 27 reencolado(s) de 27 candidato(s), 0 fallido(s)
+POST /cron/reconciliar 200
+```
+
+**Veintisiete correos llevaban guardados en la base y sin trabajo asociado.**
+Nadie los habría recogido nunca: no estaban atascados ni fallidos, es que su
+trabajo **jamás existió**. Un `--min-instances=1` los habría dejado exactamente
+igual de invisibles, y un ping también. Es la mejor justificación posible de por
+qué se eligió un barrido y no despertar el contenedor.
+
+Y se clasificaron de verdad, no solo se encolaron — uno de ellos tenía trabajo
+pendiente dentro:
+
+```
+Resultado de IA para cmsw59pf90003vj6g8uer5bn1: isActionable=true, 1 tareas creadas
+```
+
+Una tarea que existía en un correo y **no existía en el tablero**. Eso es lo que
+significaba «pierde correos en silencio», medido.
+
+La Capa 1 también sonó sola, con el texto del barrido y su freno de 15 min puesto.
+
+**Verificado en la revisión viva** después del despliegue: `timeoutSeconds=900`,
+`maxScale=8`, `containerConcurrency=80`, `memory=512Mi`. Los cuatro números del
+Encargo B están donde tenían que estar.
+
 ---
 
 ## El vigilante también nace del pipeline — escrito, probado y **bloqueado por IAM** (2026-08-21)
