@@ -240,6 +240,7 @@ export const KanbanBoard: React.FC = () => {
       const hasChangedColumn = activeTaskOrigStatus && finalTask.status !== activeTaskOrigStatus;
       const hasChangedPosition = positionInColumn !== origPositionInColumn;
       
+      const previousTasks = tasks;
       setTasks(newTasks);
 
       if (hasChangedColumn || hasChangedPosition) {
@@ -259,9 +260,11 @@ export const KanbanBoard: React.FC = () => {
               return updatedTasks;
             });
           })
-          .catch((err) =>
-            console.error("Error guardando el movimiento de tarea en BD:", err)
-          );
+          .catch((err) => {
+            console.error("Error guardando el movimiento de tarea en BD:", err);
+            toast.error("Error al mover la tarea. Revirtiendo cambio...");
+            setTasks(previousTasks);
+          });
       }
     } else {
       setTasks(newTasks);
