@@ -5,7 +5,9 @@
  * así que las cookies httpOnly de sesión viajan como same-origin.
  */
 
-export const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "https://pmo-api-mlpuuasqka-uc.a.run.app" : "/api");
+export const PROD_API_URL = "https://pmo-api-mlpuuasqka-uc.a.run.app";
+
+export const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? PROD_API_URL : "/api");
 
 export class ApiError extends Error {
   constructor(
