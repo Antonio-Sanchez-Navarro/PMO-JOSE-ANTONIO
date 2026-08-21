@@ -125,9 +125,40 @@ dos condiciones en la tarjeta es la etiqueta `result`, y **con la de ausencia
 dirá `result = succeeded`**, que leído de madrugada dice justo lo contrario de lo
 que pasa.
 
-Corregido en los tres documentos el mismo día. Lo que queda como propuesta y **no
-he tocado por iniciativa propia**: meter lo accionable en `documentation.subject`,
-que es el único campo que sí se ve.
+#### Cómo se cerró (2026-08-21)
+
+**Eran cuatro sitios, no tres.** Corregí los documentos y dejé **la fuente** —el
+`content` del propio `alert_policy_respaldo.json`, que además estaba **desplegado
+en la política viva**— diciendo todavía «se ve en el nombre de la condición que
+disparó». Lo cazó Doc. La lección no es el descuido: **al desmentir algo, el sitio
+que hay que corregir primero es el que está en producción**, no la prosa que lo
+describe.
+
+**La documentación por condición no existe.** Antes de tocar el `subject` probé si
+la API acepta `conditions[].documentation`, que habría resuelto los dos agujeros de
+golpe —un `subject` por condición y de paso recuperar la distinción que se pierde
+al no viajar el `displayName`—. La respuesta es no, y es tajante:
+
+```
+INVALID_ARGUMENT: Invalid JSON payload received.
+Unknown name "documentation" at 'alert_policy.conditions[0]': Cannot find field.
+```
+
+`documentation` es de **nivel política**: un solo `subject` heredado por las dos
+condiciones. Eso descarta redactarlo para el caso del fallo —sería mentiroso para
+la ausencia, donde lo probable es que no haya ejecución que revisar—. El que quedó
+no miente en ninguno de los dos, y pone el Scheduler por delante porque es el que
+no deja rastro:
+
+```
+"Respaldo de la BD en rojo - fallo o 14 h sin volcado. Mira Scheduler y ejecuciones"
+```
+
+Y dentro del `content`, ahora en la primera línea, queda escrito que **Chat solo
+enseña el `subject`**, para que el siguiente no lo descubra con fuego real. Junto
+con la trampa que se descubrió midiendo: en la condición de ausencia la tarjeta
+dirá **`result = succeeded`**, que no significa que fuera bien — significa que
+lleva 14 h sin un solo éxito que registrar.
 
 ### Procedencia, para que el registro no mienta
 
