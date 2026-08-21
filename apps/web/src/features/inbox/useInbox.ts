@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch } from "../../lib/api";
+import { apiFetch, ApiError } from "../../lib/api";
 import { visibleLabels } from "./format";
 import type { EmailSnippet, EmailThread } from "./types";
 
@@ -63,7 +63,7 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
     } catch (err) {
       if (currentReqId !== reqIdRef.current) return;
       setError(
-        err instanceof Error && err.message.includes("401")
+        err instanceof ApiError && err.status === 401
           ? "Tu sesión con Google expiró. Vuelve a iniciar sesión."
           : "No se pudo cargar la bandeja de entrada.",
       );
