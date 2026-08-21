@@ -23,6 +23,7 @@ infraestructura de Gravity.
 
 | Encargo | Dónde quedó |
 | --- | --- |
+| Normalización de finales de línea (LF) y blindaje en `.gitattributes` | `6e3ff6a` — Diagnóstico: `.gitattributes` solo cubría `*.sh`/`Dockerfile`; `CopilotDrawer.tsx` tenía `\r` sueltos y Git lo marcaba como binario (`-text`). Se configuró `* text=auto eol=lf` y reglas explícitas para TS/React/CSS/JSON/MD, normalizando a LF puro. |
 | §37.10: Rollback y toast en fallo de movimiento de tarjeta (`moveTask`) | `9ddecfa` |
 | §37.11: Cancelación de peticiones obsoletas al cambiar pestaña en Inbox (contador de generación) | `809d8e3` |
 | §37.9: Debounce en buscador de Kanban, eliminación de parpadeo de carga y descarte de respuestas desordenadas | `59f61b7` |
