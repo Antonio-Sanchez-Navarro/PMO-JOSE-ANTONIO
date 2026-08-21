@@ -854,6 +854,17 @@ jobs:
         run: |
           set -eo pipefail
 
+          # ⚠️ **Este paso solo puede `create` o `update`. Nunca `delete`, nunca
+          # `pause`.** No es estilo: `roles/cloudscheduler.admin` —el minimo que
+          # existe, porque Cloud Scheduler no admite IAM por trabajo— le da al
+          # pipeline poder para borrar o pausar el disparador. Y un disparador que
+          # no dispara es **el punto ciego exacto** que la condicion de ausencia
+          # existe para cubrir: no deja ejecucion, no deja fallo, no deja nada.
+          #
+          # Un `delete` aqui convertiria un error de tipeo en «se acabaron los
+          # respaldos», y solo se notaria 14 h despues. Si alguien anade una de
+          # esas dos verbos a este paso, lo esta rompiendo aunque el run salga
+          # verde. Condicion puesta por Doc al conceder el rol.
           TRABAJO=pmo-respaldo-db-diario
 
           if ! SALIDA=$(gcloud scheduler jobs list --project "${PROJECT_ID}" --location "${REGION}" --limit=1 2>&1); then
