@@ -33,6 +33,16 @@
 #
 # Es un cinturón, no un muro. Cada terminal lo activa una vez.
 #
+# ── El consejo que este gancho daba mal ─────────────────────────────────────
+# Hasta el 2026-08-21 el mensaje de error recomendaba `git reset && git add ...`.
+# **Eso es exactamente lo que el gancho existe para evitar**: `git reset` vacía el
+# índice entero, incluido lo que otro agente tuviera preparado a medias. Un
+# gancho que protege del pisotón y luego receta el pisotón.
+#
+# Pasó de verdad: paró un commit de Doc con el trabajo de otra capa ya preparado
+# en el índice. La salida buena fue `git commit <rutas>`, que commitea lo propio
+# y deja el resto del índice como estaba.
+#
 # Para saltárselo a conciencia (una integración deliberada, un merge):
 #
 #     ALLOW_MIXED_COMMIT=1 git commit ...
@@ -64,9 +74,21 @@ fallar() {
   echo "$preparados" | sed 's/^/      · /'
   echo ""
   echo "    Cada bitácora tiene un dueño (ver AI_ROLES.md) y se commitea sola."
-  echo "    Prepara por ruta exacta, nunca con -A ni con -a:"
   echo ""
-  echo "      git reset && git add <ruta> && git commit -m \"...\""
+  echo "    ⚠️  NO uses \`git reset\`. Deshace la preparación de TODOS, incluida la"
+  echo "        del agente que tenga algo a medias en el índice — que es justo el"
+  echo "        trabajo que este gancho existe para no pisar."
+  echo ""
+  echo "    Dos salidas que no tocan a nadie más:"
+  echo ""
+  echo "      1) Commitear solo lo tuyo, sin tocar el índice de los demás:"
+  echo "           git commit <ruta> [<ruta>...] -m \"...\""
+  echo "         (ojo: commitea el archivo entero tal como está en disco, así"
+  echo "          que no sirve si habías preparado solo parte de un archivo)"
+  echo ""
+  echo "      2) Sacar del índice lo que no es tuyo, y luego commitear normal:"
+  echo "           git restore --staged <ruta-ajena>"
+  echo "         (solo lo quita del índice; no toca su contenido en disco)"
   echo ""
   echo "    Si la mezcla es deliberada:  ALLOW_MIXED_COMMIT=1 git commit ..."
   echo ""
