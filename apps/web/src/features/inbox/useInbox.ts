@@ -35,7 +35,13 @@ function groupByThread(emails: EmailSnippet[]): EmailThread[] {
 }
 
 /**
- * Carga la bandeja de entrada desde `GET /gmail/inbox`.
+ * Carga la bandeja de entrada desde `GET /emails`, filtrando por el estado de
+ * triage de la pestaña activa.
+ *
+ * **No es `GET /gmail/inbox`**, que es lo que decía aquí hasta el 2026-08-21:
+ * esa ruta va a la API de Google y devuelve el buzón; esta lee la tabla `Email`
+ * ya ingerida, que es la que tiene el estado de Inbox Zero por el que se filtra.
+ * Son dos fuentes distintas y solo una responde a lo que pinta este hook.
  *
  * La sesión viaja en cookies httpOnly: `apiFetch` ya usa `credentials: "include"`
  * y renueva el token una vez si la API responde 401.
