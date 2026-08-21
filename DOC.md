@@ -141,6 +141,54 @@ despliegue de la API.
 | Política de alerta del respaldo | `285e3a2`, `ad1fe4c` | ⚠️ escrita, sin sonar |
 | Capa 1 (portero CRLF + espejo en CI) y Capa 3 / simulacro mensual | — | ⬜ sin empezar, de @Claude al cerrar la Fase 5 |
 
+## 🔍 6. Auditoría completa de @Alana (§37) y su reparto — 2026-08-21
+
+Barrido de todo el árbol sobre `d5d2d45`: `lint` limpio, **614 pruebas en verde**,
+19 hallazgos, y **diciendo qué no comprobó** —nada vivo en Google Cloud, nada en
+navegador, nada de carga—. Esa última frase es lo que hace utilizable un informe
+de 19 puntos.
+
+**Doc verificó en el archivo los cuatro que mueven código antes de repartir.** Los
+cuatro ciertos: el marcador de Gmail avanza pase lo que pase, `BullModule` no
+declara `defaultJobOptions`, `trust proxy` no aparece en ninguna línea de
+`apps/api`, y `maxScale` sale una sola vez en `deploy.yml` —dentro del comentario—.
+
+**Lo que el informe deja implícito y conviene decir entero:** §37.1 y §37.2 juntos
+son peores que por separado. El `add` a Redis está **dentro** del mismo `try` que
+el `upsert` y `processedCount++` va **después**. Si Redis rechaza: el correo ya
+está en la base, el contador no sube, el `catch` lo tapa con un `warn`, **el
+marcador avanza igual**, y el log dice «N correo(s)» con N más bajo de lo real. El
+operador ve un número menor y ningún error, y ese correo queda sin clasificar para
+siempre.
+
+| Encargo | Qué | Quién |
+|---|---|---|
+| **A** 🔴 | Los tres rojos, todos en `gmail.service.ts`: marcador, `catch` compartido, `defaultJobOptions`, tope de paginación | @Claude, tras el Punto 2 |
+| **B** 🟠 | `--timeout` contra los 10 min del copiloto, y `--max-instances` + `connection_limit` | @Claude, con el Punto 2 — mismo archivo |
+| **C** 🟠 | `trust proxy`. **Aparte a propósito**: mal puesto permite falsear la IP con una cabecera, peor que el problema que arregla | @Claude |
+| **D** 🟡 | Seis de frontend: arrastre sin revertir, dos carreras de peticiones, el 401 por texto, refresco sin cerrojo, la URL duplicada | @Gravity |
+
+**No repartido, y por qué:**
+
+- **§37.8** (el socket reconecta para siempre y la sesión no se refresca) está
+  **partido** entre los dos dominios. Un arreglo a medias deja el tablero mudo sin
+  decirlo, que es el fallo que tiene hoy. Lo coordina Doc, no se reparte a ciegas.
+- **§37.7** (escalar a cero apaga los workers y nadie los despierta) **es decisión
+  del Jefe, no técnica**: `--min-instances=1` cuesta dinero todos los meses; un
+  ping desde Cloud Scheduler es gratis y feo. Con N=1, Doc se inclina por el ping.
+
+**Corrección al informe, y es mía:** §37.20 deja viva la pregunta de si el *Root
+Directory* de Vercel es `apps/web`. **Ya está contestada**: entré al panel, es
+`./`, y por eso el `vercel.json` va en la raíz y `e031dee` sale `Canceled by
+Ignored Build Step`. Su §37.20 se escribió sin ese dato.
+
+**Lo que enseña el barrido**, y lo firmo entero: los tres rojos son la misma forma
+de fallo que toda la Fase 4 —**algo que sale en verde mientras pierde trabajo por
+detrás**— y **dos están documentados al revés**: `ai.processor.ts` explica un
+reintento que no existe y `deploy.yml` justifica un coste con un `maxScale` que no
+fija. En un repositorio donde los comentarios son tan buenos, **un comentario
+equivocado es peor que ninguno**: el siguiente no va a comprobarlo, va a creerlo.
+
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 * **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.
