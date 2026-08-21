@@ -9,6 +9,178 @@
 
 ---
 
+## El vigilante también nace del pipeline — escrito, probado y **bloqueado por IAM** (2026-08-21)
+
+`deploy.yml` desplegaba `pmo-respaldo-db` y **nada más**. La política de alerta y
+el Cloud Scheduler vivían en la consola: si alguien los tocaba o los borraba, git
+no se enteraba. Es la configuración fantasma que este pipeline lleva meses
+eliminando, un piso más arriba — y con un agravante, porque **lo que desaparecía
+sin dejar rastro era el vigilante**.
+
+Dos pasos nuevos al final del job (`526372b`, `c91344d`). **El código está hecho y
+probado; no funciona todavía porque la cuenta del pipeline no tiene permisos.**
+Ver el final.
+
+### Por qué `create` a secas no vale
+
+`gcloud beta monitoring policies create` **no falla si ya existe**: crea una
+**segunda política idéntica**. A partir de ahí cada fallo del respaldo avisa dos
+veces, y el final previsible es alguien silenciando el canal — con lo cual el
+pipeline que despliega la alerta acabaría siendo la causa de que nadie la lea. De
+ahí la búsqueda previa por `displayName` y el `update` cuando existe.
+
+### El canal sale del repositorio, y el marcador importa más que el hecho
+
+Se resuelve **por nombre** (`displayName="Alertas PMO"`) y el pipeline lo inyecta
+con `jq`. Un id de consola en git sólo significa algo en este proyecto, y si el
+canal se recrea cambia sin que nada avise.
+
+Con `[]` habría bastado para que el pipeline funcionara — pero un despliegue
+manual del archivo habría creado una política **encendida y muda**, indistinguible
+de una sana desde fuera. Con el marcador, la API rechaza y no toca nada:
+
+```
+INVALID_ARGUMENT: Name must begin with
+'projects/{project_id}/notificationChannels/{channel_id}',
+got: EL-PIPELINE-RESUELVE-ESTE-CANAL-POR-DISPLAYNAME
+```
+
+Comprobado contra la política viva: la rechaza y **deja el canal bueno intacto**.
+Elegir entre dos formas de fallar es la mitad del trabajo en este archivo.
+
+### Cinco guardas, ninguna teórica
+
+| Guarda | Ya pasó, o casi |
+|---|---|
+| la herramienta no responde | ver más abajo: saltó **de verdad**, dos veces |
+| 0 canales con ese nombre | dejaría la política apuntando a la nada |
+| >1 canal homónimo | uno recreado, uno de pruebas: avisar a un sitio que nadie mira |
+| canal existe pero **`enabled: false`** | tercera forma de quedarse mudo, encontrada al montar esto |
+| `notificationChannels` vacío **al releer** | literalmente lo que le pasó a la política del watcher seis días |
+
+La última es la que más vale: **no se da por hecho lo que se acaba de escribir.**
+
+El `enabled` va con `describe` y **no en el filtro** — corrección de Doc sobre una
+propuesta mía peor. La API lo rechaza con 400, pero el motivo de fondo es mejor
+que el técnico: filtrando, un canal apagado da **cero coincidencias** y el paso
+diría *«no encontrado»* de un canal que está delante. **«No encontrado» manda a
+buscar; «existe pero está apagado» manda a encenderlo.**
+
+### 🔴 La trampa del `grep -c` bajo el shell de Actions
+
+`grep -c` **sale con código 1 cuando no cuenta nada**, y el shell por defecto de
+GitHub Actions es `bash -e`. Escrito así:
+
+```bash
+NUM=$(printf '%s\n' "$CANAL" | grep -c .)
+```
+
+el caso «no hay canal» **mata el paso ahí mismo** con un fallo genérico, y no se
+llega nunca a imprimir el `::error::` que lo explica: la guarda más importante se
+habría comido su propio mensaje. Va con `|| true`.
+
+Misma familia que el `pipefail` de `respaldo.sh`: **el código de salida de una
+tubería no es lo que parece.**
+
+### 🔴 Verde y sin hacer nada, dos veces — y el fallo era mío
+
+El primer run (`32511589977`) salió **success** y **ni la política ni el Scheduler
+se tocaron**: los dos pasos se plantaron en su comprobación previa. Es el diseño
+funcionando —`exit 0` para no bloquear la API, con el `::error::` como único
+aviso— pero deja dos lecciones.
+
+**Una es del pipeline**: `google-github-actions/setup-gcloud@v2` instala gcloud
+**sin** los componentes `alpha` ni `beta`. Doc avisó de esto para `alpha` y valía
+igual para `beta`, que es donde vive toda la gestión de políticas. Va explícito
+con `install_components: beta`.
+
+**La otra es mía, y es peor**: mis dos comprobaciones previas mandaban `stderr` a
+`/dev/null`. Cuando saltaron de verdad, el log sólo decía «no responde». **Escribí
+una guarda que esconde por qué salta** — el pecado exacto de la alerta muda que
+todo esto viene a arreglar, cometido dentro del arreglo. Ahora capturan la salida
+y la imprimen antes del `::error::`, y esa línea fue la que dio el diagnóstico
+real en el segundo run.
+
+### 🔴 Y el diagnóstico real: no es la herramienta, es el IAM
+
+Con la salida ya visible, el run `32512450469`:
+
+```
+ERROR: (gcloud.beta.monitoring.policies.list) [...] does not have permission
+to access projects instance [pmo-dashboard-503418]
+
+ERROR: (gcloud.scheduler.jobs.list) PERMISSION_DENIED: The principal lacks
+IAM permission "cloudscheduler.jobs.list" for the resource
+"projects/pmo-dashboard-503418/locations/us-central1"
+```
+
+**Y aquí me equivoqué antes de empezar.** Di por comprobado que
+`github-deployer@` tenía `roles/editor` «que cubre políticas y Scheduler». No lo
+tiene. Lo leí de un `grep` sobre una tabla aplanada donde la línea del rol y las
+de los miembros no se correspondían. Los roles reales son **dos**:
+
+```
+roles/iam.serviceAccountUser
+roles/run.admin
+```
+
+Que es un reparto sensato —la cuenta del pipeline podía desplegar Cloud Run y
+nada más— y explica por qué el Job sí se desplegaba desde hace días y esto no.
+
+**La lección se repite y ya van tres en dos días:** un `grep` sobre una salida
+formateada no es una comprobación, es una impresión. Lo mismo que `pg_restore
+--list` leyendo el índice, y lo mismo que «no hay línea AVISO NO ENVIADO». La
+comprobación buena era una sola línea:
+
+```bash
+gcloud projects get-iam-policy pmo-dashboard-503418 \
+  --flatten="bindings[].members" --format="value(bindings.role)" \
+  --filter="bindings.members:github-deployer@..."
+```
+
+### Estado: el código está, inerte
+
+- **Producción intacta**, comprobado después de los dos runs: las dos políticas
+  con su canal, y el disparador `ENABLED` en `30 3,15 * * *`. Las guardas se
+  negaron a tocar nada, que era exactamente su trabajo.
+- **Los pasos no pueden funcionar hasta que alguien conceda el IAM.** Y ese
+  alguien no soy yo: el IAM de este proyecto es manual y documentado a propósito
+  —«un workflow con permiso para repartir roles de proyecto es una escalada de
+  privilegios esperando a que alguien toque el repositorio»—, así que las
+  concesiones quedan escritas para que las ejecute quien corresponde:
+
+```bash
+# Politicas de alerta: crear y actualizar.
+gcloud projects add-iam-policy-binding pmo-dashboard-503418 \
+  --member="serviceAccount:github-deployer@pmo-dashboard-503418.iam.gserviceaccount.com" \
+  --role="roles/monitoring.alertPolicyEditor"
+
+# Leer los canales para resolver 'Alertas PMO' por nombre. Solo lectura.
+gcloud projects add-iam-policy-binding pmo-dashboard-503418 \
+  --member="serviceAccount:github-deployer@pmo-dashboard-503418.iam.gserviceaccount.com" \
+  --role="roles/monitoring.notificationChannelViewer"
+
+# El disparador: crear y actualizar.
+gcloud projects add-iam-policy-binding pmo-dashboard-503418 \
+  --member="serviceAccount:github-deployer@pmo-dashboard-503418.iam.gserviceaccount.com" \
+  --role="roles/cloudscheduler.admin"
+```
+
+Tres roles acotados en vez de `roles/editor`, que es lo que haría falta si se
+resolviera de un plumazo. `notificationChannelViewer` y no `...Editor`: el
+pipeline **lee** canales, no los crea — el canal de Chat se autoriza a mano en la
+consola y así sigue.
+
+El `actAs` sobre `pmo-scheduler@` —que hace falta para crear un job de Scheduler
+con `--oauth-service-account-email`— **ya está cubierto** por el
+`roles/iam.serviceAccountUser` a nivel de proyecto que la cuenta ya tenía.
+
+**Hasta que eso se conceda, el vigilante sigue viviendo en la consola.** El
+pipeline lo intenta, falla en la primera línea y lo dice; no rompe nada y no
+tapa nada.
+
+---
+
 ## ✅ La Capa 2 firmada con fuego real: sonaron las dos (2026-08-20)
 
 **Resultado: llegaron los dos avisos, y son distintos.** Es lo que se estaba
