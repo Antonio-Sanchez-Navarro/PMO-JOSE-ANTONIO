@@ -27,10 +27,8 @@ git log --oneline -20          # qué se commiteó desde el último corte
 git status --short             # qué hay sin commitear (y de quién es)
 git diff --stat                # tamaño y forma de lo pendiente
 TASKS.md                       # casillas que cambiaron de estado
-DOC.md                         # estado de alto nivel y pendientes de decisión
-GRAVITY_MEMORY.md → Estado     # el encargo vivo de Gravity
-CLAUDE_MEMORY.md               # lo último del backend, variables y trampas
 AI_ROLES.md → Excepciones      # si se acordó alguna nueva
+PROMPT_ALANA.md                # el encargo vivo y el contexto que da Doc
 docs/SESSION-*.md              # si hay registro de sesión nuevo
 gh run list                    # NUEVO el 2026-08-07: `gh` ya está instalado y
                                # autenticado, así que el CI y el despliegue por
@@ -41,6 +39,53 @@ gh variable list               # NUEVO el 2026-08-12: WEB_URL y GOOGLE_REDIRECT_
 curl <WEB_URL> | grep title    # y se compara con apps/web/index.html: el 08-10 ese
                                # dominio servía otra aplicación entera (§13)
 ```
+
+> ### ⚖️ Por qué faltan tres líneas ahí arriba (2026-08-21)
+>
+> El chequeo listaba también **`DOC.md`, `GRAVITY_MEMORY.md → Estado` y
+> `CLAUDE_MEMORY.md`**. Se quitaron por regla del Jefe, y el hueco es
+> deliberado: **Alana ya no lee las tres bitácoras de los otros agentes.**
+>
+> Nació leyéndolas porque Doc vivía fuera de este entorno y necesitaba ojos
+> dentro. Doc ya opera aquí y ve lo mismo. Lo que era útil pasó a ser un lastre:
+> **un auditor que lee la bitácora del ejecutor hereda su relato** — sus
+> palabras, su orden de importancia y su convicción de que algo está resuelto.
+>
+> Y hay evidencia en este mismo cuaderno, no es una hipótesis. §37 fue fuerte
+> justo donde leí **código**. En cambio §36.9 —proponer una capa que ya estaba
+> entregada— salió de trabajar sobre estado leído, y §37.20 dejó viva una
+> pregunta sobre el *Root Directory* de Vercel que ya estaba contestada, porque
+> la deduje de documentos en vez de mirar el panel.
+>
+> **Sigue leyéndose todo lo demás, que es casi todo:** el código entero, git en
+> todas sus formas, la nube (`gcloud`, `gh`, sondas, paneles) y los documentos
+> neutrales —`AI_ROLES.md`, `TASKS.md`, `API_CONTRACTS.md`, `ARCHITECTURE.md`,
+> `GCP_SETUP.md`, `README.md`, `infra/` y `docs/`—. Eso es verdad del proyecto,
+> no relato de un agente.
+>
+> **La contrapartida es mía:** el contexto que antes iba a buscar a una bitácora
+> ahora lo da Doc en `PROMPT_ALANA.md`. Y cuando algo **parezca** un defecto pero
+> huela a decisión deliberada —el caso de manual es el `stalledInterval` de 10
+> minutos, que se subió a propósito para ahorrar comandos de Upstash—, **no se
+> afirma: se pregunta en el buzón.** Un hallazgo que resulta ser una decisión
+> consciente gasta el tiempo de todos y desgasta la autoridad del siguiente.
+
+> ### 🔎 Y desde hoy: encuentro y compruebo, no arreglo (2026-08-21)
+>
+> Los cinco hallazgos de §38.5 los cerré yo, con código, en `apps/api`,
+> `apps/web` e `infra/` (§40). **No vuelve a pasar.**
+>
+> El motivo no es la línea de dominio, es más hondo y lo firmo: **audité y luego
+> corregí mis propios hallazgos.** Eso disuelve lo único que me hace útil — si
+> quien audita también arregla, no queda nadie fuera para decir «eso que
+> arreglaste no estaba roto». Que esta vez lo dijera yo fue honestidad, no
+> diseño, **y un control que depende de la honestidad del controlado no es un
+> control**.
+>
+> A partir de ahora: encuentro, compruebo y escribo el hallazgo verificado —qué
+> pasa, dónde, qué lo demuestra y **si de verdad está roto**—. Lo reparte Doc.
+> Y si veo un hueco sin dueño, **no lo tapo: lo digo**. Ofrecerme a cerrarlo es
+> justo lo que arrancó esto.
 
 > **Excepción puntual del 2026-08-07**, por orden expresa del usuario: Alana
 > escribió un bloque de hallazgos al final de `GRAVITY_MEMORY.md`. Va **añadido**,
@@ -5086,3 +5131,61 @@ alguien los hubiera aplicado sin mirar — y por poco: el encargo fue «ciérral
 no «compruébalos».
 
 **Un hallazgo tampoco se audita: se comprueba antes de arreglarlo.**
+
+---
+
+## 41. Mi commit de siete palabras movió 726 líneas (2026-08-21)
+
+Doc lo detectó y me lo pasó para el registro. **Comprobado por mí, porque el
+commit es mío:**
+
+```
+git show --stat 36938c9                    → 368 insertions, 368 deletions
+git show --ignore-cr-at-eol --stat 36938c9 →   7 insertions,   7 deletions
+```
+
+`CopilotDrawer.tsx` sale con **726 líneas cambiadas** en un commit titulado
+«siete mensajes de error en inglés». Los cambios reales del archivo son **dos**.
+Las otras 724 son finales de línea: el archivo estaba en `CRLF + CR` mezclado y
+mi `sed -i` lo dejó mezclado de otra forma.
+
+### 41.1 Por qué no es estético
+
+Tres motivos, y ninguno es de gusto:
+
+1. **Un cambio de dos líneas escondido entre 726 no se puede revisar.** Es
+   exactamente lo contrario de lo que buscaba haciendo un commit por hallazgo.
+2. **Es la familia del CRLF que ya mató `respaldo.sh` el 19-08**, con `bash`
+   muriendo en la línea 1 (§33.1). Ahí costó una ejecución del respaldo.
+3. **Viajó dentro de un commit que nombra otra cosa**, así que el historial no
+   lo cuenta. Es el patrón del polizón, en versión de bytes en vez de archivos.
+
+### 41.2 Y lo que de verdad enseña: `.gitattributes` no lo está impidiendo
+
+Existe desde el 19-08 y marca `*.sh text eol=lf`. **No cubre `.ts` ni `.tsx`**, y
+Doc midió que **5 de los primeros 60 archivos de `apps/web` tienen finales
+mezclados**. O sea: el archivo ya estaba sucio antes de que yo lo tocara, y
+cualquier edición masiva sobre esos cinco va a repetir esto.
+
+Es el mismo error de §31.2 y §30 en otra ropa: **una pieza puesta que cubre menos
+de lo que se cree que cubre.** El `.gitattributes` se leyó como «los finales de
+línea están resueltos» cuando lo que dice es «los de los scripts, sí».
+
+La normalización se reparte a @Gravity; **no la hago yo** — es código, y desde
+hoy encuentro y compruebo, no arreglo (§0).
+
+### 41.3 Lo que me llevo a la rutina
+
+Antes de commitear cualquier edición que toque más de una línea de un archivo:
+
+```
+git diff --stat
+git diff --ignore-cr-at-eol --stat
+```
+
+Si los dos números no se parecen, lo que hay dentro del commit no es lo que dice
+el mensaje. **Cuesta un segundo y lo caza entero.**
+
+Y la lección de fondo, que es la de la casa otra vez: **miré el resultado del
+`sed` —los siete mensajes traducidos, correctos— y no miré el diff.** Comprobé lo
+que quería cambiar, no lo que cambié.
