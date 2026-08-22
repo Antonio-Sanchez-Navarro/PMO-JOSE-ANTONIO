@@ -59,7 +59,7 @@ infraestructura de Gravity.
 - Eliminados los placeholders de bases de datos locales.
 - Cloud Run configurado para inyectar las versiones activas de Secret Manager directamente a las variables de entorno `DATABASE_URL` y `REDIS_URL`.
 - Las migraciones de Prisma se ejecutan sobre Neon durante el despliegue.
-- **Frontend Vercel completado:** El monorepo compila usando `vercel.json` desde `apps/web`. Vercel trackea la rama `master` en `https://pmo-frontend-ten.vercel.app`.
+- **Frontend Vercel completado:** El monorepo compila usando `vercel.json` desde la raíz del monorepo (`./vercel.json`) con `ignoreCommand` blindado ante shallow clones. Vercel trackea la rama `master` en `https://pmo-frontend-ten.vercel.app`.
 - **Integración OAuth verificada:** El flujo de login con Google en producción se completa sin errores (los bloqueos CORS y 302 están resueltos gracias al nuevo `WEB_URL`), enlazando el cliente de Vercel con la redirección autorizada hacia el dominio de Cloud Run.
 
 **Diagnóstico y Mitigación (Arranque de Cloud Run):**
@@ -421,3 +421,26 @@ etiqueta verificada; la carrera del cronómetro está resuelta con un índice ú
 centinela; y el socket exige `typ: access` en el handshake. En `apps/web` no hay
 un solo `dangerouslySetInnerHTML`. El detalle completo, con lo que **no** revisé
 línea a línea, está en la sección 12 de `ALANA.md`.
+
+---
+
+## Reglas de Oro y Lecciones Aprendidas (Frontend / DevOps)
+
+### 1. `ignoreCommand` de Vercel y Clones Superficiales
+
+- **Ubicación obligatoria:** `vercel.json` vive en la raíz del monorepo (`./vercel.json`) con una única clave (`ignoreCommand`). No incluir `buildCommand` ni `outputDirectory` (se gestionan en la interfaz de Vercel).
+- **Infalibilidad ante shallow clones:** El script debe comprobar la existencia del commit previo con `git cat-file -e "$VERCEL_GIT_PREVIOUS_SHA^{commit}" 2>/dev/null`. Si la variable está vacía o el commit no existe en el clon superficial, debe hacer `exit 1` (construir).
+- **Semántica de salida en Vercel:** Cualquier código de salida distinto de 0 generado por error (como código 128 por objeto inexistente) aborta el despliegue como **fallido** en lugar de construir. Ante la duda, siempre retornar `exit 1`.
+
+### 2. Finales de Línea y Detección de Archivos Binarios en Git
+
+- **Configuración estricta en `.gitattributes`:** Declarar `* text=auto eol=lf` junto a reglas explícitas para extensiones web (`*.ts`, `*.tsx`, `*.js`, `*.json`, `*.css`, `*.md`, etc.) y binarias (`*.png`, `*.woff2`, etc.).
+- **Peligro de `\r` aislados:** Si un archivo contiene retornos de carro sueltos, la heurística de Git lo clasifica como binario (`i/-text`). Un archivo marcado como binario en el índice es omitido por `git add --renormalize` y genera diffs masivos inflados.
+- **Hábito de verificación antes del commit:** Comparar siempre:
+
+  ```bash
+  git diff --stat
+  git diff --ignore-cr-at-eol --stat
+  ```
+
+  Ambas salidas deben coincidir exactamente antes de confirmar cualquier commit amplio.
