@@ -49,6 +49,10 @@ on:
 
 permissions:
   contents: read
+  # Para preguntar por los jobs del run que fallo y por sus anotaciones, que es
+  # lo que permite nombrar el archivo en vez de solo el commit.
+  actions: read
+  checks: read
 
 jobs:
   avisar:
@@ -96,6 +100,9 @@ jobs:
           # muerta y no dice que está muerta. Queda escrito porque una deuda
           # escrita es una deuda; una no escrita es una sorpresa.
           URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          # `gh api` necesita token; el de Actions basta con los permisos de
+          # arriba y no hay que crear nada.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eo pipefail
 
@@ -103,6 +110,11 @@ jobs:
             echo "::error::El secreto ALERT_WEBHOOK_URL de GitHub Actions no existe o esta vacio. NO se ha avisado del fallo. Lo crea el Jefe con: gh secret set ALERT_WEBHOOK_URL --body '<url del webhook de Chat>' (el mismo valor que el secreto ALERT_WEBHOOK_URL de Secret Manager)."
             exit 1
           fi
+
+          # `RUN_FALLIDO` es el run del que se pueden pedir los jobs. Vacio
+          # cuando no hay ninguno del que preguntar -Vercel construye fuera de
+          # GitHub y sus logs no estan aqui-.
+          RUN_FALLIDO=""
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             QUE="Prueba manual del avisador"
@@ -116,6 +128,7 @@ jobs:
             COMMIT="${{ github.event.workflow_run.head_sha }}"
             ENLACE="${{ github.event.workflow_run.html_url }}"
             EMOJI="🔴"
+            RUN_FALLIDO="${{ github.event.workflow_run.id }}"
           else
             QUE="Vercel · ${{ github.event.deployment_status.environment }}"
             TITULO="${{ github.event.deployment_status.description }}"
@@ -123,14 +136,63 @@ jobs:
             # El log de Vercel y no el de GitHub: es donde está el motivo.
             ENLACE="${{ github.event.deployment_status.target_url }}"
             EMOJI="🔴"
+            # ⚠️ Vercel no deja jobs ni anotaciones en GitHub, asi que aqui no hay
+            # forma de acotar el archivo. El aviso ira solo con el commit **que
+            # disparo el despliegue**, y el texto lo dice para no inducir a
+            # culpar a su autor.
+          fi
+
+          # ── Acotar el fallo: qué job y qué archivo ────────────────────────
+          #
+          # ⚠️ **El commit que dispara el workflow no es necesariamente el que
+          # rompió nada**, y en este árbol eso pasa de verdad: tres agentes
+          # escriben sobre el mismo `master`, así que el CI puede ponerse rojo
+          # con el commit de uno por un cambio que dejó otro. Ya ocurrió el
+          # 2026-08-22 — `tasks.api.ts` lo rompió `7408546`, y el run que lo
+          # destapó llevaba el commit siguiente.
+          #
+          # Un aviso que solo dice el commit manda a quien lo lea de madrugada
+          # **al autor equivocado**. El `head_sha` es un dato correcto que
+          # induce una conclusión falsa, que es la peor clase de dato.
+          #
+          # El payload no trae ni el job ni el archivo, pero **la API sí**: se
+          # piden los jobs del run, se busca el que falló y se lee su primera
+          # anotación de error, que trae `path` y línea. Con eso el mensaje
+          # señala el sitio en vez de a una persona.
+          #
+          # Todo esto es **best-effort a propósito**: si la API no contesta o el
+          # run no tiene anotaciones, el aviso sale igual con lo que haya. Un
+          # adorno que impida avisar sería peor que no tenerlo.
+          JOB_FALLIDO=""
+          DONDE=""
+
+          if [ -n "${RUN_FALLIDO}" ]; then
+            JOBS=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_FALLIDO}/jobs" 2>/dev/null || echo '{}')
+
+            JOB_FALLIDO=$(printf '%s' "${JOBS}" \
+              | jq -r '[.jobs[]? | select(.conclusion == "failure")] | .[0].name // empty' 2>/dev/null || true)
+
+            ID_JOB=$(printf '%s' "${JOBS}" \
+              | jq -r '[.jobs[]? | select(.conclusion == "failure")] | .[0].id // empty' 2>/dev/null || true)
+
+            if [ -n "${ID_JOB}" ]; then
+              DONDE=$(gh api "repos/${{ github.repository }}/check-runs/${ID_JOB}/annotations" 2>/dev/null \
+                | jq -r '[.[]? | select(.annotation_level == "failure")] | .[0]
+                         | if . then "\(.path):\(.start_line)" else empty end' 2>/dev/null || true)
+            fi
           fi
 
           # ⚠️ **El enlace no es un adorno.** Un aviso que dice «algo falló» y
           # obliga a ir a buscarlo se acaba ignorando; el que trae el sitio
           # exacto se atiende. Si alguna vez se recorta este mensaje, esa línea
           # es la última que se quita.
-          TEXTO=$(printf '%s *Despliegue fallido: %s*\n%s\nCommit: %s\nLog: %s' \
-                    "${EMOJI}" "${QUE}" "${TITULO:-sin descripcion}" "${COMMIT:0:7}" "${ENLACE:-sin enlace}")
+          # El commit va etiquetado como **el que disparo**, no como el culpable.
+          # Es una palabra de mas que evita la conclusion equivocada.
+          TEXTO=$(printf '%s *Despliegue fallido: %s*\n%s' "${EMOJI}" "${QUE}" "${TITULO:-sin descripcion}")
+          [ -n "${JOB_FALLIDO}" ] && TEXTO="${TEXTO}"$'\n'"Job: ${JOB_FALLIDO}"
+          [ -n "${DONDE}" ] && TEXTO="${TEXTO}"$'\n'"Donde: ${DONDE}"
+          TEXTO="${TEXTO}"$'\n'"Disparado por: ${COMMIT:0:7} (no necesariamente quien lo rompio)"
+          TEXTO="${TEXTO}"$'\n'"Log: ${ENLACE:-sin enlace}"
 
           # `--fail` para que un rechazo del webhook no pase por entregado: sin
           # el, `curl` devuelve 0 ante un 400 y el aviso se daria por enviado.
