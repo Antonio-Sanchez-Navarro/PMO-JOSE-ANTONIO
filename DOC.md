@@ -301,6 +301,53 @@ y **no lo está impidiendo** — 5 de los primeros 60 archivos de `apps/web` tie
 finales mezclados. Repartido a @Gravity: **diagnóstico antes que normalización**,
 porque normalizar sin saber por qué falló el control garantiza que vuelva.
 
+### 🔴 El barrido que aprobé tiene un bucle sin final (2026-08-21)
+
+**Corrección de la premisa, y me corrige a mí.** Abrí el expediente de los 27
+huérfanos con la hipótesis de que un rechazo de Redis dejaba el correo guardado y
+sin encolar. @Alana fue a Cloud Logging: **el `add` a Redis no falló ni una vez en
+30 días.** Cero OOM, cero `evicted`, cero `ENOTFOUND`, cero `ECONNREFUSED`.
+
+El `catch` de `persistEmails` dejó **una** línea en un mes: `2026-08-17`, `P1001`,
+base inalcanzable en Neon. **Es la base, no Redis** — y como falló el `upsert`, ese
+correo **nunca llegó a guardarse**: es la *otra* mitad de §37.1, el correo perdido
+con el marcador avanzando igual. Un caso real de aquel hallazgo, pero no de este.
+
+**Consecuencia para la decisión de Cloud Tasks: este expediente no la apoya ni la
+descarta.** No hay fallo de Redis que migrar. La tendencia de cuota —334 k de 500 k
+a día 21— sigue en pie como argumento aparte, y el gasto en reposo del sondeo de
+BullMQ también; pero los 27 no eran eso.
+
+**Qué pasó de verdad: 23 de los 27 se recuperaron en la primera pasada.** El barrido
+funcionó y §37.7 queda justificado por ese número solo.
+
+**Y los otros cuatro —ahora cinco— son un bucle sin final que nació hoy con el
+propio barrido.** Verificado por Doc en el código: `ai.processor.ts` hace `return`
+**sin escribir `processedAt`** cuando el correo no tiene `bodyText` ni `snippet`, y
+`gmail.service.ts:641` consulta `where: { processedAt: null }`. Un correo sin texto
+**no sale nunca del conjunto de candidatos**: 96 vueltas al día despertando Cloud
+Run, tocando Cloud SQL y gastando Upstash para no hacer nada. Con dos efectos
+medidos por @Alana: el freno de alertas tiene **margen cero** (ventana de 900 s
+contra un cron cada 900 s) y `MAX_RECONCILIADOS=100` con `receivedAt asc` deja que
+**cada atascado ocupe una plaza permanente por delante de los nuevos**.
+
+**Y la parte que es mía, dicha entera:** el barrido se desplegó **sin ver una sola
+pasada completa**. Firmé §37.7 por diseño y no por observación — exactamente lo que
+llevamos una semana exigiéndole a todo lo demás— y la cadencia de quince minutos
+la elegí yo, que es lo que convierte un caso raro en 96 al día. **Es la forma de
+fallo de esta casa cometida dentro del arreglo que la perseguía.**
+
+Repartido a @Claude con tres piezas: cerrar el bucle **dejando rastro** —marcado
+terminal y contable, no excluido de la consulta, que sería cambiar un problema
+ruidoso por uno silencioso—, subir el margen del freno, y decidir qué hacer con el
+orden. Y una pregunta de fondo que va con el encargo: **¿por qué llegan correos sin
+`bodyText` ni `snippet`?** Si el parseo MIME se los está comiendo, el bucle es el
+síntoma menor de los dos.
+
+**Condición de firma:** no se cierra con código ni con pruebas, sino con **una
+pasada real del barrido con los cinco fuera**. El error fue aprobarlo sin
+observarlo; no se repite en el arreglo.
+
 ### Estado del reparto — cierre del 2026-08-21
 
 | Capa | Estado | En qué |
@@ -329,7 +376,8 @@ usuario cierra sesión **sigue oyendo igual**.
 **Cerrado hoy también: los finales de línea de `apps/web`.** Y el diagnóstico de
 @Gravity fue mejor que el encargo: además de que `.gitattributes` solo cubría
 `*.sh`, **`CopilotDrawer.tsx` estaba clasificado como binario en el índice** por
-los `` sueltos — y a un binario `--renormalize` no lo toca. Aunque el archivo de
+los `
+` sueltos — y a un binario `--renormalize` no lo toca. Aunque el archivo de
 atributos hubiera estado completo, ese fichero habría seguido igual. Verificado por
 Doc: los 40 de `apps/web/src` en `i/lf w/lf`, y sin `.bat`/`.cmd`/`.ps1` que el
 `eol=lf` pudiera romper.
