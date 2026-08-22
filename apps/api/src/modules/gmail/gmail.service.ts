@@ -117,6 +117,9 @@ const MARGEN_FECHA_FUTURA_MS = 60 * 60_000;
  */
 const TANDA_DESCARGA = 10;
 
+/** Tope del diagnostico de correos sin texto. Es un diagnostico, no un barrido. */
+const MAX_DIAGNOSTICO = 20;
+
 /**
  * Antiguedad minima para que el barrido de reconciliacion toque un correo.
  *
@@ -1037,6 +1040,68 @@ export class GmailService {
       // Que no se pueda recordar no rompe el barrido: la proxima pasada
       // avisara de mas, que es el lado bueno del que equivocarse.
     }
+  }
+
+
+  /**
+   * Le pregunta a Gmail **la forma** de los correos que se cerraron sin texto.
+   *
+   * Existe porque la sonda de `toEmailSnippet` solo se dispara al ingerir, y los
+   * cinco casos conocidos entraron antes de que existiera. **Estan en Gmail
+   * ahora**, asi que no hay que esperar a que llegue uno nuevo para contestar la
+   * pregunta que queda: por que traen el cuerpo **y** el snippet vacios a la vez.
+   * Esa correlacion es justo la que el hueco del `attachmentId` no explica.
+   *
+   * Se registran **solo formas, nunca contenido**: `mimeType` de cada parte, si
+   * trae `data` o `attachmentId`, el tamano, y si Gmail devuelve `snippet`. Ni
+   * asunto, ni remitente, ni una linea del cuerpo.
+   *
+   * Acotado a {@link MAX_DIAGNOSTICO} correos: es un diagnostico, no un barrido.
+   */
+  async diagnosticarSinTexto(): Promise<{ revisados: number }> {
+    const correos = await this.prisma.email.findMany({
+      where: { skipReason: { not: null } },
+      // `userId` porque cada correo se consulta con las credenciales de su
+      // dueno: pedirlo con las de otro daría 404 y parecería que no existe.
+      select: { gmailMessageId: true, userId: true },
+      take: MAX_DIAGNOSTICO,
+    });
+
+    if (correos.length === 0) return { revisados: 0 };
+
+    const clientes = new Map<string, GmailClient>();
+
+    for (const { gmailMessageId, userId } of correos) {
+      let gmail = clientes.get(userId);
+      if (!gmail) {
+        gmail = await this.getGmailClient(userId);
+        clientes.set(userId, gmail);
+      }
+
+      try {
+        const { data } = await gmail.users.messages.get({
+          userId: 'me',
+          id: gmailMessageId,
+          format: 'full',
+        });
+
+        const partes = this.collectParts(data.payload).map((p) => {
+          const tiene = p.body?.data ? 'data' : p.body?.attachmentId ? 'attachmentId' : 'vacia';
+          return `${p.mimeType ?? '?'}:${tiene}:${p.body?.size ?? 0}`;
+        });
+
+        this.logger.log(
+          `DIAGNOSTICO ${gmailMessageId} · snippet=${data.snippet ? `si(${data.snippet.length})` : 'NO'} · ` +
+            `sizeEstimate=${data.sizeEstimate ?? '?'} · partes=[${partes.join(' | ')}]`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `DIAGNOSTICO ${gmailMessageId} · no se pudo consultar: ${describirError(err)}`,
+        );
+      }
+    }
+
+    return { revisados: correos.length };
   }
 
   // ─── Suscripción push ──────────────────────────────────────────────────
