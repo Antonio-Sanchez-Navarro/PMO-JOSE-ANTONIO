@@ -235,6 +235,34 @@ export class GmailService {
 
     const bodyText = this.extractBodyText(message.payload);
 
+    // ─── Sonda de diagnóstico (2026-08-22) ──────────────────────────
+    //
+    // **Está aquí para medir, no para arreglar**, y por orden expresa: primero el
+    // número, luego el parseo.
+    //
+    // Las tres ramas de `extractBodyText` exigen `p.body?.data`, y **Gmail manda
+    // `attachmentId` en vez de `data` cuando la parte pasa de cierto tamaño**.
+    // Un correo grande pierde el cuerpo entero — y si además trae `snippet`,
+    // **no queda huérfano**: se clasifica igual, leyendo doscientos caracteres
+    // de vista previa en lugar del correo. Termina bien, no da error y no
+    // aparece en ningún contador. Eso es lo que hay que medir.
+    //
+    // Se registran **solo formas, nunca contenido**: los `mimeType` de las
+    // partes, si cada una trae `data` o `attachmentId`, y el tamaño. Ni asunto,
+    // ni remitente, ni una línea del cuerpo. El log no es sitio para el correo
+    // de nadie.
+    if (!bodyText) {
+      const partes = this.collectParts(message.payload).map((p) => {
+        const tiene = p.body?.data ? 'data' : p.body?.attachmentId ? 'attachmentId' : 'vacia';
+        return `${p.mimeType ?? '?'}:${tiene}:${p.body?.size ?? 0}`;
+      });
+
+      this.logger.warn(
+        `SONDA cuerpo vacio · mensaje=${message.id} · snippet=${message.snippet ? 'si' : 'NO'} · ` +
+          `partes=[${partes.join(' | ')}]`,
+      );
+    }
+
     return {
       id: message.id!,
       threadId: message.threadId!,
@@ -768,6 +796,24 @@ export class GmailService {
     if (sinTexto > 0) {
       this.logger.log(`Correos cerrados sin clasificar (acumulado): ${sinTexto}`);
     }
+
+    // ─── La medida que convierte la sospecha en hecho (2026-08-22) ─────────
+    //
+    // Correos **sin cuerpo pero con snippet**: los que se clasificaron leyendo
+    // doscientos caracteres de vista previa en lugar del correo entero. No son
+    // huérfanos —terminaron bien, sin error y sin aparecer en ningún contador—
+    // y por eso nadie los había visto.
+    //
+    // Va aquí y no en una ruta aparte porque el barrido ya corre cada quince
+    // minutos y ya cuenta: el número aparece solo, y su tendencia también. Cinco
+    // es una curiosidad; doscientos significa que llevamos semanas clasificando a
+    // ciegas, y **de ese número sale una decisión que no es de este código**:
+    // si lo ya clasificado hay que reprocesar. Cuesta llamadas a Anthropic y la
+    // toma el Jefe.
+    const soloSnippet = await this.prisma.email.count({
+      where: { bodyText: null, snippet: { not: '' } },
+    });
+    this.logger.log(`SONDA alcance · correos clasificados solo con snippet: ${soloSnippet}`);
 
     return { candidatos: huerfanos.length, reencolados, fallidos, sinTexto };
   }
