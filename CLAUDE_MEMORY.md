@@ -9,6 +9,92 @@
 
 ---
 
+## El bucle del barrido, cerrado — y lo que aparecía detrás (2026-08-22)
+
+**La traza, que es como se firma esto:**
+
+```
+00:45:06  Reconciliacion: 5 reencolado(s) de 5 candidato(s), 0 fallido(s), 5 cerrado(s) sin clasificar
+00:49:27  Reconciliacion: 0 reencolado(s) de 0 candidato(s), 0 fallido(s), 5 cerrado(s) sin clasificar
+```
+
+La de las `00:45` es la última pasada del bucle: reencoló los cinco de siempre y
+**esta vez el procesador los cerró** con `SIN_TEXTO`. La de las `00:49` es la
+primera con el conjunto de candidatos vacío. Seis pasadas idénticas y luego cero.
+
+Migración `20260822000000_add_email_skip_reason` aplicada a las `00:41:03`,
+comprobada en el log del Job: sin la columna, nada de lo demás existía.
+
+### 🔴 Y las etiquetas contestan la pregunta que iba antes de escribir nada
+
+Se registraron a propósito, porque el bucle podía ser el síntoma menor:
+
+```
+cmt3k70t…  UNREAD, IMPORTANT, CATEGORY_PERSONAL, INBOX
+cmt29a4r…  UNREAD, CATEGORY_UPDATES, INBOX
+cmsxwfcu…  CATEGORY_PROMOTIONS, UNREAD, INBOX
+cmsutn44…  CATEGORY_PROMOTIONS, UNREAD, INBOX
+cmstjc92…  UNREAD, CATEGORY_UPDATES, INBOX
+```
+
+**No son invitaciones de Calendar ni mensajes solo-adjunto.** Son correos
+corrientes de la bandeja — personales, novedades, promociones— y uno marcado
+`IMPORTANT`. La hipótesis cómoda («son correos legítimamente vacíos») **queda
+descartada por la evidencia**, no por opinión.
+
+Lo que sí sé, y lo que no:
+
+- **El parseo tiene un hueco conocido y encaja con `CATEGORY_PROMOTIONS`:**
+  `extractBodyText` busca partes con `p.body?.data`, y Gmail **no manda `data`
+  cuando la parte es grande** — manda `attachmentId` y hay que pedirla aparte.
+  Un correo promocional en HTML es justo el caso grande. Ese cuerpo se pierde
+  entero y en silencio.
+- **Pero eso no explica el `snippet` vacío.** La guarda es
+  `!bodyText && !snippet`: para llegar ahí, Gmail tenía que haber devuelto
+  también el `snippet` vacío, y eso no lo causa el hueco de arriba. Comprobado
+  además que **solo hay un creador de filas `Email`** (`persistEmails`), así que
+  no viene de otra vía que se salte el campo.
+
+O sea: **hay dos cosas, no una**, y la segunda no está explicada. Queda como
+hallazgo abierto con su evidencia, no como suposición cerrada.
+
+### Lo que enseñó el aviso, que es lo que más vale
+
+El aviso del primer barrido —27 correos rescatados, uno con una tarea dentro que
+nunca llegó al tablero— hizo su trabajo. Los cuatro siguientes eran el mismo
+hecho contado otra vez.
+
+> **Un aviso que se dispara por una condición conocida y estable no es un aviso,
+> es una suscripción.**
+
+Y el daño no es la molestia: la próxima alerta de verdad —un respaldo caído—
+llegaría enterrada entre mensajes idénticos que ya nadie lee. **El canal se
+gasta.** Por eso el barrido ahora recuerda en Redis qué huérfanos vio la pasada
+anterior y **solo avisa de los ids nuevos**.
+
+Dos decisiones dentro de eso, y las dos son sobre de qué lado equivocarse:
+
+- **TTL de 24 h**, muy por encima de la cadencia. Si caducara cerca de los 15
+  min, cada pasada creería que todo es nuevo y volveríamos al aviso por
+  condición — el mismo fallo con otro disfraz.
+- **Fallo abierto:** si Redis no contesta, se avisa igual. Prefiero un aviso
+  repetido a callarme la primera vez que pasa algo de verdad, y el freno de una
+  hora acota el ruido.
+
+**El freno tenía margen cero** —900 s contra un cron de 900 s— y eso se notó en
+el chat del Jefe: llegaron los avisos de tres pasadas de seis, uno de cada dos,
+que es exactamente lo que predice un borde que coincide. Subó a 3.600 s. Pero
+conviene ver que **el freno solo acotaba**: lo que cura es dejar de avisar por
+una condición conocida.
+
+### Y una que me apunto para después
+
+La condición de ausencia de 14 h de la Capa 2 **tiene la misma forma**: avisa por
+una condición, no por un cambio. Hoy se salva sola porque no ha disparado nunca.
+El día que dispare de verdad —y ese día importa— repetirá igual.
+
+---
+
 ## §37.8 · mi mitad del socket: el contrato, y por qué el frontend no podía arreglarlo solo (2026-08-21)
 
 **El síntoma era del frontend y la causa estaba aquí.** El informe describía
