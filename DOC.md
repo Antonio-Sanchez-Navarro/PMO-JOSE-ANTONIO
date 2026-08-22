@@ -523,6 +523,55 @@ snippet vacíos a la vez, y esa correlación el `attachmentId` no la explica.
 correos que fallan al descargarse ni llegan a `persistEmails`, así que el marcador
 avanza igual—; el `attachmentId` detrás.
 
+### Decisión — la zona horaria es `America/Cancun` (2026-08-22)
+
+§44.2 de @Alana. `time-zone.ts:24` fija **`America/Mexico_City` (UTC−6)** y lo
+justifica en su docblock como *«donde trabaja quien usa esto»*. **Toda la
+infraestructura corre en `America/Cancun` (UTC−5 fijo)**, escrito dos veces en
+`deploy.yml`.
+
+**Efecto medido:** lo cerrado o fichado **entre 00:00 y 01:00 hora local cuenta en
+el día anterior**, en `GET /dashboard/metrics` y en `GET /time/report`.
+
+Ella no lo dio por defecto y acertó: el docblock lo declaraba **decisión de
+producto**, así que *o el valor está mal o el comentario lo está*, y eso no es suyo.
+
+**Decisión de Doc: el valor está mal.** El Jefe está en Tulum — `America/Cancun`,
+UTC−5 **sin horario de verano**, que además es lo que evita que el número baile dos
+veces al año. Se cambia la constante **y el comentario**: esa frase es justo la que
+hizo que el error pareciera intencionado durante meses.
+
+---
+
+### 👀 Frente abierto: vigilancia del despliegue — las dos capas (2026-08-22)
+
+Comprobado por Doc: **ningún workflow avisa ante fallo.** `deploy.yml` menciona el
+webhook solo para **inyectárselo a los servicios**. Y no es solo Vercel: **si el
+despliegue de la API se cae, tampoco se entera nadie.** Lleva funcionando porque no
+ha fallado.
+
+La asimetría, dicha en voz alta: para el respaldo construimos **dos capas** —una
+dentro que dice el motivo, otra fuera que garantiza que te enteras— y escribimos por
+qué hacían falta las dos. Para el despliegue, **cero**. La misma casa, el mismo mes.
+
+| | Quién | Qué garantiza | Su punto ciego |
+|---|---|---|---|
+| **Dentro** | Workflow con `deployment_status: failure` y `workflow_run: failure` → Chat | dice **qué** falló y dónde mirar | no ve lo que **no llega a fallar**: si Vercel deja de disparar, no hay evento |
+| **Fuera** | Sonda periódica que compara el commit servido con el último que tocó el frontend | garantiza que **te enteras**, sea cual sea la causa | no sabe el motivo |
+
+**Dos detalles de diseño que deciden si esto sirve:**
+
+1. **La sonda NO compara contra la cabeza de `master`.** El `ignoreCommand` hace que
+   producción **legítimamente** no avance con commits de backend o de `.md`. Compara
+   contra **el último commit que tocó `apps/web` o `packages/shared`** — el mismo
+   criterio del `ignoreCommand`. Cualquier otra cosa avisa todo el día y acabamos
+   ignorándola, que es como se muere un vigilante.
+2. **El trabajo que avisa no puede vivir dentro del que falla.** Job aparte, con su
+   propia autenticación — la misma lección que el `avisar` dentro de `respaldo.sh`.
+
+Repartido: la Capa 1 y la sonda a @Claude; publicar el commit del build en una URL
+sin sesión, a @Gravity.
+
 ### Estado del reparto — cierre del 2026-08-21
 
 | Capa | Estado | En qué |
