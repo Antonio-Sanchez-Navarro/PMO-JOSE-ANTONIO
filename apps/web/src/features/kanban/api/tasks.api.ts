@@ -1,9 +1,7 @@
 import { Task, TaskStatus, TaskPriority } from '../types';
 import { getSocketId } from '../hooks/useSocket';
 import { EmailClassification } from '@pmo/shared';
-import { API_BASE } from '../../../lib/api';
-
-const TASKS_API_BASE = `${API_BASE}/tasks`;
+import { apiFetch, ApiError } from '../../../lib/api';
 
 export interface FetchTasksFilters {
   search?: string;
@@ -18,35 +16,20 @@ export const fetchTasks = async (filters?: FetchTasksFilters): Promise<Task[]> =
   if (filters?.priority) params.append('priority', filters.priority);
 
   const queryString = params.toString() ? `?${params.toString()}` : '';
-
-  const response = await fetch(`${TASKS_API_BASE}${queryString}`, {
-    credentials: 'include'
-  });
-  
-  if (!response.ok) {
-    throw new Error('Failed to fetch tasks');
-  }
-  
-  const json = await response.json();
-  return json.data; // Aquí está la magia: extraemos el array del wrapper
+  const json = await apiFetch<{ data: Task[] } | Task[]>(`/tasks${queryString}`);
+  return Array.isArray(json) ? json : json.data;
 };
 
 export const updateTaskStatus = async (id: string, newStatus: TaskStatus): Promise<Task> => {
   const socketId = getSocketId();
-  const response = await fetch(`${TASKS_API_BASE}/${id}`, {
+  return apiFetch<Task>(`/tasks/${id}`, {
     method: 'PATCH',
     headers: { 
       'Content-Type': 'application/json',
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
-    credentials: 'include',
     body: JSON.stringify({ status: newStatus }),
   });
-  
-  if (!response.ok) {
-    throw new Error(`Error updating task: ${response.statusText}`);
-  }
-  return response.json();
 };
 
 export interface MoveTaskResponse {
@@ -59,144 +42,79 @@ export interface MoveTaskResponse {
 
 export const moveTask = async (id: string, status: TaskStatus, position: number): Promise<MoveTaskResponse> => {
   const socketId = getSocketId();
-  const response = await fetch(`${TASKS_API_BASE}/${id}/move`, {
+  return apiFetch<MoveTaskResponse>(`/tasks/${id}/move`, {
     method: 'PATCH',
     headers: { 
       'Content-Type': 'application/json',
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
-    credentials: 'include',
     body: JSON.stringify({ status, position }),
   });
-
-  if (!response.ok) {
-    throw new Error('Failed to move task');
-  }
-
-  const json = await response.json();
-  return json;
 };
 
 export const createTask = async (data: Partial<Task>): Promise<Task> => {
   const socketId = getSocketId();
-  const response = await fetch(TASKS_API_BASE, {
+  const json = await apiFetch<{ data?: Task } | Task>('/tasks', {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
-    credentials: 'include',
     body: JSON.stringify(data),
   });
-
-  if (!response.ok) {
-    throw new Error('Failed to create task');
-  }
-
-  const json = await response.json();
-  return json.data || json; // Retorna el body o data
+  return (json as { data?: Task }).data || (json as Task);
 };
 
 export const deleteTask = async (id: string): Promise<void> => {
   const socketId = getSocketId();
-  const response = await fetch(`${TASKS_API_BASE}/${id}`, {
+  await apiFetch<void>(`/tasks/${id}`, {
     method: 'DELETE',
     headers: {
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
-    credentials: 'include',
   });
-
-  if (!response.ok) {
-    throw new Error('Failed to delete task');
-  }
 };
 
 export const classifyEmail = async (emailId: string): Promise<EmailClassification> => {
-  const response = await fetch(`${API_BASE}/emails/${emailId}/classify`, {
+  const json = await apiFetch<{ data?: EmailClassification } | EmailClassification>(`/emails/${emailId}/classify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
   });
-
-  if (!response.ok) {
-    let errorMsg = 'Error al analizar el correo';
-    try {
-      const errorBody = await response.json();
-      if (errorBody.message) {
-        errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-      }
-    } catch {
-      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
-    }
-    throw new Error(errorMsg);
-  }
-
-  const json = await response.json();
-  return json.data || json;
+  return (json as { data?: EmailClassification }).data || (json as EmailClassification);
 };
 
 export const createTasksFromEmail = async (emailId: string, payload: Partial<EmailClassification>, force?: boolean): Promise<Task[]> => {
   const socketId = getSocketId();
-  
-  // Agregar force al payload si viene true
   const finalPayload = force ? { ...payload, force } : payload;
 
-  const response = await fetch(`${API_BASE}/emails/${emailId}/to-task`, {
-    method: 'POST',
-    headers: { 
-      'Content-Type': 'application/json',
-      ...(socketId ? { 'x-socket-id': socketId } : {})
-    },
-    credentials: 'include',
-    body: JSON.stringify(finalPayload),
-  });
-
-  if (!response.ok) {
-    let errorMsg = 'Error al crear las tareas propuestas';
-    try {
-      const errorBody = await response.json();
-      if (response.status === 409) {
-        errorMsg = 'Este correo ya fue convertido a tareas anteriormente.';
-      } else if (errorBody.message) {
-        errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-      }
-    } catch {
-      // Ignoramos el error si no hay body JSON válido
+  try {
+    const json = await apiFetch<{ data?: Task[] } | Task[]>(`/emails/${emailId}/to-task`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        ...(socketId ? { 'x-socket-id': socketId } : {})
+      },
+      body: JSON.stringify(finalPayload),
+    });
+    return Array.isArray(json) ? json : json.data || [];
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      throw new Error('Este correo ya fue convertido a tareas anteriormente.');
     }
-    throw new Error(errorMsg);
+    throw err;
   }
-
-  const json = await response.json();
-  return json.data || json;
 };
 
 export const updateEmailStatus = async (emailId: string, status: string, force?: boolean): Promise<unknown> => {
   const socketId = getSocketId();
 
-  const response = await fetch(`${API_BASE}/emails/${emailId}/status`, {
+  const json = await apiFetch<{ data?: unknown } | unknown>(`/emails/${emailId}/status`, {
     method: 'PATCH',
     headers: { 
       'Content-Type': 'application/json',
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
-    credentials: 'include',
     body: JSON.stringify({ status, force }),
   });
-
-  if (!response.ok) {
-    let errorMsg = 'Error al actualizar el estado del correo';
-    try {
-      const errorBody = await response.json();
-      if (errorBody.message) {
-        errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-      }
-    } catch {
-      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
-    }
-    throw new Error(errorMsg);
-  }
-
-  const json = await response.json();
-  return json.data || json;
+  return (json as { data?: unknown }).data || json;
 };

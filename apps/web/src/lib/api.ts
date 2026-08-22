@@ -57,7 +57,18 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, `${init?.method ?? "GET"} ${path} → ${response.status}`);
+    let errorMsg = `${init?.method ?? "GET"} ${path} → ${response.status}`;
+    try {
+      const errBody = await response.json();
+      if (errBody?.message) {
+        errorMsg = Array.isArray(errBody.message)
+          ? errBody.message.join(", ")
+          : String(errBody.message);
+      }
+    } catch {
+      // Si no viene JSON, dejamos el mensaje por defecto
+    }
+    throw new ApiError(response.status, errorMsg);
   }
 
   // 204 y similares no traen cuerpo.

@@ -1,4 +1,4 @@
-import { API_BASE } from '../../../lib/api';
+import { apiFetch } from '../../../lib/api';
 
 export interface CopilotThread {
   id: string;
@@ -8,10 +8,8 @@ export interface CopilotThread {
 }
 
 export const fetchThreads = async (): Promise<CopilotThread[]> => {
-  const response = await fetch(`${API_BASE}/copilot/threads`, { credentials: 'include' });
-  if (!response.ok) throw new Error('No se pudieron cargar las conversaciones');
-  const json = await response.json();
-  return json.data || json;
+  const json = await apiFetch<{ data?: CopilotThread[] } | CopilotThread[]>('/copilot/threads');
+  return (json as { data?: CopilotThread[] }).data || (json as CopilotThread[]);
 };
 
 export interface ThreadMessage {
@@ -22,13 +20,10 @@ export interface ThreadMessage {
 }
 
 export const fetchThreadMessages = async (id: string): Promise<ThreadMessage[]> => {
-  const response = await fetch(`${API_BASE}/copilot/threads/${id}`, { credentials: 'include' });
-  if (!response.ok) throw new Error('No se pudieron cargar los mensajes de la conversación');
-  const json = await response.json();
-  return json.data || json;
+  const json = await apiFetch<{ data?: ThreadMessage[] } | ThreadMessage[]>(`/copilot/threads/${id}`);
+  return (json as { data?: ThreadMessage[] }).data || (json as ThreadMessage[]);
 };
 
 export const deleteThread = async (id: string): Promise<void> => {
-  const response = await fetch(`${API_BASE}/copilot/threads/${id}`, { method: 'DELETE', credentials: 'include' });
-  if (!response.ok) throw new Error('Error deleting thread');
+  await apiFetch<void>(`/copilot/threads/${id}`, { method: 'DELETE' });
 };

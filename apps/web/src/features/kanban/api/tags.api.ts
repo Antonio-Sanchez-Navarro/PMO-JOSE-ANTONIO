@@ -1,5 +1,4 @@
-import { API_BASE as GLOBAL_API_BASE } from '../../../lib/api';
-const API_BASE = `${GLOBAL_API_BASE}/tags`;
+import { apiFetch } from '../../../lib/api';
 
 export interface Tag {
   id: string;
@@ -9,31 +8,14 @@ export interface Tag {
 
 export const tagsApi = {
   getTags: async (): Promise<Tag[]> => {
-    const response = await fetch(API_BASE, { credentials: 'include' });
-
-    if (!response.ok) {
-      throw new Error('No se pudieron cargar las etiquetas');
-    }
-
-    // `GET /tags` devuelve el arreglo sin envoltorio, como `POST /tasks`.
-    return response.json();
+    return apiFetch<Tag[]>('/tags');
   },
 
   createTag: async (payload: { name: string; color: string }): Promise<Tag> => {
-    const response = await fetch(API_BASE, {
+    return apiFetch<Tag>('/tags', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify(payload),
     });
-
-    if (!response.ok) {
-      // 409 cuando ya existe una etiqueta con ese nombre: el mensaje del
-      // backend dice cuál, y es lo que hay que enseñar en el formulario.
-      const body = await response.json().catch(() => null);
-      throw new Error(body?.message ?? 'No se pudo crear la etiqueta');
-    }
-
-    return response.json();
   },
 };

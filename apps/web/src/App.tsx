@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { LoginPage } from "./features/auth/LoginPage";
 import { useSession, type SessionUser } from "./features/auth/useSession";
 import { KanbanBoard } from "./features/kanban/components/KanbanBoard";
-import { API_BASE } from "./lib/api";
+import { apiFetch } from "./lib/api";
 
 type Health = {
   status: string;
@@ -30,8 +30,11 @@ export function App() {
 
   if (status === "loading") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-400">
-        Cargando sesión…
+      <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-500">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+          <span className="text-sm font-medium">Cargando sesión...</span>
+        </div>
       </div>
     );
   }
@@ -55,10 +58,9 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
 
   useEffect(() => {
     // Vía el proxy de Vite: /api -> http://localhost:3000
-    fetch(`${API_BASE}/health`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+    apiFetch<Health>("/health")
       .then(setHealth)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, []);
 
   return (

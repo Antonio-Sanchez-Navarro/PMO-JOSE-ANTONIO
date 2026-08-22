@@ -3,7 +3,7 @@ import { CopilotHeader, AiProvider, AiTier, ProviderStatus } from './CopilotHead
 import { ChatMessage, Message } from './ChatMessage';
 import { useCopilot } from '../CopilotContext';
 import { CopilotThread, fetchThreads, fetchThreadMessages, deleteThread } from '../api/copilot.api';
-import { API_BASE } from '../../../lib/api';
+import { API_BASE, apiFetch } from '../../../lib/api';
 import { TaskPriority } from '../../kanban/types';
 import { toast } from 'sonner';
 
@@ -46,8 +46,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
 
   useEffect(() => {
     if (isOpen) {
-      fetch(`${API_BASE}/copilot/providers`, { credentials: 'include' })
-        .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to fetch providers')))
+      apiFetch<ProviderStatus[]>('/copilot/providers')
         .then((data: ProviderStatus[]) => {
           setAvailableProviders(data);
           // If current provider is not ready, switch to the first ready one

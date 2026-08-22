@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { API_BASE } from '../../../lib/api';
+import { apiFetch } from '../../../lib/api';
 
 export interface DraftEmailData {
   id: string;
@@ -23,10 +23,9 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
     setStatus('sending');
     setErrorMsg(null);
     try {
-      const res = await fetch(`${API_BASE}/copilot/emails/send`, {
+      const resData = await apiFetch<{ transport?: 'gmail' | 'mock' }>('/copilot/emails/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           to: emailData.to.split(',').map(e => e.trim()).filter(Boolean),
           subject: emailData.subject,
@@ -34,15 +33,9 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
         })
       });
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ message: `Error HTTP ${res.status}` }));
-        throw new Error(errorData.message || 'Error al enviar el correo');
-      }
-      
-      const resData = await res.json().catch(() => ({}));
-      if (resData.transport === 'mock') {
+      if (resData?.transport === 'mock') {
         setTransportType('mock');
-      } else if (resData.transport === 'gmail') {
+      } else if (resData?.transport === 'gmail') {
         setTransportType('gmail');
       }
 

@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { Task, TaskStatus } from '../types';
-import { TimeEntry } from '@pmo/shared';
-import { PROD_API_URL } from '../../../lib/api';
+import { TimeEntry, SESSION_EVENTS, CODIGO_SESION, type SesionRechazadaEvento, type CodigoSesion } from '@pmo/shared';
+import { PROD_API_URL, apiFetch } from '../../../lib/api';
 
 export const TASK_EVENTS = {
   created: 'task.created',
@@ -92,10 +92,47 @@ export const useSocket = ({
       globalSocket = io(socketUrl, {
         withCredentials: true,
         transports: ['websocket', 'polling'],
+        reconnectionAttempts: 5,
       });
 
       globalSocket.on('connect', () => {
         console.log('🔗 Conectado a WebSocket', globalSocket?.id);
+      });
+
+      globalSocket.on(SESSION_EVENTS.rechazada, async (evento: SesionRechazadaEvento) => {
+        const codigo = evento?.codigo;
+        if (codigo === CODIGO_SESION.caducada) {
+          try {
+            await apiFetch('/auth/refresh', { method: 'POST' });
+            globalSocket?.connect();
+          } catch {
+            globalSocket?.disconnect();
+            window.location.href = '/login';
+          }
+        } else if (codigo === CODIGO_SESION.invalida) {
+          globalSocket?.disconnect();
+          window.location.href = '/login';
+        } else {
+          console.warn('Sesión rechazada por error interno:', evento);
+        }
+      });
+
+      globalSocket.on('connect_error', async (err: Error & { data?: { codigo?: CodigoSesion } }) => {
+        const codigo = err.data?.codigo;
+        if (codigo === CODIGO_SESION.caducada) {
+          try {
+            await apiFetch('/auth/refresh', { method: 'POST' });
+            globalSocket?.connect();
+          } catch {
+            globalSocket?.disconnect();
+            window.location.href = '/login';
+          }
+        } else if (codigo === CODIGO_SESION.invalida) {
+          globalSocket?.disconnect();
+          window.location.href = '/login';
+        } else {
+          console.warn('Error de conexión en WebSocket:', err.message);
+        }
       });
     }
 

@@ -1,89 +1,45 @@
 import { getSocketId } from '../hooks/useSocket';
 import { TimeEntry } from '@pmo/shared';
-
-import { API_BASE as GLOBAL_API_BASE } from '../../../lib/api';
-const API_BASE = `${GLOBAL_API_BASE}/time`;
+import { apiFetch, ApiError } from '../../../lib/api';
 
 export const getActiveTimeEntry = async (): Promise<TimeEntry | null> => {
-  const response = await fetch(`${API_BASE}/active`, {
-    method: 'GET',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    if (response.status === 404) return null; // Wait, actually the Handoff says: GET /time/active returns null if no active. Let's see what it returns. "El fichaje en marcha o null".
-    throw new Error('Error al obtener el cronómetro activo');
+  try {
+    const json = await apiFetch<{ data?: TimeEntry } | TimeEntry | null>('/time/active');
+    if (!json) return null;
+    return (json as { data?: TimeEntry }).data !== undefined ? (json as { data: TimeEntry }).data : (json as TimeEntry);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
   }
-
-  const json = await response.json();
-  // Backend returns null or the time entry
-  return json.data !== undefined ? json.data : json;
 };
 
 export const getTimeEntries = async (taskId: string): Promise<TimeEntry[]> => {
-  const response = await fetch(`${API_BASE}/entries?taskId=${taskId}`, {
-    method: 'GET',
-    credentials: 'include',
-  });
-
-  if (!response.ok) throw new Error('Error al obtener el historial de tiempos');
-  const json = await response.json();
-  return json.data || json;
+  const json = await apiFetch<{ data?: TimeEntry[] } | TimeEntry[]>(`/time/entries?taskId=${taskId}`);
+  return (json as { data?: TimeEntry[] }).data || (json as TimeEntry[]);
 };
 
-export const createTimeEntry = async (data: { taskId: string, startedAt: string, endedAt: string, note?: string }): Promise<TimeEntry> => {
-  const response = await fetch(`${API_BASE}/entries`, {
+export const createTimeEntry = async (data: { taskId: string; startedAt: string; endedAt: string; note?: string }): Promise<TimeEntry> => {
+  const json = await apiFetch<{ data?: TimeEntry } | TimeEntry>('/time/entries', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(data),
   });
-
-  if (!response.ok) {
-    let errorMsg = 'Error al crear la entrada manual';
-    try {
-      const errorBody = await response.json();
-      if (errorBody.message) errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-    } catch {
-      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
-    }
-    throw new Error(errorMsg);
-  }
-  
-  const json = await response.json();
-  return json.data || json;
+  return (json as { data?: TimeEntry }).data || (json as TimeEntry);
 };
 
-export const updateTimeEntry = async (id: string, data: { startedAt?: string, endedAt?: string, note?: string }): Promise<TimeEntry> => {
-  const response = await fetch(`${API_BASE}/entries/${id}`, {
+export const updateTimeEntry = async (id: string, data: { startedAt?: string; endedAt?: string; note?: string }): Promise<TimeEntry> => {
+  const json = await apiFetch<{ data?: TimeEntry } | TimeEntry>(`/time/entries/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(data),
   });
-
-  if (!response.ok) {
-    let errorMsg = 'Error al actualizar la entrada de tiempo';
-    try {
-      const errorBody = await response.json();
-      if (errorBody.message) errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-    } catch {
-      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
-    }
-    throw new Error(errorMsg);
-  }
-
-  const json = await response.json();
-  return json.data || json;
+  return (json as { data?: TimeEntry }).data || (json as TimeEntry);
 };
 
 export const deleteTimeEntry = async (id: string): Promise<void> => {
-  const response = await fetch(`${API_BASE}/entries/${id}`, {
+  await apiFetch<void>(`/time/entries/${id}`, {
     method: 'DELETE',
-    credentials: 'include',
   });
-
-  if (!response.ok) throw new Error('Error al eliminar la entrada de tiempo');
 };
 
 export interface TimeReportResult {
@@ -95,7 +51,7 @@ export interface TimeReportResult {
   rows: { key: string; label: string; seconds: number }[];
 }
 
-export const getTimeReport = async (params: { groupBy: 'task' | 'day' | 'week', from?: string, to?: string }): Promise<TimeReportResult> => {
+export const getTimeReport = async (params: { groupBy: 'task' | 'day' | 'week'; from?: string; to?: string }): Promise<TimeReportResult> => {
   const query = new URLSearchParams();
   query.append('groupBy', params.groupBy);
   if (params.from) query.append('from', params.from);
@@ -104,66 +60,28 @@ export const getTimeReport = async (params: { groupBy: 'task' | 'day' | 'week', 
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   query.append('tz', tz);
 
-  const response = await fetch(`${API_BASE}/report?${query.toString()}`, {
-    method: 'GET',
-    credentials: 'include',
-  });
-
-  if (!response.ok) throw new Error('Error al obtener el reporte de tiempos');
-  const json = await response.json();
-  return json.data || json;
+  const json = await apiFetch<{ data?: TimeReportResult } | TimeReportResult>(`/time/report?${query.toString()}`);
+  return (json as { data?: TimeReportResult }).data || (json as TimeReportResult);
 };
 
 export const startTimer = async (taskId: string): Promise<TimeEntry> => {
   const socketId = getSocketId();
-  const response = await fetch(`${API_BASE}/${taskId}/start`, {
+  return apiFetch<TimeEntry>(`/time/${taskId}/start`, {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
-    credentials: 'include',
   });
-
-  if (!response.ok) {
-    let errorMsg = 'Error al iniciar el cronómetro';
-    try {
-      const errorBody = await response.json();
-      if (errorBody.message) {
-        errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-      }
-    } catch {
-      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
-    }
-    throw new Error(errorMsg);
-  }
-
-  return response.json();
 };
 
 export const stopTimer = async (taskId: string): Promise<TimeEntry> => {
   const socketId = getSocketId();
-  const response = await fetch(`${API_BASE}/${taskId}/stop`, {
+  return apiFetch<TimeEntry>(`/time/${taskId}/stop`, {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
-    credentials: 'include',
   });
-
-  if (!response.ok) {
-    let errorMsg = 'Error al detener el cronómetro';
-    try {
-      const errorBody = await response.json();
-      if (errorBody.message) {
-        errorMsg = Array.isArray(errorBody.message) ? errorBody.message.join(', ') : errorBody.message;
-      }
-    } catch {
-      // La respuesta no traía JSON: nos quedamos con el mensaje por defecto.
-    }
-    throw new Error(errorMsg);
-  }
-
-  return response.json();
 };

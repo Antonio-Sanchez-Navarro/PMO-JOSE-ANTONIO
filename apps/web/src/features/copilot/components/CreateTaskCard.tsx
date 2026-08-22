@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { TaskPriority } from '../../kanban/types';
 import { getSocketId } from '../../kanban/hooks/useSocket';
-import { API_BASE } from '../../../lib/api';
+import { apiFetch } from '../../../lib/api';
 
 export interface CreateTaskData {
   title: string;
@@ -26,24 +26,18 @@ export const CreateTaskCard: React.FC<CreateTaskCardProps> = ({ task }) => {
     setErrorMsg(null);
     try {
       const socketId = getSocketId();
-      const headers: HeadersInit = {
+      const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
       if (socketId) {
         headers['x-socket-id'] = socketId;
       }
 
-      const res = await fetch(`${API_BASE}/copilot/tasks/create`, {
+      await apiFetch('/copilot/tasks/create', {
         method: 'POST',
         headers,
-        credentials: 'include',
         body: JSON.stringify(taskData)
       });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ message: `Error HTTP ${res.status}` }));
-        throw new Error(errorData.message || 'Error al crear la tarea');
-      }
 
       setStatus('created');
     } catch (err) {
