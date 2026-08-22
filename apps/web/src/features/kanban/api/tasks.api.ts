@@ -99,7 +99,7 @@ export const createTasksFromEmail = async (emailId: string, payload: Partial<Ema
     return Array.isArray(json) ? json : json.data || [];
   } catch (err) {
     if (err instanceof ApiError && err.status === 409) {
-      throw new Error('Este correo ya fue convertido a tareas anteriormente.');
+      throw new Error('Este correo ya fue convertido a tareas anteriormente.', { cause: err });
     }
     throw err;
   }

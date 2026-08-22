@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { updateEmailStatus } from '../../kanban/api/tasks.api';
+import { ApiError } from '../../../lib/api';
 
 export interface ChangeEmailStatusData {
   emailId: string;
@@ -33,11 +34,11 @@ export const ChangeEmailStatusCard: React.FC<ChangeEmailStatusCardProps> = ({ ch
       await updateEmailStatus(change.emailId, change.status, force);
       setStatusState('updated');
     } catch (err) {
-      const error = err as Error;
-      if (error.message.includes('409') || error.message.toLowerCase().includes('despachado')) {
+      if (err instanceof ApiError && err.status === 409) {
         setNeedsForce(true);
         setErrorMsg('El correo ya fue despachado previamente. ¿Deseas forzar el cambio?');
       } else {
+        const error = err as Error;
         setErrorMsg(error.message);
       }
       setStatusState('idle');

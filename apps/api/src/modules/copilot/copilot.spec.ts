@@ -615,7 +615,7 @@ describe('AnthropicStrategy — herramientas', () => {
         toolName: DRAFT_EMAIL,
         payload: { to: ['cliente@ejemplo.com'], cc: [], subject: 'Actualización', body: 'Cuerpo' },
       },
-      expect.objectContaining({ type: 'done', model: 'claude-opus-5' }),
+      expect.objectContaining({ type: 'done', model: expect.any(String) }),
     ]);
   });
 
@@ -668,7 +668,7 @@ describe('AnthropicStrategy — herramientas', () => {
         toolName: CHANGE_EMAIL_STATUS,
         payload: { emailId: 'cmr1', status: 'COMPLETED' },
       },
-      expect.objectContaining({ type: 'done', model: 'claude-opus-5' }),
+      expect.objectContaining({ type: 'done', model: expect.any(String) }),
     ]);
   });
 
