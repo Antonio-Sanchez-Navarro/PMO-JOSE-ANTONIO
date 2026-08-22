@@ -1,6 +1,6 @@
 import { Task } from '@prisma/client';
 import { TASK_EVENTS, TasksGateway } from './tasks.gateway';
-import { SessionService } from '../auth/session.service';
+import { CODIGO_SESION, SesionRechazadaError, SessionService } from '../auth/session.service';
 
 const tarea = { id: 't1', userId: 'u1', status: 'TODO', title: 'x' } as unknown as Task;
 
@@ -8,7 +8,9 @@ const tarea = { id: 't1', userId: 'u1', status: 'TODO', title: 'x' } as unknown 
 const socketCon = (cookie?: string) => ({
   id: 'socket-1',
   handshake: { headers: cookie === undefined ? {} : { cookie } },
+  data: {} as Record<string, unknown>,
   join: jest.fn(),
+  emit: jest.fn(),
   disconnect: jest.fn(),
 });
 
@@ -94,48 +96,81 @@ describe('TasksGateway — handshake y salas', () => {
   let gateway: TasksGateway;
   let session: { verifyAccess: jest.Mock };
 
+  /** Ejecuta el middleware que `afterInit` registra y devuelve lo que le pasó a `next`. */
+  async function pasarPorElMiddleware(client: unknown): Promise<unknown> {
+    let middleware!: (socket: unknown, next: (err?: unknown) => void) => void;
+    gateway.afterInit({ use: (fn: never) => (middleware = fn) } as never);
+
+    return new Promise((resolve) => {
+      middleware(client, (err?: unknown) => resolve(err));
+    });
+  }
+
   beforeEach(() => {
-    session = { verifyAccess: jest.fn().mockResolvedValue({ sub: 'u1', email: 'a@b.c', typ: 'access' }) };
+    session = {
+      verifyAccess: jest.fn().mockResolvedValue({ sub: 'u1', email: 'a@b.c', typ: 'access' }),
+    };
     gateway = new TasksGateway(session as unknown as SessionService);
     gateway.server = { emit: jest.fn(), to: jest.fn().mockReturnValue({ emit: jest.fn() }) } as any;
   });
 
-  it('mete al cliente en la sala de su usuario, que es `sub` del JWT', async () => {
+  it('deja pasar una cookie válida y guarda el usuario para la sala', async () => {
     const client = socketCon('pmo_session=un-token');
 
-    await gateway.handleConnection(client as any);
+    const err = await pasarPorElMiddleware(client);
 
+    expect(err).toBeUndefined();
     expect(session.verifyAccess).toHaveBeenCalledWith('un-token');
+    expect(client.data.userId).toBe('u1');
+  });
+
+  it('mete al cliente en la sala de su usuario, que es `sub` del JWT', () => {
+    const client = socketCon('pmo_session=un-token');
+    client.data.userId = 'u1';
+
+    gateway.handleConnection(client as any);
+
     expect(client.join).toHaveBeenCalledWith('u1');
-    expect(client.disconnect).not.toHaveBeenCalled();
   });
 
-  it('rechaza un socket sin cookies', async () => {
-    const client = socketCon();
+  it('sin cookies: rechaza en el middleware con SESION_INVALIDA', async () => {
+    const err = (await pasarPorElMiddleware(socketCon())) as { data?: { codigo?: string } };
 
-    await gateway.handleConnection(client as any);
-
-    expect(client.disconnect).toHaveBeenCalled();
-    expect(client.join).not.toHaveBeenCalled();
+    expect(err).toBeDefined();
+    expect(err.data?.codigo).toBe('SESION_INVALIDA');
   });
 
-  it('rechaza un socket con cookies pero sin la de sesión', async () => {
-    const client = socketCon('otra=cosa');
+  it('con cookies pero sin la de sesión: SESION_INVALIDA, y ni se mira el token', async () => {
+    const err = (await pasarPorElMiddleware(socketCon('otra=cosa'))) as {
+      data?: { codigo?: string };
+    };
 
-    await gateway.handleConnection(client as any);
-
-    expect(client.disconnect).toHaveBeenCalled();
+    expect(err.data?.codigo).toBe('SESION_INVALIDA');
     expect(session.verifyAccess).not.toHaveBeenCalled();
   });
 
-  it('rechaza un token inválido o caducado', async () => {
-    session.verifyAccess.mockRejectedValue(new Error('jwt expired'));
-    const client = socketCon('pmo_session=caducado');
+  it('token caducado: SESION_CADUCADA, que es la que NO manda al usuario al login', async () => {
+    session.verifyAccess.mockRejectedValue(
+      new SesionRechazadaError(CODIGO_SESION.caducada, 'Sesión inválida o expirada'),
+    );
 
-    await gateway.handleConnection(client as any);
+    const err = (await pasarPorElMiddleware(socketCon('pmo_session=caducado'))) as {
+      data?: { codigo?: string };
+    };
 
-    expect(client.disconnect).toHaveBeenCalled();
-    expect(client.join).not.toHaveBeenCalled();
+    expect(err.data?.codigo).toBe('SESION_CADUCADA');
+  });
+
+  it('un fallo inesperado NO se disfraza de sesión inválida', async () => {
+    // Si un tropiezo interno mandara `SESION_INVALIDA`, el cliente sacaría al
+    // usuario al login por algo que no tiene nada que ver con su sesión.
+    session.verifyAccess.mockRejectedValue(new Error('la base se cayó'));
+
+    const err = (await pasarPorElMiddleware(socketCon('pmo_session=x'))) as {
+      data?: { codigo?: string };
+    };
+
+    expect(err.data?.codigo).toBe('ERROR_INTERNO');
   });
 });
 

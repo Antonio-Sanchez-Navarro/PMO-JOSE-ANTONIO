@@ -20,6 +20,94 @@
 
 ---
 
+### Handshake del socket — por qué falla y qué debe hacer el cliente (2026-08-21)
+
+**Este es el contrato entre dominios: el backend manda los códigos, el frontend
+decide qué hacer con ellos. Programa contra el `codigo`, nunca contra el
+mensaje** — el mensaje es texto para un humano y puede cambiar.
+
+#### Lo que estaba roto, porque explica el diseño
+
+El rechazo ocurría **dentro de `handleConnection`**, con un `client.disconnect()`.
+Eso significa que la conexión **se establecía y después se caía**, y desde el
+cliente eso no es un rechazo: es un `connect` seguido de un `disconnect`, es
+decir **una caída de red normal**. Ante una caída normal, socket.io reconecta
+indefinidamente — que es exactamente lo que hacía, y con razón.
+
+Por eso `useSocket` no tenía manejador de `connect_error`: **ese evento no
+llegaba a dispararse nunca**. No era un olvido del frontend; es que no había nada
+que manejar.
+
+Desde el 2026-08-21 la autenticación es **middleware del servidor** y rechaza con
+`next(err)`, así que `connect_error` sí se dispara y lleva el motivo dentro.
+
+#### Los tres desenlaces
+
+| Situación | Qué llega al cliente | Qué debe hacer |
+|---|---|---|
+| Sesión válida | `connect` | Nada más: ya está en su sala |
+| **Token de acceso caducado** | `connect_error` con `err.data.codigo === "SESION_CADUCADA"` | Refrescar **una vez** y reconectar. **Sin molestar al usuario** |
+| **Sin cookie, token inválido o `typ` incorrecto** | `connect_error` con `err.data.codigo === "SESION_INVALIDA"` | **Dejar de reintentar** y mandar al login |
+| Fallo interno del servidor | `connect_error` con `err.data.codigo === "ERROR_INTERNO"` | Reconexión normal, con tope. **No** mandar al login |
+| Cualquier otra cosa (red, servidor caído) | `connect_error` sin `err.data` | Reconexión normal, con tope |
+
+La diferencia entre las dos primeras es la que decide si el usuario ve un login o
+no ve nada. Hasta hoy las dos producían el mismo `disconnect` mudo.
+
+⚠️ **`ERROR_INTERNO` existe para que un tropiezo del servidor no eche a nadie.**
+Si un fallo inesperado saliera como `SESION_INVALIDA`, el cliente sacaría al
+usuario al login por algo que no tiene nada que ver con su sesión.
+
+⚠️ **Un token de refresco usado como token de acceso es `SESION_INVALIDA`, no
+`SESION_CADUCADA`.** Está vivo; lo que falla es el `typ`. Refrescar no lo
+arreglaría, así que reintentar sería un bucle.
+
+Cómo se lee, del lado del cliente:
+
+```ts
+socket.on('connect_error', (err) => {
+  switch (err.data?.codigo) {
+    case 'SESION_CADUCADA':  /* refrescar una vez y reconectar */ break;
+    case 'SESION_INVALIDA':  /* parar y mandar al login */        break;
+    default:                 /* reconexión normal, con tope */    break;
+  }
+});
+```
+
+#### El socket ya no sobrevive a su propio token
+
+La sesión se validaba **una sola vez**, en el handshake, con un token de 15
+minutos — y después el socket vivía indefinidamente. Uno abierto toda la noche
+seguía recibiendo eventos con una sesión caducada hacía horas, y si el usuario
+cerraba sesión **el socket seguía oyendo** hasta caerse por otro motivo.
+
+Ahora cada socket lleva un temporizador alineado con el `exp` de su token. Al
+vencer, el servidor **avisa y cierra**:
+
+| Evento | Cuerpo | Cuándo |
+|---|---|---|
+| `session.rechazada` | `{ codigo: "SESION_CADUCADA" }` | El token del socket venció. Llega **antes** del cierre |
+
+**Hace falta un evento propio porque `connect_error` solo existe durante el
+handshake.** Una vez conectado, un cierre del servidor le llega al cliente como
+un `disconnect` pelado, otra vez indistinguible de que se haya caído el wifi.
+
+Qué debe hacer el cliente: lo mismo que con `SESION_CADUCADA` en el handshake —
+refrescar y reconectar, en silencio. La cookie del handshake **no se actualiza
+sola** mientras el socket vive, así que la reconexión es lo que trae la cookie
+nueva.
+
+#### Dónde viven los nombres
+
+`CODIGO_SESION` en `apps/api/src/modules/auth/session.service.ts` y
+`SESSION_EVENTS` en `apps/api/src/modules/tasks/tasks.gateway.ts`. **Si se
+cambian ahí, se cambian aquí**, y al revés: es un contrato entre dos dominios y
+quien lo consume no lee el código del otro.
+
+Los tres casos están **provocados**, no razonados, en
+`tasks.gateway.handshake.spec.ts`: servidor y cliente de socket.io reales, y un
+JWT caducado firmado con `expiresIn` negativo.
+
 ### Eventos de socket — tareas
 
 > **Este bloque no se recuperó: se escribió.** `task.created`, `task.updated`,

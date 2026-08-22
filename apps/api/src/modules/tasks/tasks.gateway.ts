@@ -2,12 +2,13 @@ import { Logger } from '@nestjs/common';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Task, TaskStatus } from '@prisma/client';
-import { SessionService } from '../auth/session.service';
+import { CODIGO_SESION, SesionRechazadaError, SessionService } from '../auth/session.service';
 import cookie from 'cookie';
 import { SESSION_COOKIE } from '../auth/auth.constants';
 import { describirError, stackDe } from '../../common/observability/describir-error';
@@ -62,6 +63,36 @@ export const SOCKET_ID_HEADER = 'x-socket-id';
 const MAX_SOCKET_ID_LENGTH = 64;
 
 /**
+ * Evento que avisa de que la sesión del socket ya no vale, **antes** de cerrarlo.
+ *
+ * Hace falta porque `connect_error` solo existe durante el handshake: una vez
+ * conectado, un cierre del servidor le llega al cliente como un `disconnect`
+ * pelado, indistinguible de que se haya caído el wifi. Este evento es lo que
+ * convierte ese cierre en algo que el cliente puede entender y actuar.
+ */
+export const SESSION_EVENTS = {
+  rechazada: 'session.rechazada',
+} as const;
+
+/**
+ * Cada cuánto se revisa que la sesión del socket siga viva cuando el token no
+ * dice cuándo caduca.
+ *
+ * Es una red por si algún día el JWT viaja sin `exp`. El camino normal usa el
+ * `exp` real del token, que es más preciso y no revisa de más.
+ */
+const REVALIDACION_POR_DEFECTO_MS = 5 * 60_000;
+
+/**
+ * Margen que se añade al `exp` antes de revisar.
+ *
+ * El reloj del servidor y el del emisor del token no tienen por qué coincidir al
+ * segundo. Revisar justo en el `exp` haría que un desfase de nada cerrara
+ * sockets sanos; cinco segundos después, ya caducó de verdad para todos.
+ */
+const MARGEN_DE_RELOJ_MS = 5_000;
+
+/**
  * Emisión en tiempo real de los cambios del tablero.
  *
  * El handshake se autentica con la misma cookie de sesión que el REST y cada
@@ -78,7 +109,7 @@ const MAX_SOCKET_ID_LENGTH = 64;
     credentials: true,
   },
 })
-export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class TasksGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(TasksGateway.name);
 
   constructor(private readonly sessionService: SessionService) {}
@@ -86,39 +117,151 @@ export class TasksGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
-  async handleConnection(client: Socket) {
-    try {
-      const rawCookie = client.handshake.headers.cookie;
-      if (!rawCookie) {
-        this.logger.warn(`Conexión rechazada: sin cookies (client.id: ${client.id})`);
-        client.disconnect();
-        return;
-      }
+  /** Un temporizador de caducidad por socket vivo. Se limpian al desconectar. */
+  private readonly temporizadores = new Map<string, ReturnType<typeof setTimeout>>();
 
-      const cookies = cookie.parse(rawCookie);
-      const token = cookies[SESSION_COOKIE];
+  /**
+   * La autenticación pasa a ser **middleware del servidor**, y ese cambio es el
+   * arreglo entero.
+   *
+   * Antes se rechazaba dentro de `handleConnection` llamando a
+   * `client.disconnect()`. Eso significa que **la conexión se establecía y
+   * después se caía**, y desde el cliente eso no es un rechazo: es un `connect`
+   * seguido de un `disconnect`, o sea **una caída de red normal**. Ante una
+   * caída normal, socket.io reconecta indefinidamente — que es exactamente lo
+   * que hacía, y con razón.
+   *
+   * De ahí que el frontend no tuviera manejador de `connect_error`: **ese evento
+   * no llegaba a dispararse nunca**. No era un olvido suyo; es que no había nada
+   * que manejar. Rechazando en middleware con `next(err)`, socket.io transporta
+   * `err.message` y `err.data` hasta `connect_error`, y el cliente puede por fin
+   * distinguir «refresca y vuelve» de «vete al login».
+   */
+  afterInit(server: Server) {
+    server.use((socket, next) => {
+      void this.autenticarHandshake(socket)
+        .then(() => next())
+        .catch((error: unknown) => next(this.comoErrorDeHandshake(error)));
+    });
+  }
 
-      if (!token) {
-        this.logger.warn(`Conexión rechazada: sin token de sesión (client.id: ${client.id})`);
-        client.disconnect();
-        return;
-      }
-
-      // `verifyAccess` y no `verify...` a secas: comprueba también el claim
-      // `typ`, así un token de refresco no sirve para abrir un socket.
-      const payload = await this.sessionService.verifyAccess(token);
-
-      // El id del usuario es `sub` (ver `SessionPayload`); el JWT no lleva
-      // ningún campo `userId`.
-      client.join(payload.sub);
-      this.logger.log(`Cliente conectado y unido a sala ${payload.sub} (client.id: ${client.id})`);
-    } catch (error) {
-      this.logger.error(`Conexión rechazada por sesión inválida (client.id: ${client.id}): ${describirError(error)}`, stackDe(error));
-      client.disconnect();
+  /**
+   * Valida la cookie del handshake y deja al socket listo para entrar en su sala.
+   *
+   * No entra en la sala aquí: eso lo hace `handleConnection`, que es donde la
+   * conexión ya es un hecho. Este método solo decide si se conecta o no.
+   */
+  private async autenticarHandshake(client: Socket): Promise<void> {
+    const rawCookie = client.handshake.headers.cookie;
+    if (!rawCookie) {
+      throw new SesionRechazadaError(CODIGO_SESION.invalida, 'Sin cookies');
     }
+
+    const token = cookie.parse(rawCookie)[SESSION_COOKIE];
+    if (!token) {
+      throw new SesionRechazadaError(CODIGO_SESION.invalida, 'Sin token de sesión');
+    }
+
+    // `verifyAccess` y no `verify...` a secas: comprueba también el claim `typ`,
+    // así un token de refresco no sirve para abrir un socket.
+    const payload = await this.sessionService.verifyAccess(token);
+
+    client.data.userId = payload.sub;
+    client.data.expiraEn = payload.exp;
+  }
+
+  /**
+   * Traduce un rechazo a lo que socket.io sabe llevar hasta `connect_error`.
+   *
+   * ⚠️ **El `data` es la mitad que importa.** `err.message` es texto para un
+   * humano y puede cambiar; `err.data.codigo` es el contrato con el frontend y
+   * no cambia. @Gravity programa contra el código, no contra el mensaje.
+   *
+   * Lo que no sea un rechazo de sesión **no se disfraza de uno**: sale como
+   * error de transporte, para que el cliente reconecte con normalidad en vez de
+   * mandar a nadie al login por un tropiezo de red.
+   */
+  private comoErrorDeHandshake(error: unknown): Error {
+    const rechazo = error instanceof SesionRechazadaError ? error : undefined;
+
+    if (!rechazo) {
+      this.logger.error(
+        `Handshake rechazado por un fallo inesperado: ${describirError(error)}`,
+        stackDe(error),
+      );
+      return Object.assign(new Error('Error al establecer la sesión del socket'), {
+        data: { codigo: 'ERROR_INTERNO' },
+      });
+    }
+
+    this.logger.warn(`Handshake rechazado (${rechazo.codigo}): ${rechazo.message}`);
+    return Object.assign(new Error(rechazo.message), { data: { codigo: rechazo.codigo } });
+  }
+
+  /**
+   * Programa el cierre del socket para cuando su token caduque.
+   *
+   * **Un socket vivía indefinidamente con una sesión validada una sola vez.** Se
+   * comprobaba en el handshake, con un token de quince minutos, y después ya no
+   * se volvía a mirar: un socket abierto toda la noche seguía recibiendo eventos
+   * con una sesión caducada hacía horas, y si el usuario cerraba sesión **el
+   * socket seguía oyendo** hasta caerse por otro motivo.
+   *
+   * Se cierra avisando con `SESION_CADUCADA`, el mismo código del handshake, y a
+   * propósito: el cliente ya sabe qué hacer con él —refrescar y reconectar— así
+   * que la sesión del socket deja de ser eterna sin que el usuario note nada.
+   *
+   * La cookie del handshake no se actualiza sola mientras el socket vive, así
+   * que **no tiene sentido revalidar el mismo token una y otra vez**: caducó y
+   * seguirá caducado. Lo útil es cerrar a tiempo y dejar que la reconexión traiga
+   * la cookie nueva, que para entonces el navegador ya habrá refrescado.
+   */
+  private programarCaducidad(client: Socket) {
+    const expiraEn = client.data.expiraEn as number | undefined;
+
+    const msHastaCaducar = expiraEn
+      ? expiraEn * 1000 - Date.now() + MARGEN_DE_RELOJ_MS
+      : REVALIDACION_POR_DEFECTO_MS;
+
+    // Ya caducado (o a punto): no se programa nada, se cierra en la siguiente
+    // vuelta del bucle de eventos. No debería pasar —el handshake acaba de
+    // validarlo— pero un reloj desajustado lo haría posible.
+    const espera = Math.max(msHastaCaducar, 0);
+
+    const temporizador = setTimeout(() => {
+      this.logger.log(`Sesión del socket ${client.id} caducada: se cierra para que reconecte`);
+      client.emit(SESSION_EVENTS.rechazada, { codigo: CODIGO_SESION.caducada });
+      client.disconnect(true);
+    }, espera);
+
+    // `unref` para que un socket abierto no impida que el proceso termine: sin
+    // esto, un temporizador de quince minutos retrasaría el apagado ordenado de
+    // Cloud Run hasta que venciera.
+    temporizador.unref?.();
+
+    this.temporizadores.set(client.id, temporizador);
+  }
+
+  /**
+   * La conexión ya está autenticada por el middleware: aquí solo se entra en la
+   * sala y se programa el cierre para cuando el token caduque.
+   */
+  handleConnection(client: Socket) {
+    const userId = client.data.userId as string;
+    client.join(userId);
+    this.programarCaducidad(client);
+    this.logger.log(`Cliente conectado y unido a sala ${userId} (client.id: ${client.id})`);
   }
 
   handleDisconnect(client: Socket) {
+    // Sin esto, cada socket dejaría su temporizador vivo hasta vencer, apuntando
+    // a un cliente que ya no existe. Con reconexiones frecuentes eso es una fuga
+    // lenta, del tipo que no se nota hasta que se nota.
+    const temporizador = this.temporizadores.get(client.id);
+    if (temporizador) {
+      clearTimeout(temporizador);
+      this.temporizadores.delete(client.id);
+    }
     this.logger.log(`Cliente desconectado: ${client.id}`);
   }
 

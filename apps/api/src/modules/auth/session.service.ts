@@ -17,6 +17,49 @@ export interface SessionPayload {
   sub: string;
   email: string;
   typ: typeof TOKEN_TYPE_ACCESS | typeof TOKEN_TYPE_REFRESH;
+  /** Instante de caducidad en segundos Unix. Lo pone el propio JWT. */
+  exp?: number;
+}
+
+/**
+ * Los dos motivos por los que se rechaza una sesión, y **son distintos para
+ * quien los recibe**.
+ *
+ * - `SESION_CADUCADA` → la sesión era buena y se le pasó el plazo. Se arregla
+ *   sola refrescando: el usuario no tiene que enterarse.
+ * - `SESION_INVALIDA` → no hay sesión, o la que hay no sirve. Refrescar no
+ *   arregla nada; toca volver a entrar.
+ *
+ * Hasta el 2026-08-21 esta diferencia **se perdía aquí dentro**: `verify`
+ * envolvía cualquier fallo del JWT en un `catch` desnudo y el mensaje era el
+ * mismo para los dos. Da igual lo que haga el cliente si el servidor ya se
+ * comió el motivo.
+ *
+ * Los nombres son parte del contrato con el frontend y están en
+ * `API_CONTRACTS.md`: **si se cambian aquí, se cambian allí**.
+ */
+export const CODIGO_SESION = {
+  caducada: 'SESION_CADUCADA',
+  invalida: 'SESION_INVALIDA',
+} as const;
+
+export type CodigoSesion = (typeof CODIGO_SESION)[keyof typeof CODIGO_SESION];
+
+/**
+ * Rechazo de sesión que **sí dice por qué**.
+ *
+ * Hereda de `UnauthorizedException` y **conserva los mensajes de siempre**, así
+ * que las respuestas HTTP no cambian ni una coma: el `codigo` es información de
+ * más para quien la sepa leer —hoy, el handshake del socket— y no viaja en el
+ * cuerpo de la respuesta REST.
+ */
+export class SesionRechazadaError extends UnauthorizedException {
+  constructor(
+    readonly codigo: CodigoSesion,
+    mensaje: string,
+  ) {
+    super(mensaje);
+  }
 }
 
 @Injectable()
@@ -105,11 +148,20 @@ export class SessionService {
     let payload: SessionPayload;
     try {
       payload = await this.jwt.verifyAsync<SessionPayload>(token);
-    } catch {
-      throw new UnauthorizedException("Sesión inválida o expirada");
+    } catch (error) {
+      // `jsonwebtoken` distingue caducado de inválido con el nombre del error, y
+      // ese dato se estaba tirando a la basura. Es la única señal que separa
+      // «refresca y sigue» de «vuelve a entrar».
+      const caducado = (error as { name?: string })?.name === "TokenExpiredError";
+      throw new SesionRechazadaError(
+        caducado ? CODIGO_SESION.caducada : CODIGO_SESION.invalida,
+        "Sesión inválida o expirada",
+      );
     }
     if (payload.typ !== expectedType) {
-      throw new UnauthorizedException("Tipo de token incorrecto");
+      // Un token de refresco usado como de acceso no está caducado: está mal
+      // usado. Refrescar no lo arregla.
+      throw new SesionRechazadaError(CODIGO_SESION.invalida, "Tipo de token incorrecto");
     }
     return payload;
   }
