@@ -164,6 +164,8 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
     add?: jest.Mock;
     paginas?: number;
     correos?: number;
+    /** Correos que Gmail no dejo descargar. Nunca llegan a `persistEmails`. */
+    sinDescargar?: number;
   }
 
   function crear(opciones: Opciones = {}) {
@@ -233,8 +235,9 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
     (service as unknown as { fetchMessages: unknown }).fetchMessages = jest
       .fn()
       .mockImplementation((_g: unknown, ids: string[]) =>
-        Promise.resolve(
-          ids.map((id) => ({
+        Promise.resolve({
+          fallidos: opciones.sinDescargar ?? 0,
+          correos: ids.map((id) => ({
             id,
             threadId: 't',
             from: 'a@b.c',
@@ -243,7 +246,7 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
             labels: [],
             date: '2026-08-21T00:00:00Z',
           })),
-        ),
+        }),
       );
 
     return { service, prisma, add, upsert, alertas, historyList, getProfile };
@@ -315,6 +318,28 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
     const res = await service.syncHistory(USUARIO);
 
     expect(res.processed).toBe(1);
+  });
+
+  it('un correo que NO se pudo descargar tambien retiene el marcador', async () => {
+    // Es el agujero de §37.1 una capa mas arriba: un correo que falla al
+    // descargarse ni siquiera llega a `persistEmails`, asi que no aparece en
+    // ninguno de sus contadores. Sin sumarlo aqui, el marcador avanzaba y ese
+    // correo no se volvia a ver nunca.
+    const { service, prisma } = crear({ sinDescargar: 1 });
+
+    const res = await service.syncHistory(USUARIO);
+
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(res.historyId).toBe(MARCADOR_VIEJO);
+  });
+
+  it('y avisa, en vez de perderlo en un `warn`', async () => {
+    const { service, alertas } = crear({ sinDescargar: 1 });
+
+    await service.syncHistory(USUARIO);
+
+    expect(alertas.avisar).toHaveBeenCalledTimes(1);
+    expect(String(alertas.avisar.mock.calls[0][1])).toContain('1 sin descargar');
   });
 
   it('un historial larguísimo se corta y cae a backfill en vez de paginar sin fin', async () => {

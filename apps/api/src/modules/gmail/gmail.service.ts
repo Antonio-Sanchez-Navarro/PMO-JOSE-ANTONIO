@@ -103,6 +103,21 @@ const MAX_PAGINAS_HISTORIAL = 20;
 const MARGEN_FECHA_FUTURA_MS = 60 * 60_000;
 
 /**
+ * Cuantos mensajes se piden a Gmail a la vez.
+ *
+ * `messages.get` cuesta 5 unidades de cuota y el limite es de 250 por segundo y
+ * usuario: unas 50 llamadas por segundo. Un lote de recuperacion puede traer
+ * cientos de ids, y dispararlos todos de golpe -que es lo que hacia el
+ * `Promise.all` sobre la lista entera- es la forma mas directa de provocar el
+ * 429 que luego se tragaba el `catch`.
+ *
+ * Diez deja margen de sobra bajo el limite y sigue siendo diez veces mas rapido
+ * que ir de uno en uno. No se ha medido cual es el optimo porque el objetivo no
+ * es la velocidad: es **no causar el fallo que ademas ocultabamos**.
+ */
+const TANDA_DESCARGA = 10;
+
+/**
  * Antiguedad minima para que el barrido de reconciliacion toque un correo.
  *
  * No es cortesia: es lo que evita **duplicar clasificaciones**. Un correo recien
@@ -208,33 +223,79 @@ export class GmailService {
     const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
     if (ids.length === 0) return [];
 
-    return this.fetchMessages(gmail, ids, options.includeBody ? 'full' : 'metadata');
+    // Lectura para la vista: aqui un fallo de descarga solo significa una fila
+    // menos en la lista, no un correo perdido. No hay marcador que retener.
+    const { correos } = await this.fetchMessages(gmail, ids, options.includeBody ? 'full' : 'metadata');
+    return correos;
   }
 
-  /** Descarga mensajes en paralelo y los normaliza. Los fallos individuales se descartan. */
+  /**
+   * Descarga mensajes y los normaliza, **diciendo cuántos no pudo traer**.
+   *
+   * ⚠️ **Antes devolvía solo los que salían bien y el resto desaparecía.** Un
+   * `catch` por mensaje, un `warn`, `null`, y un `filter` que los borraba de la
+   * lista. Quien llamaba no tenía forma de saber que faltaba nada.
+   *
+   * Eso es `persistEmails` una capa más arriba, con el mismo final y peor: un
+   * correo que falla **al descargarse** ni siquiera llega a `persistEmails`, así
+   * que **no lo ve ninguno de los contadores del marcador**. El marcador avanza,
+   * `users.history.list` deja de mencionarlo, y ese correo no se vuelve a ver
+   * nunca. Silencioso, y sin quedar en ningún número.
+   *
+   * Y **se dispara justo en el peor momento**: al recuperarse de una caída, con
+   * un lote grande, que es cuando más probable es que Gmail responda 429 — el
+   * caso en el que más correos hay que perder.
+   *
+   * Ahora el recuento sube, y {@link syncHistory} retiene el marcador si falta
+   * algo: el mismo criterio que ya se aplica al `upsert` y al `add`.
+   */
   private async fetchMessages(
     gmail: GmailClient,
     ids: string[],
     format: 'full' | 'metadata',
-  ): Promise<EmailSnippet[]> {
-    const results = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          const detail = await gmail.users.messages.get({
-            userId: 'me',
-            id,
-            format,
-            ...(format === 'metadata' ? { metadataHeaders: ['From', 'Subject', 'Date'] } : {}),
-          });
-          return this.toEmailSnippet(detail.data);
-        } catch (err) {
-          this.logger.warn(`Error obteniendo detalle del mensaje ${id}: ${describirError(err)}`, stackDe(err));
-          return null;
-        }
-      }),
-    );
+  ): Promise<{ correos: EmailSnippet[]; fallidos: number }> {
+    const correos: EmailSnippet[] = [];
+    let fallidos = 0;
 
-    return results.filter((r): r is EmailSnippet => r !== null);
+    // ─── De tandas, no todos a la vez ──────────────────────────────
+    //
+    // Era un `Promise.all` sobre la lista entera. Con `maxResults: 500` por
+    // página de historial, recuperarse de una caída larga significaba **cientos
+    // de peticiones a Gmail disparadas en el mismo instante** — la forma más
+    // directa de provocar el 429 que luego se tragaba el `catch`.
+    //
+    // Las dos mitades se potenciaban: el lote sin tope **causaba** los fallos y
+    // el `catch` mudo **los ocultaba**.
+    for (let i = 0; i < ids.length; i += TANDA_DESCARGA) {
+      const tanda = ids.slice(i, i + TANDA_DESCARGA);
+
+      const resultados = await Promise.all(
+        tanda.map(async (id) => {
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: 'me',
+              id,
+              format,
+              ...(format === 'metadata' ? { metadataHeaders: ['From', 'Subject', 'Date'] } : {}),
+            });
+            return this.toEmailSnippet(detail.data);
+          } catch (err) {
+            this.logger.warn(
+              `Error obteniendo detalle del mensaje ${id}: ${describirError(err)}`,
+              stackDe(err),
+            );
+            return null;
+          }
+        }),
+      );
+
+      for (const r of resultados) {
+        if (r) correos.push(r);
+        else fallidos++;
+      }
+    }
+
+    return { correos, fallidos };
   }
 
   private toEmailSnippet(message: gmail_v1.Schema$Message): EmailSnippet {
@@ -459,9 +520,12 @@ export class GmailService {
         return this.backfill(userId, gmail);
       }
 
-      const emails =
-        messageIds.length > 0 ? await this.fetchMessages(gmail, messageIds, 'full') : [];
-      const recuento = await this.persistEmails(userId, emails);
+      const descarga =
+        messageIds.length > 0
+          ? await this.fetchMessages(gmail, messageIds, 'full')
+          : { correos: [], fallidos: 0 };
+
+      const recuento = await this.persistEmails(userId, descarga.correos);
 
       // ─── El marcador solo avanza si NO se quedo nada atras ──────────────
       //
@@ -487,7 +551,14 @@ export class GmailService {
       // los ultimos BACKFILL_SIZE (25). **Por eso esto avisa en vez de callarse**:
       // atascarse y gritar es preferible a avanzar y perder, pero solo si
       // alguien se entera.
-      const quedaPendiente = recuento.fallidos > 0 || recuento.sinEncolar > 0;
+      // ⚠️ **`descarga.fallidos` cuenta aqui, y es la mitad que faltaba.** Un
+      // correo que falla al DESCARGARSE no llega a `persistEmails`, asi que no
+      // aparece en ninguno de sus contadores. Sin esta suma, el marcador
+      // avanzaba y ese correo no se volvia a ver nunca — el mismo agujero de
+      // §37.1 una capa mas arriba, y disparandose justo al recuperarse de una
+      // caida, que es cuando mas correos hay que perder.
+      const quedaPendiente =
+        descarga.fallidos > 0 || recuento.fallidos > 0 || recuento.sinEncolar > 0;
       const newHistoryId = quedaPendiente
         ? startHistoryId
         : (notifiedHistoryId ?? latestHistoryId ?? startHistoryId);
@@ -498,7 +569,8 @@ export class GmailService {
 
       this.logger.log(
         `Sync incremental para ${userId}: ${recuento.encolados} encolado(s), ` +
-          `${recuento.guardados} guardado(s), ${recuento.fallidos} fallido(s), ` +
+          `${recuento.guardados} guardado(s), ${descarga.fallidos} sin descargar, ` +
+          `${recuento.fallidos} fallido(s), ` +
           `${recuento.sinEncolar} sin encolar · historyId ${startHistoryId} → ${newHistoryId}` +
           (quedaPendiente ? ' (marcador RETENIDO: se reintentara el mismo tramo)' : ''),
       );
@@ -506,8 +578,8 @@ export class GmailService {
       if (quedaPendiente) {
         await this.alertas.avisar(
           'Sincronizacion de Gmail incompleta: el marcador no avanza',
-          `Usuario ${userId}: ${recuento.fallidos} correo(s) sin guardar y ` +
-            `${recuento.sinEncolar} guardado(s) sin encolar. El marcador se queda en ` +
+          `Usuario ${userId}: ${descarga.fallidos} sin descargar, ${recuento.fallidos} ` +
+            `sin guardar y ${recuento.sinEncolar} guardado(s) sin encolar. El marcador se queda en ` +
             `${startHistoryId} y se reintentara el mismo tramo. Si esto se repite, ` +
             'mira los avisos anteriores: un correo que falla siempre atasca la ingesta ' +
             'y los historyId caducan a la semana.',
@@ -580,8 +652,9 @@ export class GmailService {
     });
 
     const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
-    const emails = ids.length > 0 ? await this.fetchMessages(gmail, ids, 'full') : [];
-    const recuento = await this.persistEmails(userId, emails);
+    const descarga =
+      ids.length > 0 ? await this.fetchMessages(gmail, ids, 'full') : { correos: [], fallidos: 0 };
+    const recuento = await this.persistEmails(userId, descarga.correos);
 
     // El historyId del perfil marca "todo lo anterior ya está sincronizado".
     //
@@ -597,11 +670,12 @@ export class GmailService {
 
     this.logger.log(
       `Backfill para ${userId}: ${recuento.encolados} encolado(s), ` +
-        `${recuento.guardados} guardado(s), ${recuento.fallidos} fallido(s), ` +
+        `${recuento.guardados} guardado(s), ${descarga.fallidos} sin descargar, ` +
+        `${recuento.fallidos} fallido(s), ` +
         `${recuento.sinEncolar} sin encolar · historyId → ${historyId}`,
     );
 
-    if (recuento.fallidos > 0 || recuento.sinEncolar > 0) {
+    if (descarga.fallidos > 0 || recuento.fallidos > 0 || recuento.sinEncolar > 0) {
       await this.alertas.avisar(
         'Backfill de Gmail incompleto',
         `Usuario ${userId}: ${recuento.fallidos} correo(s) sin guardar y ` +
