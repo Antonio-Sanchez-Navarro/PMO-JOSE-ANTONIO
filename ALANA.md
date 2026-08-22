@@ -5365,3 +5365,259 @@ como prueba. Estaba ahí, con su fecha, listo para servir de prueba de lo que no
 era.
 
 **No lo arreglo. Lo reparte Doc** (§0, regla de hoy).
+
+---
+
+## 43. Auditoría línea a línea (2026-08-22)
+
+Esta vez **leyendo**, no buscando patrones — que es exactamente donde me
+equivoqué tres veces en §37. Trece hallazgos, y **todos verificados siguiendo la
+llamada hasta el otro extremo**, no infiriendo desde un archivo.
+
+**Qué leí entero:** `schema.prisma` · `gmail.service.ts` (997) ·
+`emails.service.ts` (614) · `tasks.service.ts` · `time.service.ts` (arranque y
+parada) · `ai.service.ts` · `ai.processor.ts` · `tasks.gateway.ts` (sesión y
+emisión) · `copilot.service.ts` · `alert.service.ts` · `crypto.service.ts` ·
+`users.service.ts` · `useSocket.ts` · `useSession.ts` · `useInbox.ts` ·
+`tasks.api.ts` · `lib/api.ts` · `InboxPage.tsx` (flujo de datos) · los DTO de
+tareas.
+
+**Qué NO leí, y por tanto no cubre este informe:** `tools.ts`, `google.strategy`,
+`metrics.service`, `logger.config` y el resto de `observability`, `title.prefix`,
+`priority.rules`, `chat-threads`, los controladores salvo los citados,
+`packages/shared`, y del frontend: `CopilotDrawer`, `TaskCard`, los cuatro
+modales y `DashboardPage`. Queda para una segunda pasada.
+
+---
+
+### 43.1 🔴 A los quince minutos la sesión se rompe **a medias**
+
+Son dos hallazgos y se potencian. Por separado son molestos; juntos explican un
+síntoma que cualquiera describiría como «la aplicación se vuelve loca».
+
+**a) Cuatro clientes HTTP no pasan por `apiFetch`, así que no refrescan el 401.**
+
+| Módulo | Llamadas con `fetch` crudo | Qué se rompe |
+|---|---|---|
+| `tasks.api.ts` | 8 | El tablero entero: listar, mover, crear, borrar |
+| `time.api.ts` | 8 | Todo el registro de tiempos |
+| `tags.api.ts` | 2 | Las etiquetas |
+| `copilot.api.ts` | 3 | La lista de conversaciones |
+
+Solo `useSession`, `useDashboardMetrics`, `emails.api.ts` y `useInbox` usan
+`apiFetch`. **El cerrojo de refresco que Gravity implementó bien en §37.13
+protege a la minoría de las llamadas.**
+
+Y no hay red de reserva: `useSession` consulta `/auth/me` **una sola vez al
+montar** (`useSession.ts:32-34`); no hay temporizador ni refresco periódico en
+todo el frontend. El token de acceso dura **15 minutos**
+(`auth.constants.ts:24`).
+
+**b) Y el socket ahora se cierra a propósito cuando el token caduca.**
+
+`tasks.gateway.ts:219-241` programa un `setTimeout` que, al vencer el token,
+emite `SESSION_EVENTS.rechazada` con `CODIGO_SESION.caducada` y desconecta. Es
+el arreglo de mi §37.8 y está bien hecho —con `unref()` para no retrasar el
+apagado y limpieza del temporizador en `handleDisconnect`—.
+
+**Pero `SESSION_EVENTS` y `CODIGO_SESION` no aparecen ni una sola vez en
+`apps/web`.** Lo comprobé sobre todo el árbol. El cliente:
+
+- no escucha `session.rechazada`,
+- no tiene manejador de `connect_error`,
+- y crea el socket con las opciones por defecto de socket.io, que son
+  `reconnectionAttempts: Infinity` con tope de 5 s entre intentos.
+
+El comentario del gateway dice que el cliente «ya sabe qué hacer con él
+—refrescar y reconectar—» y que reconectará «con la cookie nueva, que para
+entonces el navegador ya habrá refrescado». **Ninguna de las dos cosas es
+cierta**: no lo escucha, y lo único que refresca la cookie es un 401 recogido
+por `apiFetch`, que el tablero no usa.
+
+**El resultado combinado, y es reproducible:** dejas una pestaña abierta quince
+minutos. A partir de ahí el socket entra en **reconexión perpetua, un intento
+cada ~5 s** —unos 17 000 al día, cada uno despertando Cloud Run—, el tablero
+deja de actualizarse en vivo sin decirlo, y la primera acción que hagas sobre él
+falla con «Failed to move task». Si entonces tocas la bandeja, `apiFetch`
+refresca la cookie y **el tablero vuelve a funcionar solo**. Ese vaivén es el
+síntoma por el que se reconoce.
+
+**Y lo que más me importa decir: el arreglo empeoró el síntoma.** Antes el
+socket solo se rompía en un corte de red; ahora se rompe **siempre, a los quince
+minutos**. Media pieza conectada es peor que ninguna, y es la tercera vez este
+mes que aparece la misma forma.
+
+### 43.2 🔴 `fetchMessages` descarta correos en silencio, y el marcador avanza igual
+
+`gmail.service.ts:205-227`. Es **el mismo fallo de §37.1 una capa más arriba, y
+sobrevivió al arreglo**.
+
+```ts
+const results = await Promise.all(ids.map(async (id) => {
+  try { ... } catch (err) { this.logger.warn(...); return null; }   // ← se pierde aquí
+}));
+return results.filter((r) => r !== null);
+```
+
+`syncHistory` decide si retiene el marcador con `recuento.fallidos` y
+`recuento.sinEncolar`, **que solo cuentan lo que llegó a `persistEmails`**. Un
+correo que `fetchMessages` no pudo descargar no aparece en ningún contador: el
+lote sale «completo», el marcador avanza y ese correo **no se vuelve a ver
+nunca**. Exactamente lo que el comentario de arriba jura que ya no pasa.
+
+**Y hay un multiplicador:** `Promise.all` sin tope de concurrencia sobre hasta
+**500 ids** de una página de historial. Justo después de una caída —cuando el
+lote es grande— eso es una ráfaga de 500 `messages.get` simultáneos contra la
+cuota de Gmail, que responde 429. **El escenario que produce el lote grande es
+el mismo que produce los fallos.**
+
+⚠️ **Latente, no manifestado:** busqué el aviso `Error obteniendo detalle del
+mensaje` en 30 días de Cloud Logging y **no hay ni uno**. El mecanismo es real y
+alcanzable; no ha disparado.
+
+### 43.3 🟠 `receivedAt` se fía de la cabecera `Date:` del remitente
+
+`gmail.service.ts:237` toma `header('date')` y `persistEmails` hace
+`receivedAt: new Date(email.date)` sin comprobar nada. Dos consecuencias:
+
+1. **Una cabecera `Date:` malformada da `Invalid Date`, Prisma lanza, el correo
+   cuenta como `fallidos` y —desde el arreglo del marcador— la ingesta se queda
+   parada en ese tramo hasta que alguien lo mire.** Es el caso que el propio
+   comentario de `syncHistory` describe como «un correo que falla siempre atasca
+   la ingesta», solo que aquí el disparador **es externo**: lo activa cualquiera
+   que pueda mandarte un correo.
+2. **Una fecha futura falsificada deja el correo fuera del barrido para
+   siempre**, porque la condición es `receivedAt < ahora - 30 min` y nunca se
+   cumple. Y en la bandeja se queda arriba del todo, porque el orden es
+   `receivedAt desc`.
+
+Gmail devuelve **`internalDate`** —el sello del servidor, en milisegundos— en los
+dos formatos que se piden aquí. Es el campo que no depende de quien escribe.
+
+_Lo que hace este hallazgo incómodo: la guarda ya está escrita en esta misma base._
+`ai.service.parseDueDate` comprueba `Number.isNaN(parsed.getTime())` antes de
+aceptar una fecha del modelo. Se desconfía de lo que dice un LLM y no de lo que
+dice un remitente desconocido.
+
+### 43.4 🟠 El 409 anti-duplicados tiene una carrera dentro
+
+`emails.service.ts:445-452`:
+
+```ts
+const existing = await this.prisma.task.count({ where: { sourceEmailId: email.id } });
+if (existing > 0) throw new ConflictException(...);
+// … y el `create` viene después, fuera de cualquier transacción
+```
+
+Dos peticiones simultáneas cuentan las dos cero y crean las dos. Y el docblock de
+esa misma función dice: *«El guardarraíl contra duplicados es el 409, no el
+borrado»*. Es un guardarraíl con una ventana.
+
+Importa porque **el doble clic es justo el caso que motivó el arreglo de
+interfaz de Gravity** (`isAnalyzing`, ocultar el botón si ya está convertido).
+Esa mitad está bien; la del servidor, que es la que de verdad garantiza, no.
+
+### 43.5 🟠 La emisión del socket falla abierto
+
+`tasks.gateway.ts:367-374`:
+
+```ts
+const userId = (payload as { userId?: string })?.userId;
+if (!userId) {
+  this.logger.warn(`${event} sin userId: se difunde a todos los clientes`);
+  this.server?.emit(event, payload);   // ← a TODOS
+  return;
+}
+```
+
+Revisé los cinco llamadores y **hoy todos llevan `userId`**, así que no hay fuga
+en curso. Pero es un límite entre inquilinos que, ante la duda, **reparte en vez
+de callar**. Lo correcto en un fallo de encaminamiento es no emitir y registrar
+un error, no difundir a todo el mundo y anotar un aviso.
+
+### 43.6 🟡 Las dos vías humanas de conversión no coinciden
+
+En `createFromEmail`, la vía de la cuarentena (`persistConfirmed`) marca el
+correo con `processedAt` e `isActionable`; **la vía manual —`dto.title`— no
+marca nada** (`emails.service.ts:470-487`).
+
+Las dos son una persona convirtiendo un correo a mano. Una de las dos está mal, y
+no es un detalle estético: el correo que no se marca **sigue siendo candidato del
+barrido de reconciliación**, que lo reencolará y hará que el modelo lo clasifique
+por su cuenta encima de la tarea que la persona ya escribió.
+
+Hoy casi nunca se alcanza —el worker ya suele haber marcado el correo minutos
+antes— pero la asimetría está ahí y es la clase de cosa que se cobra cuando algo
+más cambia.
+
+### 43.7 🟡 Dos estándares de error en el mismo archivo
+
+En `tasks.api.ts` conviven dos maneras de fallar:
+
+- `classifyEmail`, `createTasksFromEmail` y `updateEmailStatus` **leen el cuerpo
+  de la respuesta**, juntan los mensajes de validación y dan un texto en español.
+- `fetchTasks`, `updateTaskStatus`, `moveTask`, `createTask` y `deleteTask`
+  lanzan `'Failed to fetch tasks'` y tiran el mensaje del servidor a la basura.
+
+Es el mismo archivo, escrito con dos criterios. Y el efecto es concreto: el 409
+del tablero —«ya tiene N tarea(s), reenvía con force»— y el 400 que dice **qué
+etiqueta** falla nunca llegan al usuario.
+
+### 43.8 🟡 Mi §37.18 se quedó corto, y por el mismo vicio de siempre
+
+Quedan **seis** mensajes en inglés: cinco en `tasks.api.ts` (`Failed to fetch
+tasks`, `Error updating task`, `Failed to move task`, `Failed to create task`,
+`Failed to delete task`) y uno en `copilot.api.ts:33` (`Error deleting thread`).
+
+No los vi en §37 porque busqué `Error fetching|Failed to parse|Error creating` y
+**no busqué `Failed to`**. Tercera vez que un grep mío define el alcance del
+hallazgo en vez de definirlo el código.
+
+### 43.9 🟡 `updateTaskStatus` es código muerto
+
+Exportada en `tasks.api.ts:34`, **cero llamadas** en todo `apps/web`. Con ella
+quedan sin consumidor `PATCH /tasks/:id`, `TasksService.update` y `UpdateTaskDto`
+—que, de paso, solo admite `status`, `dueDate` y `description`—. Es una ruta con
+pruebas y sin nadie al otro lado.
+
+### 43.10 🔵 Cuatro cosas menores, comprobadas
+
+- **El recuento de `skipReason` no filtra por `userId`**
+  (`gmail.service.ts:766`). Es la única consulta de la casa que rompe la regla de
+  filtrar por dueño, en un archivo que la aplica en todas las demás.
+- **`reencolados` cuenta intentos, no altas.** Si el trabajo está activo,
+  `remove` falla —se traga a propósito— y el `add` se ignora por `jobId`, pero el
+  contador sube igual. Ese número viaja dentro del texto de la alerta.
+- **El barrido no tiene índice.** `Email` solo indexa `[threadId]` y
+  `[userId, status]`; la consulta del barrido filtra por `processedAt` y
+  `receivedAt` y ordena por `receivedAt`. Son 96 escaneos secuenciales al día.
+- **`sendEmail` convierte cualquier error en 502** (`copilot.service.ts:230`),
+  incluidos los nuestros. El docblock justifica el 502 «porque el problema no es
+  de esta API sino del servicio de arriba», y el `catch` no distingue.
+
+### 43.11 🔵 Un riesgo aceptado que conviene cuantificar
+
+El comentario de `reconciliarSinClasificar` acepta por escrito que un correo
+cuya clasificación falle siempre volverá a ocupar plaza. Vale la pena poner el
+número: **cada 15 minutos, con `attempts: 3`, son hasta 288 llamadas de pago al
+modelo por día y por correo envenenado.**
+
+No es hipotético del todo: el 21-08 hubo una
+(`Campo "isActionable" ausente o no booleano`, correo `cmt39ijg6…`), y se
+resolvió sola. El mecanismo de `skipReason` que se estrenó ayer es exactamente la
+forma de cerrarlo, si se decide que merece la pena.
+
+### 43.12 Lo que me llevo de leer en vez de buscar
+
+Los tres hallazgos de arriba tienen una cosa en común y no es el módulo: **los
+tres son una pieza cuya otra mitad está en otro archivo.** El socket que se
+cierra bien y el cliente que no lo escucha. El contador que decide si el marcador
+avanza y la función de la capa de arriba que ya había perdido los correos. La
+guarda de fecha que existe para el modelo y no para el remitente.
+
+Ninguno se ve leyendo un archivo. Los tres se ven al preguntar **quién está al
+otro lado**, que es literalmente lo que fallé tres veces en §37 y lo que corregí
+en §40 — con la diferencia de que entonces me hizo inventar defectos y ahora me
+ha hecho encontrarlos.
+
+**Un archivo no se audita: se audita el cable que sale de él.**
