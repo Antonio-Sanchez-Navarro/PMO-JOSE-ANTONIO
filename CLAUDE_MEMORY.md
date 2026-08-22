@@ -9,6 +9,90 @@
 
 ---
 
+## §37.8 · mi mitad del socket: el contrato, y por qué el frontend no podía arreglarlo solo (2026-08-21)
+
+**El síntoma era del frontend y la causa estaba aquí.** El informe describía
+`reconnectionAttempts` infinito y ningún manejador de `connect_error`. Lo segundo
+parecía un olvido de @Gravity y no lo era:
+
+> `tasks.gateway.ts` rechazaba **dentro de `handleConnection`**, con
+> `client.disconnect()`. O sea que la conexión **se establecía y después se
+> caía** — y eso, desde el cliente, es un `connect` seguido de un `disconnect`:
+> **una caída de red normal**. Ante una caída normal, reconectar sin fin es
+> exactamente lo que socket.io debe hacer.
+
+**`connect_error` no llegaba a dispararse nunca.** No había nada que manejar. Por
+eso el arreglo no podía empezar por el cliente.
+
+### La raíz estaba un piso más abajo
+
+`session.service.ts` envolvía **cualquier** fallo del JWT en un `catch` desnudo:
+
+```ts
+} catch {
+  throw new UnauthorizedException("Sesión inválida o expirada");
+}
+```
+
+Caducado e inválido salían **idénticos**. Y esa distinción es justo la que decide
+si el usuario ve un login o no ve nada. **Da igual lo que haga el cliente si el
+servidor ya se comió el motivo.**
+
+`jsonwebtoken` sí lo distingue —`TokenExpiredError`— y ese dato se estaba tirando.
+
+Se recupera con un `SesionRechazadaError` que **hereda de
+`UnauthorizedException` y conserva los mensajes**, así que las respuestas REST no
+cambian ni una coma: el código es información de más para quien la sepa leer.
+
+### Tres códigos, y el tercero no estaba pedido
+
+| Código | Qué significa |
+|---|---|
+| `SESION_CADUCADA` | Era buena y se le pasó el plazo. Refresca y reconecta, **sin molestar al usuario** |
+| `SESION_INVALIDA` | No hay sesión o no sirve. Para y al login |
+| `ERROR_INTERNO` | Tropiezo del servidor. **Reconexión normal** |
+
+**El tercero lo añadí yo y creo que hace falta**: sin él, un fallo inesperado
+saldría como `SESION_INVALIDA` y el cliente sacaría al usuario al login por algo
+que no tiene nada que ver con su sesión. Un rechazo que no sabe por qué rechaza
+no debería poder echar a nadie.
+
+Y un matiz que no es obvio: **un token de refresco usado como de acceso es
+`INVALIDA`, no `CADUCADA`**. Está vivo; lo que falla es el `typ`. Marcarlo como
+caducado haría que el cliente refrescara en bucle.
+
+### El socket ya no sobrevive a su propio token
+
+Se validaba **una sola vez**, en el handshake, con un token de 15 minutos, y
+después vivía indefinidamente. Uno abierto toda la noche seguía recibiendo
+eventos con una sesión caducada hacía horas.
+
+Un temporizador por socket alineado con el `exp`. Al vencer **avisa y cierra** —
+y el aviso necesita **evento propio** (`session.rechazada`) porque
+`connect_error` solo existe durante el handshake: una vez conectado, un cierre
+del servidor llega como un `disconnect` pelado, otra vez indistinguible del wifi.
+
+Dos detalles que costarían un rato si se pierden: el temporizador se **limpia al
+desconectar** —si no, cada socket dejaría el suyo vivo hasta vencer, apuntando a
+un cliente que ya no existe, que con reconexiones frecuentes es una fuga lenta— y
+lleva **`unref`**, para que un socket abierto no retrase el apagado ordenado de
+Cloud Run hasta que venza.
+
+Y no se revalida en bucle a propósito: **la cookie del handshake no se actualiza
+sola** mientras el socket vive, así que volver a mirar el mismo token daría
+siempre lo mismo. Lo útil es cerrar a tiempo y dejar que la reconexión traiga la
+cookie nueva.
+
+### Los tres casos, provocados
+
+Servidor y cliente de socket.io **reales**, y un JWT caducado firmado con
+`expiresIn: '-10s'` — que es la forma honesta de provocarlo sin esperar quince
+minutos ni falsear relojes. Con dobles se puede comprobar que llamamos a
+`next(err)`, pero **no que `connect_error` llegue al otro lado con el código
+dentro**, que es contra lo que va a programar @Gravity.
+
+---
+
 ## Encargos B, C y el barrido de reconciliación (2026-08-21)
 
 ### B — los números del despliegue decían una cosa y el comando otra
