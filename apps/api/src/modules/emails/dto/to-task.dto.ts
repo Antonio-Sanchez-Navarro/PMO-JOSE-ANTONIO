@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -6,10 +6,10 @@ import {
   IsDateString,
   IsEnum,
   IsIn,
-  IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { TaskPriority } from '@prisma/client';
@@ -33,8 +33,24 @@ const CATEGORIES = [
  * o ser una de las que propuso el modelo tal cual.
  */
 export class ConfirmedTaskDto {
+  /**
+   * ⚠️ **`@IsNotEmpty()` no rechaza `'   '`.** Da por buena cualquier cadena
+   * que no sea vacía, espacios incluidos — y `persistConfirmed` hace `.trim()`
+   * al guardar, así que lo que llegaba como tres espacios se guardaba como
+   * **una tarjeta con el título vacío**. Se llega desde «añadir tarea» del modal:
+   * ni siquiera hace falta trastear con la API.
+   *
+   * El orden importa y es el que ya usa `CreateTaskDto` en este mismo
+   * proyecto: **primero `@Transform` recorta, después `@MinLength(1)` mide**.
+   * Al revés, la validación vería los espacios y volvería a dejarlos pasar.
+   *
+   * Se copia el que ya funciona en vez de inventar otro: dos formas distintas
+   * de validar lo mismo en el mismo repositorio es cómo se acaba arreglando una
+   * y dejando la otra.
+   */
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  @IsNotEmpty()
+  @MinLength(1, { message: 'El título es obligatorio.' })
   @MaxLength(300)
   title!: string;
 
