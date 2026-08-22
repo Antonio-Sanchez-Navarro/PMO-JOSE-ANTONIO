@@ -5621,3 +5621,202 @@ en §40 — con la diferencia de que entonces me hizo inventar defectos y ahora 
 ha hecho encontrarlos.
 
 **Un archivo no se audita: se audita el cable que sale de él.**
+
+---
+
+## 44. Segunda pasada: los archivos que declaré sin leer (2026-08-22)
+
+Encargo del Jefe. El de Doc sigue `EN PAUSA` y no lo toco.
+
+Nueve hallazgos. Vengo aplicando lo que Doc señaló de §43 —**la profundidad no
+está en el archivo, está en las juntas**— así que en cada archivo he ido a
+buscar qué afirma sobre alguien que está al otro lado, y luego lo he
+comprobado allí. Los dos primeros salieron justo de ahí.
+
+**Cobertura de esta pasada, sin adornos:**
+
+| Leído entero | Leído en parte | **Sigue sin leer** |
+|---|---|---|
+| `tools.ts` · `metrics.service.ts` · `all-exceptions.filter.ts` · `time-zone.ts` · `query-metrics.dto.ts` · `kanban/types` | `google.strategy.ts` (el `stream`) · `packages/shared` (1-120 de 216) · `TaskCard.tsx` (70-140) · `AiValidationModal.tsx` (20-90) | `logger.config.ts` · `gcp-logging.ts` · `describir-error.ts` · `title.prefix.ts` · `priority.rules.ts` · `chat-threads.service.ts` · `anthropic-client.ts` · los controladores · **`CopilotDrawer.tsx`** · `TimeEntriesModal` · `TimeReportModal` · `TaskModal` · `TagManagerModal` · `EmailDetailModal` |
+
+⚠️ **De `CopilotDrawer.tsx` solo miré la rama que atiende los `tool_call`.** El
+hallazgo §44.1 sale de ahí y es firme; del resto de ese archivo **este informe no
+dice nada**.
+
+---
+
+### 44.1 🔴 La tercera herramienta del copiloto no llega a la interfaz
+
+`change_email_status` está **completa en el backend**: en el catálogo con
+`kind: 'propose'` (`tools.ts:207-217`), con un esquema pensado —**sin `force`**,
+para que el modelo no pueda saltarse el 409 que existe para que lo salte una
+persona— y con un parser que devuelve `status: null` ante un valor desconocido en
+vez de caer a un valor por defecto, porque *«aquí no hay ningún estado inocente
+al que caer: `DISMISSED` por descarte descartaría correos»*.
+
+**Y en `apps/web` no hay ni una sola referencia a ella.** `CopilotDrawer` tiene
+rama para `draft_email` (línea 140) y para `create_task` (línea 156). Nada más.
+
+Seguido el cable entero, esto es lo que pasa cuando el modelo la usa:
+
+1. Se le ofrece la herramienta y se le dice *«propón en vez de preguntar»*.
+2. La estrategia emite `tool_call` con `toolName: 'change_email_status'`.
+3. Ninguna rama del cliente coincide: **no se pinta nada**.
+4. La estrategia le devuelve al modelo un `tool_result` que dice
+   `pendiente_de_confirmacion` — **así que el modelo cree que se enseñó una
+   tarjeta** y, por diseño, no insiste.
+5. La persona ve una respuesta que da a entender que el cambio está propuesto, y
+   ninguna tarjeta. El correo no se mueve.
+
+Lo que lo remata es el propio comentario del parser: *«Con `null`, la tarjeta
+tiene cómo saber que la propuesta no es confirmable y no ofrecer el botón»*. **No
+hay tarjeta que lo sepa.** La ruta REST que aplicaría el cambio sí existe y la
+usa la bandeja; lo único que falta es el trozo de interfaz.
+
+Es la forma de la casa otra vez, y van cuatro en dos días: puesto, conectado por
+un lado, muerto por el otro.
+
+### 44.2 🟠 La aplicación corta los días donde no está el usuario
+
+`time-zone.ts:24` fija `ZONA_POR_DEFECTO = 'America/Mexico_City'` y justifica el
+valor diciendo que es *«donde trabaja quien usa esto»*.
+
+**Toda la infraestructura corre en `America/Cancun`**, y no es una suposición:
+está escrito en `deploy.yml:937` y `:1030`, en los dos disparadores de Cloud
+Scheduler. Son husos distintos — Cancún es **UTC−5 fijo**, Ciudad de México
+**UTC−6** —, así que hay una hora de diferencia permanente.
+
+**Consecuencia concreta:** lo que se cierre o se fiche entre las **00:00 y la
+01:00 hora local** se cuenta en el **día anterior**, tanto en
+`GET /dashboard/metrics` como en `GET /time/report`.
+
+El archivo existe precisamente para que las dos rutas no diverjan entre sí, y lo
+cumple: **divergen las dos a la vez, de la realidad.** Y la decisión está
+declarada como de producto —«el día acaba a medianoche en México»—, así que **si
+`America/Mexico_City` es deliberado, esto no es un defecto sino un comentario
+mal escrito**; y si lo deliberado era la zona del usuario, el valor está mal.
+No lo afirmo: lo pregunto, que es lo acordado para las cosas que huelen a
+decisión.
+
+### 44.3 🟠 Los dos proveedores no cuentan igual lo que cuesta un turno
+
+`anthropic.strategy.ts` **acumula** a lo largo de las vueltas
+(`entrada += final.usage.input_tokens`) y lo dice en su docblock: *«Sumados de
+todas las vueltas: si el modelo buscó antes de responder, el turno costó las dos
+llamadas y el informe tiene que decirlo.»*
+
+`google.strategy.ts:152-155` **asigna**:
+
+```ts
+entrada = chunk.usageMetadata.promptTokenCount ?? entrada;
+salida  = chunk.usageMetadata.candidatesTokenCount ?? salida;
+```
+
+De un turno con herramienta, **solo sobrevive la última vuelta**: los tokens de
+salida de la primera llamada se pierden. El mismo campo `usage` del evento
+`done` significa una cosa con Claude y otra con Gemini, y es el número con el que
+se mira lo que cuesta el copiloto.
+
+### 44.4 🟠 Y tampoco cierran igual las herramientas que solo se proponen
+
+En Anthropic hay un bloque explícito que devuelve un `tool_result` de
+`pendiente_de_confirmacion` **también para las no ejecutables**, con dos motivos
+escritos: que la API responde **400** si falta uno, y —el que importa aquí— que
+*«decírselo al modelo además evita que insista o dé por hecha una acción que aún
+no ocurrió»*.
+
+En Google, el `functionResponse` se construye **solo para `ejecutables`**
+(`google.strategy.ts:161-176`). Las propuestas se quedan sin respuesta.
+
+El primer motivo es de Anthropic y puede no aplicar a Gemini. **El segundo aplica
+igual a los dos y no está implementado en uno.** Con §44.1 encima, el efecto se
+suma: con Gemini el modelo puede insistir con una herramienta que además no se
+pinta.
+
+### 44.5 🟡 Un `0` suelto en la tarjeta
+
+`TaskCard.tsx:133`:
+
+```tsx
+{task.aiConfidence && <AiAuditBadge confidence={task.aiConfidence} />}
+```
+
+`aiConfidence` es un número acotado a `[0, 1]` por `ai.service.parseAnalysis`
+(`Math.min(1, Math.max(0, ...))`), así que **cero es un valor legítimo**. Con
+cero, React no pinta el distintivo: pinta el carácter `0` junto al título.
+
+### 44.6 🟡 `@IsNotEmpty()` deja pasar un título de solo espacios
+
+`ConfirmedTaskDto` (`to-task.dto.ts:36-39`) valida el título con `@IsString()` +
+`@IsNotEmpty()` + `@MaxLength(300)`. `@IsNotEmpty` rechaza `''`, `null` y
+`undefined` — **no rechaza `'   '`**. Y `persistConfirmed` hace
+`title: task.title.trim()`, así que se crea una tarjeta **con el título vacío**.
+
+Se llega desde el botón «añadir tarea» del modal de validación, que crea la fila
+con `title: ''` y no valida al confirmar.
+
+Lo que lo hace un hallazgo y no una opinión: **`CreateTaskDto`, en este mismo
+proyecto, lo hace bien** — `@Transform(trim)` + `@MinLength(1)` con su mensaje.
+Dos DTO para el mismo campo, uno correcto y otro no.
+
+### 44.7 🔵 Una consecuencia nueva de §37.4, que sigue abierto
+
+`all-exceptions.filter.ts:62` registra `remoteIp: request.ip` en cada incidencia
+de Error Reporting. Sin `trust proxy` —que sigue sin ponerse—, detrás de Cloud
+Run `request.ip` es **el frontend de Google**, el mismo para todo el mundo.
+
+O sea: la falta de esa línea no solo convierte el límite «por IP» en un cubo
+global (§37.4); además **hace falsa la IP de cliente de todos los registros de
+error**. Un dato equivocado en un panel es peor que un dato ausente.
+
+### 44.8 🔵 Dos cosas menores de tipos
+
+- **`TriageEmail` en `kanban/types/index.ts` es código muerto**: cero usos en
+  todo `apps/web`. Está marcado como «tipo provisional» y el provisional se
+  quedó.
+- `KanbanBoard.tsx` importa `Task, TaskStatus` de `../types` y `TaskPriority` de
+  `@pmo/shared` **en el mismo archivo**, cuando `../types` reexporta las tres.
+
+### 44.9 🔵 Dos etiquetas más en inglés
+
+`▶ Start` y `⏹ Stop` en `TaskCard.tsx`, en la interfaz visible. Ni §37.18 ni
+§43.8 las vieron porque las dos buscaron en mensajes de error, no en JSX.
+
+---
+
+### 44.10 Lo que está bien y merece decirse
+
+Un informe que solo enumera defectos miente por omisión sobre el estado de una
+base. En esta pasada he leído cuatro piezas que están **muy bien** hechas:
+
+- **`metrics.service.ts`** — SQL parametrizado de verdad: `tz` viaja como
+  parámetro de Prisma y `Prisma.raw` se usa **solo** para nombres de columna que
+  escribimos nosotros. La zona se valida con `Intl.DateTimeFormat`, así que un
+  `?tz=Marte/Olympus` es un 400 y no un 500. Busqué la inyección y no está.
+- **`all-exceptions.filter.ts`** — distingue el 503 de una sonda de un fallo del
+  servicio, agrupa el freno **por ruta** y no por mensaje, y **espera la promesa
+  de la alerta** porque con la CPU estrangulada un `fetch` sin dueño se congela.
+  Eso último no se le ocurre a nadie hasta que lo ha perdido una vez.
+- **`tools.ts`** — las dos decisiones de seguridad que tiene son las correctas y
+  están razonadas: `force` fuera del esquema, y estado desconocido a `null` en
+  lugar de a un valor por defecto.
+- **`packages/shared`** — una sola fuente, y el frontend la extiende en vez de
+  copiarla. Es exactamente lo que evita que los dos lados diverjan.
+
+### 44.11 Lo que enseña esta pasada
+
+Doc lo dijo de §43 y esta pasada lo confirma: **una lectura línea a línea
+perfecta habría dado §44.5, §44.6, §44.8 y §44.9 — los cuatro menores — y
+ninguno de los cuatro de arriba.**
+
+Los cuatro primeros salieron de la misma pregunta hecha cuatro veces: *este
+archivo afirma algo sobre alguien que está en otro sitio; ¿es verdad?* El parser
+dice que la tarjeta sabrá qué hacer con `null` — no hay tarjeta. El comentario
+dice que el usuario trabaja en Ciudad de México — la infraestructura dice
+Cancún. El docblock de Anthropic dice que el turno cuenta las dos llamadas —
+Gemini cuenta una. El bloque de `pendientes` explica por qué hay que contestar a
+todas — el otro proveedor no contesta.
+
+**Los cuatro son un comentario que dice la verdad sobre su archivo y mentira
+sobre el sistema.** No hay `grep` que encuentre eso, y leer despacio tampoco
+basta: hay que ir al otro extremo y mirar.
