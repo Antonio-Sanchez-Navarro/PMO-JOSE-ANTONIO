@@ -94,6 +94,15 @@ const BACKFILL_SIZE = 25;
 const MAX_PAGINAS_HISTORIAL = 20;
 
 /**
+ * Cuanto se admite que la cabecera `Date:` se adelante al reloj.
+ *
+ * Los desajustes reales entre servidores de correo son de **minutos**. Una hora
+ * es margen de sobra para eso y muy poco para que sirva de escondite: un correo
+ * fechado manana quedaria fuera del barrido durante un dia entero.
+ */
+const MARGEN_FECHA_FUTURA_MS = 60 * 60_000;
+
+/**
  * Antiguedad minima para que el barrido de reconciliacion toque un correo.
  *
  * No es cortesia: es lo que evita **duplicar clasificaciones**. Un correo recien
@@ -269,10 +278,73 @@ export class GmailService {
       snippet: message.snippet ?? '',
       from: header('from') ?? 'Desconocido',
       subject: header('subject') ?? '(Sin Asunto)',
-      date: header('date') ?? new Date().toISOString(),
+      date: this.fechaDeRecepcion(header('date'), message),
       labels: message.labelIds ?? [],
       bodyText: bodyText || undefined,
     };
+  }
+
+
+  /**
+   * La fecha de recepción del correo, **sin fiarse de la cabecera**.
+   *
+   * ⚠️ **Esto es una entrada externa y hasta el 2026-08-22 no se validaba.**
+   * `receivedAt` salía de `new Date(header('date'))`, y la cabecera `Date:` la
+   * escribe **quien manda el correo**. Una fecha malformada daba `Invalid Date`,
+   * Prisma lanzaba al guardar, el correo contaba como fallido — y **desde el
+   * arreglo del marcador, un fallo detiene el avance de la ingesta**.
+   *
+   * Es decir: **cualquiera que pueda mandarte un correo podía parar la ingesta**
+   * con una cabecera rara. La contrapartida que aceptamos a propósito
+   * —«atascarse y gritar es mejor que avanzar y perder»— convertida en un vector
+   * externo por una entrada que no validábamos.
+   *
+   * Y hay un segundo filo, más silencioso: **una fecha futura falsificada deja el
+   * correo fuera del barrido para siempre**, porque el barrido busca
+   * `receivedAt < ahora - gracia`. No falla: desaparece.
+   *
+   * El criterio es el mismo que `ai.service.parseDueDate` ya aplicaba al LLM,
+   * aquí aplicado al remitente: **si no se puede confiar en el valor, se usa uno
+   * que sí y se anota**. Nunca se rechaza el correo entero — eso volvería a parar
+   * la ingesta, que es justo lo que se está cerrando.
+   *
+   * El respaldo es **`internalDate` de Gmail**, no `Date.now()`: es la marca de
+   * cuándo lo recibió Gmail, **la pone Google y el remitente no la controla**, y
+   * conserva el momento real en vez de sustituirlo por «cuando lo ingerimos».
+   *
+   * _Se mantiene la cabecera como primera opción y no se cambia a `internalDate`
+   * sin más, aunque sea la fuente más fiable, porque eso movería la fecha de los
+   * 247 correos ya guardados. Queda dicho para que sea una decisión y no un
+   * descuido._
+   */
+  private fechaDeRecepcion(cabecera: string | undefined, message: gmail_v1.Schema$Message): string {
+    const deGmail = message.internalDate ? new Date(Number(message.internalDate)) : undefined;
+    const respaldo = deGmail && !Number.isNaN(deGmail.getTime()) ? deGmail : new Date();
+
+    if (!cabecera) return respaldo.toISOString();
+
+    const fecha = new Date(cabecera);
+    if (Number.isNaN(fecha.getTime())) {
+      this.logger.warn(
+        `Cabecera Date ilegible en el mensaje ${message.id}: se usa la fecha de Gmail. ` +
+          `Valor recibido: ${JSON.stringify(cabecera).slice(0, 120)}`,
+      );
+      return respaldo.toISOString();
+    }
+
+    // Una fecha por delante del reloj no es un error de formato: es una
+    // afirmación del remitente que no podemos comprobar, y que además sacaría
+    // el correo del barrido para siempre. Se admite un margen para desajustes
+    // de reloj entre servidores de correo, que son de minutos, no de días.
+    if (fecha.getTime() > Date.now() + MARGEN_FECHA_FUTURA_MS) {
+      this.logger.warn(
+        `Cabecera Date en el futuro en el mensaje ${message.id} (${fecha.toISOString()}): ` +
+          'se usa la fecha de Gmail. Sin esto el correo quedaria fuera del barrido para siempre.',
+      );
+      return respaldo.toISOString();
+    }
+
+    return fecha.toISOString();
   }
 
   // ─── Parseo del cuerpo MIME ────────────────────────────────────────────

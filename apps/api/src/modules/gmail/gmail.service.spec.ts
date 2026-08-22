@@ -503,3 +503,92 @@ describe('GmailService · barrido de reconciliación', () => {
     expect(alertas.avisar).toHaveBeenCalledTimes(1);
   });
 });
+
+
+/**
+ * La fecha del correo — una entrada externa que no se validaba.
+ *
+ * **Por qué esto es un vector y no una molestia.** `receivedAt` salía de la
+ * cabecera `Date:`, que la escribe **quien manda el correo**. Una fecha
+ * malformada daba `Invalid Date`, Prisma lanzaba, el correo contaba como fallido
+ * — y desde el arreglo del marcador, **un fallo detiene el avance de la
+ * ingesta**. Cualquiera que pudiera mandar un correo podía pararla.
+ *
+ * Y el filo silencioso: una fecha **futura** deja el correo fuera del barrido
+ * para siempre, porque el barrido busca `receivedAt` anterior a la ventana de
+ * gracia. No falla; desaparece.
+ */
+describe('GmailService · la fecha del correo no se cree lo que le mandan', () => {
+  const GMAIL_MS = 1_755_000_000_000; // marca de recepcion de Gmail, fiable
+
+  function fechaDe(cabecera: string | undefined, internalDate = String(GMAIL_MS)) {
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn() } as never,
+      {} as never,
+      {} as never,
+      { avisar: jest.fn() } as never,
+    );
+
+    const mensaje = {
+      id: 'msg-1',
+      threadId: 't1',
+      internalDate,
+      snippet: 'hola',
+      labelIds: [],
+      payload: {
+        headers: [
+          { name: 'From', value: 'a@b.c' },
+          ...(cabecera === undefined ? [] : [{ name: 'Date', value: cabecera }]),
+        ],
+      },
+    };
+
+    return (
+      service as unknown as { toEmailSnippet(m: unknown): { date: string } }
+    ).toEmailSnippet(mensaje).date;
+  }
+
+  it('una cabecera válida se respeta', () => {
+    expect(fechaDe('Tue, 12 Aug 2026 10:00:00 +0000')).toBe('2026-08-12T10:00:00.000Z');
+  });
+
+  it('una cabecera ilegible NO produce `Invalid Date`: cae a la fecha de Gmail', () => {
+    // Este es el que paraba la ingesta entera.
+    const fecha = fechaDe('no soy una fecha');
+
+    expect(Number.isNaN(new Date(fecha).getTime())).toBe(false);
+    expect(fecha).toBe(new Date(GMAIL_MS).toISOString());
+  });
+
+  it('una cabecera vacía tampoco rompe nada', () => {
+    expect(Number.isNaN(new Date(fechaDe('')).getTime())).toBe(false);
+  });
+
+  it('sin cabecera `Date` usa la de Gmail, no la hora de la ingesta', () => {
+    expect(fechaDe(undefined)).toBe(new Date(GMAIL_MS).toISOString());
+  });
+
+  it('una fecha del futuro se descarta: si no, el correo sale del barrido para siempre', () => {
+    const dentroDeUnAno = new Date(Date.now() + 365 * 24 * 3_600_000).toUTCString();
+
+    const fecha = fechaDe(dentroDeUnAno);
+
+    expect(new Date(fecha).getTime()).toBeLessThanOrEqual(Date.now() + 60 * 60_000);
+    expect(fecha).toBe(new Date(GMAIL_MS).toISOString());
+  });
+
+  it('un desajuste de reloj de minutos SÍ se respeta: no es un ataque, es un reloj', () => {
+    const enDiezMinutos = new Date(Date.now() + 10 * 60_000);
+
+    expect(fechaDe(enDiezMinutos.toUTCString())).toBe(
+      new Date(Math.floor(enDiezMinutos.getTime() / 1000) * 1000).toISOString(),
+    );
+  });
+
+  it('si Gmail tampoco trae fecha, no se rompe: usa el reloj', () => {
+    const fecha = fechaDe('basura', '');
+
+    expect(Number.isNaN(new Date(fecha).getTime())).toBe(false);
+  });
+});
