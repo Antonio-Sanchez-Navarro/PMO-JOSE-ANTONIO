@@ -381,6 +381,80 @@ canal de alertas se gasta, y este se está gastando.
 
 Añadido al encargo de @Claude como pieza 4, y la pieza 2 sube de prioridad.
 
+### ✅ El bucle, cerrado — y lo que apareció debajo (2026-08-22)
+
+**Firmado, y por primera vez en toda la Fase 5 firmado habiéndolo visto correr.**
+Verificado por Doc en Cloud Logging, no en el reporte de nadie:
+
+```
+00:45:06  pmo-api-00086  5 reencolado(s) de 5 candidato(s), 5 cerrado(s) sin clasificar
+00:49:27  pmo-api-00087  0 reencolado(s) de 0 candidato(s), 5 cerrado(s) sin clasificar
+```
+
+Seis pasadas idénticas y luego cero. **Los cinco se curaron solos** — la primera
+pasada con el código nuevo los reencoló, el worker entró por la rama sin texto y
+los marcó—, sin tocar la base a mano. Las cuatro piezas cerradas: `skipReason`
+terminal y contable, freno a 3.600 s, el orden aceptado con chivato, y el aviso
+que ya no miente **y que solo se dispara por huérfanos nuevos**.
+
+**Dos correcciones de @Claude que van al registro porque me corrigen a mí:**
+
+1. **La pieza 2 sola no bastaba.** Con 3.600 s habríamos pasado de un mensaje cada
+   media hora a uno cada hora — menos ruido, **misma naturaleza**. Lo que corta el
+   problema es la 4: dejar de avisar por una condición conocida. Yo presenté la 2
+   como el arreglo y la 4 como el añadido; era al revés.
+2. Y el descarte que escribió antes de arreglar: *«la salida fácil habría sido
+   excluirlos en la consulta del barrido. Se descarta: eso cambia un problema
+   ruidoso por uno silencioso.»*
+
+---
+
+### 🔴 Lo que apareció debajo: el cuerpo de los correos grandes se pierde
+
+Registrar las **etiquetas de Gmail** de los correos cerrados sin clasificar —idea
+de @Claude, no del encargo— contestó la pregunta de fondo. Y contestó mal:
+
+```
+UNREAD, IMPORTANT, CATEGORY_PERSONAL, INBOX
+UNREAD, CATEGORY_UPDATES, INBOX
+CATEGORY_PROMOTIONS, UNREAD, INBOX   (×2)
+UNREAD, CATEGORY_UPDATES, INBOX
+```
+
+**No son invitaciones ni correos solo-adjunto. Es correo corriente de la bandeja, y
+uno marcado `IMPORTANT`.** La hipótesis cómoda descartada por evidencia.
+
+Causa verificada por Doc en el código: **las tres ramas de `extractBodyText` exigen
+`p.body?.data`**, y Gmail manda `attachmentId` en vez de `data` cuando la parte
+pasa de cierto tamaño. Un correo largo pierde el cuerpo entero.
+
+**Y la consecuencia que no dijo nadie, que es la que cambia el tamaño del
+problema:** esos cinco solo destacaron porque además tenían el `snippet` vacío.
+**Un correo grande *con* snippet no queda huérfano: se clasifica igual, leyendo
+solo el snippet** — doscientos caracteres en vez del correo entero. Termina bien,
+no da error, no cuenta en ningún sitio.
+
+**Es posible que la IA lleve semanas leyendo las dos primeras líneas de los correos
+largos.** No es un fallo del barrido: es **la función central del producto
+degradada en silencio**, la forma de fallo de esta casa en el sitio donde más caro
+sale.
+
+**Repartido a @Claude con la medición por delante del arreglo:**
+
+```sql
+SELECT count(*) FROM "Email" WHERE "bodyText" IS NULL AND "snippet" <> '';
+```
+
+Cinco es una curiosidad; doscientos es que llevamos semanas clasificando a ciegas.
+
+**Y una decisión que será del Jefe y por eso el número va primero:** si hay muchos,
+**lo ya clasificado está degradado**. El camino de reproceso existe
+(`replaceExisting: true`), pero cuesta llamadas a Anthropic. Nadie reprocesa nada
+por iniciativa propia hasta que él lo diga.
+
+Queda sin explicar el `snippet` vacío, y @Claude hizo bien en no adivinarlo:
+arreglar el parseo sin entender eso sería **medio arreglo con cara de entero**.
+
 ### Estado del reparto — cierre del 2026-08-21
 
 | Capa | Estado | En qué |
