@@ -348,6 +348,39 @@ síntoma menor de los dos.
 pasada real del barrido con los cinco fuera**. El error fue aprobarlo sin
 observarlo; no se repite en el arreglo.
 
+### El freno pasa uno de cada dos, y el aviso miente (2026-08-21)
+
+**Dato del Jefe, que los logs no podían dar** — la línea del aviso se registra
+**antes** de consultar el freno, así que @Alana no podía saber si Chat los recibía.
+Pegó su Chat y se cruzó con las pasadas: llegaron los de **22:37, 23:00 y 23:30
+UTC**; no llegaron los de 22:45, 23:15 ni 23:45.
+
+**El freno funciona a medias, que es exactamente lo que predice un margen cero:**
+ventana de 900 s contra un cron de 900 s, cada aviso cae en el borde y **pasa uno
+de cada dos**. No son 96 al día, son unos 48.
+
+**Y hay algo peor que la frecuencia, y solo se ve leyendo el texto que llegó:**
+
+> *«Si esto se repite, mira los avisos de sincronización de Gmail: el camino normal
+> está perdiendo el `add` a la cola.»*
+
+**Es falso.** El `add` no falló ni una vez en 30 días. El aviso manda a quien lo
+recibe a buscar una causa que no existe, a las tres de la mañana, que es cuando
+nadie va a comprobarla. Misma familia que el `maxScale` del comentario y el
+`attempts` inexistente, **pero dentro de la alerta** — el único sitio donde un texto
+equivocado se convierte directamente en tiempo perdido de una persona.
+
+**Y una distinción que sale de mirar los cinco mensajes seguidos:** el de las 5:37
+con 27 correos **valía oro**; los cuatro siguientes son ruido. **Un aviso que se
+dispara por una condición conocida y estable no es un aviso, es una suscripción.**
+Debe avisar por que **aparezca algo nuevo**, no por que *haya* candidatos.
+
+El daño real no es la molestia: **la próxima alerta de verdad —un respaldo caído—
+llegará enterrada entre mensajes idénticos que ya se han aprendido a ignorar.** Un
+canal de alertas se gasta, y este se está gastando.
+
+Añadido al encargo de @Claude como pieza 4, y la pieza 2 sube de prioridad.
+
 ### Estado del reparto — cierre del 2026-08-21
 
 | Capa | Estado | En qué |
