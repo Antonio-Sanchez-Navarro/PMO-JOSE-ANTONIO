@@ -16,7 +16,7 @@ import {
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
-import { Task, TaskStatus } from '../types';
+import { Task, TaskStatus, TaskPriority } from '../types';
 import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters, updateEmailStatus } from '../api/tasks.api';
 import { startTimer, stopTimer, getActiveTimeEntry } from '../api/time.api';
 import { TaskModal } from './TaskModal';
@@ -25,7 +25,6 @@ import { TimeEntriesModal } from './TimeEntriesModal';
 import { TimeReportModal } from './TimeReportModal';
 import { EmailDetailModal } from '../../inbox/components/EmailDetailModal';
 import { useSocket } from '../hooks/useSocket';
-import { TaskPriority } from '@pmo/shared';
 
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);

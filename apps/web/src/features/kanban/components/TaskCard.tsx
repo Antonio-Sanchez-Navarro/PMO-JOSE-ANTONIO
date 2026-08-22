@@ -79,7 +79,7 @@ const TaskTimer: React.FC<{
           }}
           className="text-[10px] uppercase font-bold tracking-wide bg-red-100 text-red-700 px-2 py-0.5 rounded hover:bg-red-200 transition"
         >
-          ⏹ Stop
+          ⏹ Detener
         </button>
       ) : (
         <button
@@ -89,7 +89,7 @@ const TaskTimer: React.FC<{
           }}
           className="text-[10px] uppercase font-bold tracking-wide bg-green-100 text-green-700 px-2 py-0.5 rounded hover:bg-green-200 transition"
         >
-          ▶ Start
+          ▶ Iniciar
         </button>
       )}
     </div>
@@ -129,7 +129,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
           </h4>
         </div>
         <div className="flex items-center gap-2">
-          {task.aiConfidence && <AiAuditBadge confidence={task.aiConfidence} />}
+          {typeof task.aiConfidence === 'number' && <AiAuditBadge confidence={task.aiConfidence} />}
           {onDelete && (
             <button
               onClick={(e) => {
