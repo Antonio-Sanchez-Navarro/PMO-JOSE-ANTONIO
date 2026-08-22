@@ -73,7 +73,9 @@ export class GoogleStrategy implements LlmStrategy {
     // Los ids entran en la comprobación además de la credencial: sin ellos la
     // llamada saldría con `model: ""` y el fallo aparecería a mitad del
     // stream, cuando ya no se puede cambiar el código de estado.
-    return Boolean(this.client) && Boolean(this.modelFor(LlmTier.LIGHT) && this.modelFor(LlmTier.PRO));
+    return (
+      Boolean(this.client) && Boolean(this.modelFor(LlmTier.LIGHT) && this.modelFor(LlmTier.PRO))
+    );
   }
 
   modelFor(tier: LlmTier): string {
@@ -113,6 +115,13 @@ export class GoogleStrategy implements LlmStrategy {
 
       const ejecutables: FunctionCall[] = [];
       /**
+       * Las que solo se **proponen** al usuario y no se ejecutan aquí.
+       *
+       * Se guardan porque hay que **contestarlas igual** cuando el turno sigue.
+       * Ver el bloque de `functionResponse` más abajo.
+       */
+      const propuestas: FunctionCall[] = [];
+      /**
        * Las partes del turno del modelo, **tal cual vinieron**.
        *
        * Se guardan en vez de reconstruirlas desde `functionCalls` porque
@@ -122,6 +131,26 @@ export class GoogleStrategy implements LlmStrategy {
        * herramienta. Comprobado contra la API.
        */
       const partesModelo: Part[] = [];
+
+      /**
+       * Los contadores **de esta vuelta**, que se suman al total al terminarla.
+       *
+       * ⚠️ **Antes se asignaban directamente al total y ahí estaba el fallo.**
+       * Google manda `usageMetadata` en los trozos, y dentro de una vuelta el
+       * último trae el recuento de esa llamada — así que asignar está bien
+       * *dentro* de la vuelta. Lo que estaba mal era conservar esa asignación
+       * **entre vueltas**: la segunda llamada pisaba a la primera y de un turno
+       * con herramientas **solo sobrevivía la última**.
+       *
+       * Anthropic acumula (`+=`) y lo justifica por escrito: *«si el modelo
+       * buscó antes de responder, el turno costó las dos llamadas y el informe
+       * tiene que decirlo»*. El mismo campo `usage` significaba cosas distintas
+       * según el proveedor — y **es el número con el que se mira lo que cuesta
+       * el copiloto**. Un contador que miente por debajo es peor que no tenerlo:
+       * no se nota, y lleva a decidir sobre un coste que no es el real.
+       */
+      let entradaVuelta = 0;
+      let salidaVuelta = 0;
 
       for await (const chunk of stream) {
         partesModelo.push(...(chunk.candidates?.[0]?.content?.parts ?? []));
@@ -143,6 +172,7 @@ export class GoogleStrategy implements LlmStrategy {
           }
 
           this.logger.log(`Herramienta ${llamada.name} propuesta por ${model}`);
+          propuestas.push(llamada);
           yield {
             type: 'tool_call',
             toolName: llamada.name,
@@ -151,30 +181,58 @@ export class GoogleStrategy implements LlmStrategy {
         }
 
         // Los contadores llegan en los trozos, no en un mensaje final como en
-        // Anthropic: se acumula el último de cada vuelta.
+        // Anthropic: dentro de la vuelta vale el último que llegue.
         if (chunk.usageMetadata) {
-          entrada = chunk.usageMetadata.promptTokenCount ?? entrada;
-          salida = chunk.usageMetadata.candidatesTokenCount ?? salida;
+          entradaVuelta = chunk.usageMetadata.promptTokenCount ?? entradaVuelta;
+          salidaVuelta = chunk.usageMetadata.candidatesTokenCount ?? salidaVuelta;
         }
       }
+
+      // Y aquí se suman, que es lo que faltaba: el coste del turno es el de
+      // todas las llamadas que hizo, no el de la última.
+      entrada += entradaVuelta;
+      salida += salidaVuelta;
 
       if (!ejecutables.length || !request.execute) break;
 
       // El turno del modelo va con sus partes originales —firma de pensamiento
       // incluida— y después un `functionResponse` por cada herramienta.
+      //
+      // ⚠️ **También por las propuestas, y esto faltaba.** Si el modelo pide en
+      // el mismo turno una herramienta ejecutable y una que solo se propone —«busca
+      // los correos de Ana y créame la tarea»— el turno continúa, y hasta hoy la
+      // propuesta se quedaba **sin respuesta**: ya había salido hacia el frontend
+      // como `tool_call` y ahí acababa su camino.
+      //
+      // Anthropic ya lo hacía, con dos motivos escritos. El primero es suyo —su
+      // API devuelve 400 si falta un `tool_result`—, pero **el segundo aplica
+      // igual a Gemini**: decírselo evita que **insista** con la herramienta o
+      // que **dé por hecha una acción que aún no ha ocurrido**. Y con Gemini pesa
+      // más, porque una propuesta suya además no se pinta en la interfaz: el
+      // modelo insistiría sobre algo que el usuario ni siquiera está viendo.
       contents.push({ role: 'model', parts: partesModelo });
       contents.push({
         role: 'user',
-        parts: await Promise.all(
-          ejecutables.map(async (llamada) => {
-            this.logger.log(`Ejecutando ${llamada.name} para ${model}`);
-            const resultado = await request.execute!(llamada.name!, llamada.args);
+        parts: [
+          ...propuestas.map((llamada) =>
+            createPartFromFunctionResponse(llamada.id ?? '', llamada.name!, {
+              estado: 'pendiente_de_confirmacion',
+              detalle:
+                'Propuesta al usuario para que la confirme. Todavía no se ha ejecutado: ' +
+                'no des la acción por hecha ni la repitas.',
+            } as Record<string, unknown>),
+          ),
+          ...(await Promise.all(
+            ejecutables.map(async (llamada) => {
+              this.logger.log(`Ejecutando ${llamada.name} para ${model}`);
+              const resultado = await request.execute!(llamada.name!, llamada.args);
 
-            return createPartFromFunctionResponse(llamada.id ?? '', llamada.name!, {
-              result: resultado,
-            } as Record<string, unknown>);
-          }),
-        ),
+              return createPartFromFunctionResponse(llamada.id ?? '', llamada.name!, {
+                result: resultado,
+              } as Record<string, unknown>);
+            }),
+          )),
+        ],
       });
     }
 
