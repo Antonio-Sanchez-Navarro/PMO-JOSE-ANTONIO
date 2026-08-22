@@ -347,13 +347,28 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
  */
 describe('GmailService · barrido de reconciliación', () => {
   function crear(
-    opciones: { huerfanos?: string[]; add?: jest.Mock; remove?: jest.Mock; sinTexto?: number } = {},
+    opciones: {
+      huerfanos?: string[];
+      add?: jest.Mock;
+      remove?: jest.Mock;
+      sinTexto?: number;
+      /** Lo que vio la pasada anterior. `undefined` = no hay nada guardado. */
+      vistos?: string[];
+    } = {},
   ) {
     const findMany = jest
       .fn()
       .mockResolvedValue((opciones.huerfanos ?? ['e1', 'e2']).map((id) => ({ id })));
     const add = opciones.add ?? jest.fn().mockResolvedValue({});
     const remove = opciones.remove ?? jest.fn().mockResolvedValue(undefined);
+
+    // Redis, donde el barrido recuerda que huerfanos vio la vez anterior. Es
+    // lo que le permite avisar de lo que APARECE en vez de lo que HAY.
+    const get = jest.fn().mockResolvedValue(
+      opciones.vistos === undefined ? null : JSON.stringify(opciones.vistos),
+    );
+    const set = jest.fn().mockResolvedValue('OK');
+    const client = Promise.resolve({ get, set });
 
     // `count` cuenta los cerrados sin clasificar: es lo que convierte «cinco,
     // qué curioso» en «cincuenta, esto es una avería de la ingesta».
@@ -365,11 +380,11 @@ describe('GmailService · barrido de reconciliación', () => {
       {} as never,
       { get: jest.fn() } as never,
       prisma as never,
-      { add, remove } as never,
+      { add, remove, client } as never,
       alertas as never,
     );
 
-    return { service, findMany, add, remove, alertas, count };
+    return { service, findMany, add, remove, alertas, count, get, set };
   }
 
   it('solo mira correos sin `processedAt` y con antigüedad: no toca los recién llegados', async () => {
@@ -432,13 +447,59 @@ describe('GmailService · barrido de reconciliación', () => {
     expect(res).toEqual({ candidatos: 2, reencolados: 1, fallidos: 1, sinTexto: 0 });
   });
 
-  it('avisa cuando encuentra huérfanos, y calla cuando no hay nada', async () => {
-    const conHuerfanos = crear({ huerfanos: ['e1'] });
-    await conHuerfanos.service.reconciliarSinClasificar();
-    expect(conHuerfanos.alertas.avisar).toHaveBeenCalledTimes(1);
+  it('avisa la primera vez que aparece un huérfano', async () => {
+    const { service, alertas } = crear({ huerfanos: ['e1'] });
 
-    const limpio = crear({ huerfanos: [] });
-    await limpio.service.reconciliarSinClasificar();
-    expect(limpio.alertas.avisar).not.toHaveBeenCalled();
+    await service.reconciliarSinClasificar();
+
+    expect(alertas.avisar).toHaveBeenCalledTimes(1);
+  });
+
+  it('NO vuelve a avisar de los mismos: eso es una suscripción, no una alerta', async () => {
+    // El aviso del primer barrido valía oro; los cuatro siguientes eran el
+    // mismo hecho contado otra vez. El daño no es la molestia: la próxima
+    // alerta de verdad llegaría enterrada entre mensajes idénticos.
+    const { service, alertas } = crear({ huerfanos: ['e1', 'e2'], vistos: ['e1', 'e2'] });
+
+    await service.reconciliarSinClasificar();
+
+    expect(alertas.avisar).not.toHaveBeenCalled();
+  });
+
+  it('sí avisa si aparece uno nuevo junto a los de siempre', async () => {
+    const { service, alertas } = crear({ huerfanos: ['e1', 'e2'], vistos: ['e1'] });
+
+    await service.reconciliarSinClasificar();
+
+    expect(alertas.avisar).toHaveBeenCalledTimes(1);
+    expect(String(alertas.avisar.mock.calls[0][1])).toContain('1 correo(s) nuevo(s)');
+  });
+
+  it('el texto no acusa al `add`: esa causa nunca se comprobó', async () => {
+    // Decía «el camino normal está perdiendo el add a la cola» y el `add` no
+    // había fallado ni una vez. Mandaba a buscar una causa inexistente.
+    const { service, alertas } = crear({ huerfanos: ['e1'] });
+
+    await service.reconciliarSinClasificar();
+
+    expect(String(alertas.avisar.mock.calls[0][1])).not.toContain('esta perdiendo');
+  });
+
+  it('sin huérfanos no avisa, y deja la lista vacía para la próxima', async () => {
+    const { service, alertas, set } = crear({ huerfanos: [] });
+
+    await service.reconciliarSinClasificar();
+
+    expect(alertas.avisar).not.toHaveBeenCalled();
+    expect(set).toHaveBeenCalledWith(expect.any(String), '[]', 'EX', expect.any(Number));
+  });
+
+  it('si Redis no contesta, avisa igual: mejor repetir que callar la primera vez', async () => {
+    const { service, alertas, get } = crear({ huerfanos: ['e1'] });
+    get.mockRejectedValue(new Error('Redis dijo que no'));
+
+    await service.reconciliarSinClasificar();
+
+    expect(alertas.avisar).toHaveBeenCalledTimes(1);
   });
 });

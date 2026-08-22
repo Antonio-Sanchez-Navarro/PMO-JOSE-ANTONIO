@@ -134,6 +134,19 @@ const MAX_RECONCILIADOS = 100;
  */
 const FRENO_AVISO_RECONCILIACION_S = 3_600;
 
+/** Donde se recuerda que huerfanos vio la pasada anterior. */
+const CLAVE_HUERFANOS_VISTOS = 'pmo:reconciliacion:huerfanos-vistos';
+
+/**
+ * Cuanto dura ese recuerdo.
+ *
+ * Muy por encima de la cadencia de 15 min a proposito: si caducara cerca de
+ * ella, cada pasada creeria que todo es nuevo y volveriamos al aviso por
+ * condicion, que es justo lo que se esta arreglando. Un dia es desechable
+ * -perderlo cuesta un aviso de mas- y sobra margen.
+ */
+const TTL_HUERFANOS_VISTOS_S = 24 * 3_600;
+
 @Injectable()
 export class GmailService {
   private readonly logger = new Logger(GmailService.name);
@@ -715,15 +728,33 @@ export class GmailService {
       }
     }
 
-    if (reencolados > 0) {
-      // Con freno en Redis: si esto se repite cada 15 minutos porque hay un
-      // correo que falla siempre, se manda un mensaje, no noventa y seis al día.
+    // ── Avisar de lo que APARECE, no de lo que HAY ───────────────────────
+    //
+    // ⚠️ **Este bloque avisaba por la condición y no por el cambio, y eso no es
+    // una alerta: es una suscripción.**
+    //
+    // El aviso del primer barrido —27 correos rescatados, uno con una tarea
+    // dentro que nunca llegó al tablero— valía oro. Los cuatro siguientes eran
+    // el mismo hecho contado otra vez, y el daño no es la molestia: **la
+    // próxima alerta de verdad llegará enterrada entre mensajes idénticos que
+    // ya nadie lee**. Un canal se gasta.
+    //
+    // Así que se compara con lo que se vio en la pasada anterior y solo se
+    // avisa de los **ids nuevos**. Un problema que sigue ahí ya se contó; uno
+    // que crece, no.
+    const nuevos = await this.huerfanosNuevos(huerfanos.map((h) => h.id));
+
+    if (nuevos.length > 0) {
       await this.alertas.avisar(
-        'Barrido de reconciliación: había correos sin clasificar',
-        `${reencolados} correo(s) guardados y sin encolar se han reencolado. ` +
-          'Estaban en la base y sin trabajo asociado, asi que ningun worker los ' +
-          'habria recogido. Si esto se repite, mira los avisos de sincronizacion ' +
-          'de Gmail: el camino normal esta perdiendo el `add` a la cola.',
+        'Barrido de reconciliación: correos guardados sin encolar',
+        `${nuevos.length} correo(s) nuevo(s) estaban en la base sin trabajo de ` +
+          `clasificación asociado (${reencolados} reencolado(s) en esta pasada). ` +
+          'Ningun worker los habria recogido, porque no habia nada que recoger. ' +
+          'Donde mirar, en este orden: (1) lineas "guardado pero NO encolado" en ' +
+          'el log de sincronizacion, que serian un fallo del `add`; (2) si no las ' +
+          'hay, el worker probablemente murio entre el guardado y el procesado ' +
+          '-Cloud Run escala a cero-; (3) el recuento de `skipReason` si los ' +
+          'mismos vuelven a aparecer.',
         'reconciliacion-huerfanos',
         FRENO_AVISO_RECONCILIACION_S,
       );
@@ -739,6 +770,63 @@ export class GmailService {
     }
 
     return { candidatos: huerfanos.length, reencolados, fallidos, sinTexto };
+  }
+
+
+  /**
+   * De los huérfanos de esta pasada, cuáles no estaban en la anterior.
+   *
+   * **Por qué hace falta estado entre pasadas.** Sin él, la única pregunta que
+   * el barrido puede hacerse es «¿hay huérfanos?», y esa condición es estable:
+   * responde que sí en cada vuelta mientras el problema dure. Avisar de eso es
+   * repetir el mismo hecho cada quince minutos hasta que quien lo recibe deja de
+   * leer el canal — y entonces la alerta que sí importaba llega enterrada.
+   *
+   * Con la lista anterior, la pregunta pasa a ser **«¿ha aparecido algo
+   * nuevo?»**, que es la que tiene información. Un problema que sigue igual ya
+   * se contó; uno que crece, no.
+   *
+   * Se guarda en Redis y no en la base porque es estado operativo y desechable:
+   * si se pierde, lo peor que pasa es un aviso de más, y el freno de una hora lo
+   * acota. Por eso también **si Redis falla se avisa igual** — prefiero un aviso
+   * repetido a callarme la primera vez que ocurre algo de verdad.
+   */
+  private async huerfanosNuevos(ids: string[]): Promise<string[]> {
+    if (ids.length === 0) {
+      await this.recordarHuerfanos([]);
+      return [];
+    }
+
+    try {
+      const redis = (await this.classifyQueue.client) as unknown as {
+        get(clave: string): Promise<string | null>;
+      };
+      const crudo = await redis.get(CLAVE_HUERFANOS_VISTOS);
+      const vistos = new Set<string>(crudo ? (JSON.parse(crudo) as string[]) : []);
+
+      await this.recordarHuerfanos(ids);
+      return ids.filter((id) => !vistos.has(id));
+    } catch (err) {
+      // Fallo abierto: se avisa de todos. El freno acota el ruido y no se
+      // pierde la primera vez que ocurre algo.
+      this.logger.warn(
+        `No se pudo leer el estado del barrido; se avisa de todos los huerfanos: ${describirError(err)}`,
+      );
+      return ids;
+    }
+  }
+
+  /** Deja la lista de esta pasada para que la siguiente sepa qué es nuevo. */
+  private async recordarHuerfanos(ids: string[]): Promise<void> {
+    try {
+      const redis = (await this.classifyQueue.client) as unknown as {
+        set(c: string, v: string, modo: 'EX', ttl: number): Promise<unknown>;
+      };
+      await redis.set(CLAVE_HUERFANOS_VISTOS, JSON.stringify(ids), 'EX', TTL_HUERFANOS_VISTOS_S);
+    } catch {
+      // Que no se pueda recordar no rompe el barrido: la proxima pasada
+      // avisara de mas, que es el lado bueno del que equivocarse.
+    }
   }
 
   // ─── Suscripción push ──────────────────────────────────────────────────
