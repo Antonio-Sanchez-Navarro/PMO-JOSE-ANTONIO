@@ -1,0 +1,146 @@
+name: Avisar si falla Vercel o el CI
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Capa 1 de la vigilancia del despliegue — la mitad que `deploy.yml` NO puede ver.
+#
+# **Por qué está aquí y no como un job de `deploy.yml`.** Vercel construye desde
+# su propia integración de Git: **no hay ni un paso suyo en nuestros workflows**,
+# así que un `if: failure()` dentro de `deploy.yml` no se entera de que el
+# frontend se cayó. Un arreglo así habría tapado Cloud Run y CI y dejado Vercel
+# exactamente como estaba — que es de donde salieron los treinta correos a la
+# bandeja del Jefe. La Capa 1 habría figurado cerrada con el agujero abierto.
+#
+# Lo que Vercel sí publica en GitHub es el evento `deployment_status`, que es el
+# mismo que llevamos leyendo a mano con `gh api .../status`.
+#
+# También cubre **el fallo de CI**, que `deploy.yml` tampoco puede ver: si CI
+# falla, el despliegue ni se lanza, así que no hay job caído al que colgarle un
+# `needs`.
+#
+# ── El punto ciego, y hay que conocerlo ─────────────────────────────────────
+#
+# ⚠️ **Esto no ve lo que no llega a fallar.** Todo aquí son eventos: si Vercel
+# deja de publicar su estado, si alguien desconecta la integración, si el
+# workflow no se dispara — **no hay evento y no hay nada que contar**. El
+# silencio es indistinguible de que todo vaya bien.
+#
+# Es la misma forma de fallo que enseñó el respaldo diario: por eso allí hay una
+# alerta de **ausencia** además de la de fallo, y por eso aquí hace falta una
+# Capa 2 que **pregunte** si producción está al día en vez de esperar a que
+# alguien le cuente que no lo está.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  # Vercel. `deployment_status` llega con cada cambio de estado; abajo se filtra.
+  deployment_status:
+
+  # Nuestro CI. El despliegue de la API se avisa desde `deploy.yml`, que tiene
+  # acceso directo al resultado del job.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+  # ⚠️ **Para provocar un mensaje de prueba sin romper nada.**
+  #
+  # Un avisador que nadie ha visto avisar es una suposición — y este en concreto
+  # solo corre cuando algo ya se rompió, así que sin esto la primera prueba
+  # sería un incendio de verdad. Con el botón se comprueba hoy.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  avisar:
+    runs-on: ubuntu-latest
+
+    # Solo fallos. `deployment_status` se dispara también con `pending` y
+    # `success`; sin filtrar, esto mandaría un mensaje por cada despliegue
+    # correcto y el canal se gastaría en una tarde. Es la lección del barrido.
+    #
+    # `failure` **y** `error`: Vercel usa `error` para el fallo de construcción y
+    # `failure` para el resto. Quedarse con uno deja la mitad sin avisar.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'failure' ||
+      github.event.deployment_status.state == 'failure' ||
+      github.event.deployment_status.state == 'error'
+
+    steps:
+      - name: Avisar a Chat
+        env:
+          # ⚠️ **Secreto nativo de GitHub, y NO se lee de Secret Manager.**
+          #
+          # La primera versión de esto lo leía con `gcloud secrets versions
+          # access`, con el argumento de tener una sola fuente de verdad. Se
+          # descartó por dos motivos, y el segundo es el que manda:
+          #
+          # 1. `github-deployer@` **no tiene** `secretAccessor` sobre
+          #    `ALERT_WEBHOOK_URL` — solo la cuenta de Cloud Run y la del
+          #    respaldo—, así que ese comando responde 403. Y como solo se
+          #    ejecuta cuando algo ya se rompió, **el 403 habría aparecido la
+          #    primera vez que hubiera una avería de verdad**: el aviso de la
+          #    avería, averiado, y sin saberlo hasta el incendio.
+          #
+          # 2. Y aunque se concediera el permiso: **lo vigilado incluye la
+          #    autenticación del pipeline contra GCP**. Si un despliegue falla
+          #    *porque* esa autenticación se rompió —WIF caducado, cuenta
+          #    revocada, permiso retirado— un avisador que también se autentica
+          #    contra GCP **falla con él**. Compartirían suerte un piso más
+          #    abajo, que es exactamente lo que un avisador no puede hacer.
+          #
+          # ⚠️ **El precio, y está comprado a sabiendas: son dos fuentes de
+          # verdad.** Este valor tiene que coincidir con el secreto
+          # `ALERT_WEBHOOK_URL` de Secret Manager, y **rotar el webhook obliga a
+          # tocar los dos sitios**. Si solo se rota uno, este avisa a una URL
+          # muerta y no dice que está muerta. Queda escrito porque una deuda
+          # escrita es una deuda; una no escrita es una sorpresa.
+          URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          set -eo pipefail
+
+          if [ -z "${URL}" ]; then
+            echo "::error::El secreto ALERT_WEBHOOK_URL de GitHub Actions no existe o esta vacio. NO se ha avisado del fallo. Lo crea el Jefe con: gh secret set ALERT_WEBHOOK_URL --body '<url del webhook de Chat>' (el mismo valor que el secreto ALERT_WEBHOOK_URL de Secret Manager)."
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            QUE="Prueba manual del avisador"
+            TITULO="Nadie habia visto avisar a este workflow. Esto lo comprueba."
+            COMMIT="${{ github.sha }}"
+            ENLACE="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            EMOJI="🧪"
+          elif [ -n "${{ github.event.workflow_run.id }}" ]; then
+            QUE="CI"
+            TITULO="${{ github.event.workflow_run.display_title }}"
+            COMMIT="${{ github.event.workflow_run.head_sha }}"
+            ENLACE="${{ github.event.workflow_run.html_url }}"
+            EMOJI="🔴"
+          else
+            QUE="Vercel · ${{ github.event.deployment_status.environment }}"
+            TITULO="${{ github.event.deployment_status.description }}"
+            COMMIT="${{ github.event.deployment.sha }}"
+            # El log de Vercel y no el de GitHub: es donde está el motivo.
+            ENLACE="${{ github.event.deployment_status.target_url }}"
+            EMOJI="🔴"
+          fi
+
+          # ⚠️ **El enlace no es un adorno.** Un aviso que dice «algo falló» y
+          # obliga a ir a buscarlo se acaba ignorando; el que trae el sitio
+          # exacto se atiende. Si alguna vez se recorta este mensaje, esa línea
+          # es la última que se quita.
+          TEXTO=$(printf '%s *Despliegue fallido: %s*\n%s\nCommit: %s\nLog: %s' \
+                    "${EMOJI}" "${QUE}" "${TITULO:-sin descripcion}" "${COMMIT:0:7}" "${ENLACE:-sin enlace}")
+
+          # `--fail` para que un rechazo del webhook no pase por entregado: sin
+          # el, `curl` devuelve 0 ante un 400 y el aviso se daria por enviado.
+          # Mismo motivo por el que se puso en `respaldo.sh`.
+          if ! curl -sS --fail -m 10 -X POST \
+                 -H 'content-type: application/json' \
+                 -d "$(jq -n --arg t "${TEXTO}" '{text: $t}')" \
+                 "${URL}" >/dev/null; then
+            echo "::error::El webhook rechazo el aviso. El fallo del despliegue NO se ha comunicado a nadie."
+            exit 1
+          fi
+
+          echo "Aviso enviado: ${QUE} · ${COMMIT:0:7}"
