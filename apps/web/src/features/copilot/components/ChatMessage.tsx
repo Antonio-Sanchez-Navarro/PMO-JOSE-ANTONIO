@@ -1,6 +1,7 @@
 import React from 'react';
 import { DraftEmailCard, DraftEmailData } from './DraftEmailCard';
 import { CreateTaskCard, CreateTaskData } from './CreateTaskCard';
+import { ChangeEmailStatusCard, ChangeEmailStatusData } from './ChangeEmailStatusCard';
 
 export type MessageStatus = 'pending' | 'streaming' | 'complete';
 export type MessageRole = 'user' | 'assistant';
@@ -12,6 +13,7 @@ export interface Message {
   status: MessageStatus;
   draftEmail?: DraftEmailData;
   createTask?: CreateTaskData;
+  changeEmailStatus?: ChangeEmailStatusData;
 }
 
 interface ChatMessageProps {
@@ -74,6 +76,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           {message.createTask && (
             <div className="mt-2">
               <CreateTaskCard task={message.createTask} />
+            </div>
+          )}
+
+          {/* Render Tool Call Component (ChangeEmailStatusCard) */}
+          {message.changeEmailStatus && (
+            <div className="mt-2">
+              <ChangeEmailStatusCard change={message.changeEmailStatus} />
             </div>
           )}
 

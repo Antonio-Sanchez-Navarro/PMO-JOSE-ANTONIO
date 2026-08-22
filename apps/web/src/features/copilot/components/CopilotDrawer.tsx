@@ -120,7 +120,25 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
         for (const bloque of bloques) {
           const evento = bloque.match(/^event: (.+)$/m)?.[1];
           const dataStr = bloque.match(/^data: (.+)$/m)?.[1] ?? '{}';
-          let data: { type?: string; text?: string; toolName?: string; payload?: { to?: string | string[]; subject?: string; body?: string; title?: string; description?: string; priority?: string; dueDate?: string | null; sourceEmailId?: string | null }; message?: string; threadId?: string } = {};
+          let data: {
+            type?: string;
+            text?: string;
+            toolName?: string;
+            payload?: {
+              to?: string | string[];
+              subject?: string;
+              body?: string;
+              title?: string;
+              description?: string;
+              priority?: string;
+              dueDate?: string | null;
+              sourceEmailId?: string | null;
+              emailId?: string;
+              status?: string | null;
+            };
+            message?: string;
+            threadId?: string;
+          } = {};
           try {
             data = JSON.parse(dataStr);
           } catch {
@@ -164,6 +182,20 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
                       priority: (payload.priority as TaskPriority) || 'MEDIUM',
                       dueDate: payload.dueDate || null,
                       sourceEmailId: payload.sourceEmailId || null
+                    }
+                  };
+                }
+                return msg;
+              }));
+            } else if (data.toolName === 'change_email_status' && payload && payload.emailId) {
+              setMessages((prev) => prev.map(msg => {
+                if (msg.id === assistantMessageId) {
+                  return {
+                    ...msg,
+                    status: 'complete',
+                    changeEmailStatus: {
+                      emailId: payload.emailId!,
+                      status: payload.status ?? null,
                     }
                   };
                 }
