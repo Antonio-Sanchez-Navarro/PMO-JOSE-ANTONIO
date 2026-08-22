@@ -455,6 +455,74 @@ por iniciativa propia hasta que él lo diga.
 Queda sin explicar el `snippet` vacío, y @Claude hizo bien en no adivinarlo:
 arreglar el parseo sin entender eso sería **medio arreglo con cara de entero**.
 
+### 🔴 Vercel llevaba dos días sin desplegar, y el comando era mío (2026-08-22)
+
+**Treinta correos de error a la bandeja del Jefe fueron el único aviso.** Todos los
+despliegues de producción fallaban desde `9aae796`:
+
+```
+Command failed with exit code 128: git diff --quiet $VERCEL_GIT_PREVIOUS_SHA ...
+fatal: bad object fc4216a
+```
+
+Vercel **clona en superficie**. `$VERCEL_GIT_PREVIOUS_SHA` apuntaba al último
+despliegue correcto —del día 20— y ese commit ya no estaba en el clon. Y se
+retroalimentaba: como todos fallaban, el puntero no avanzaba y el SHA se alejaba un
+commit más en cada push.
+
+**Mi error, textual:** escribí en dos encargos que *«Vercel aborta el build solo con
+salida 0; cualquier otra cosa significa construye»*. **Es falso.** Un
+`ignoreCommand` que **falla** no construye: **hunde el despliegue**. Con ese
+razonamiento descarté la versión de @Gravity con rutas relativas diciendo que «la
+fuga volvería entera», cuando el fallo real de un 128 es el contrario.
+
+**El daño:** los seis hallazgos de frontend de la auditoría, la normalización de
+finales de línea y todo lo demás **estaban en `master` y no en el navegador de
+nadie**. Los dimos por cerrados dos días antes de que existieran.
+
+**La regla que sale de aquí:** *el `ignoreCommand` no puede fallar nunca; si no
+puede decidir, que construya.* Un build de más cuesta segundos; uno de menos costó
+dos días. Cerrado por @Gravity en `f4afa28` con `git cat-file -e` y `exit 1` de
+respaldo, y **verificado con las tres condiciones**: despliegue en verde
+(`80ce4de`), el salto sigue vivo (`73cc1a8` → `Canceled by Ignored Build Step`), y
+**el trabajo dentro del bundle en vivo** — abrió el JS desplegado y buscó el texto
+del §37.10 y la constante del §37.14.
+
+**Y el hueco que esto destapa, que sigue abierto:** **Vercel no está en ninguna de
+las dos capas de vigilancia.** Ni la Capa 1 ni la Capa 2 miran el frontend.
+Llevamos una semana blindando ingesta y respaldos mientras la mitad visible del
+producto avisaba solo por correo, a un canal que nadie había declarado como tal.
+
+---
+
+### ✅ Y la alarma del parseo era falsa — corrección mía (2026-08-22)
+
+Escribí que **«es posible que la IA lleve semanas leyendo las dos primeras líneas
+de los correos largos»**. No ocurrió. La sonda, con sus testigos:
+
+```
+solo-snippet=0 · sin-cuerpo=5 · con-snippet=242 · total=247
+```
+
+`con-snippet=242` prueba que el operador funciona —el cero no es una consulta
+rota— y la aritmética cierra: 247 − 5 = 242. **Ningún correo se clasificó leyendo
+solo la vista previa**, y la decisión sobre reprocesar que iba a plantearle al Jefe
+**no existe**.
+
+Lo presenté con más peso del que aguantaba. Y que se sepa no fue por razonar mejor:
+fue porque **@Claude exigió medir antes de arreglar y luego desconfió de su propia
+medida** — *«un número que no se puede distinguir de su propio fallo no mide
+nada»—. Un cero sin testigos habría cerrado el encargo con un «todo bien» falso.
+
+**Reencuadre:** el hueco del `attachmentId` es real y **no ha mordido** (242 de 247
+extrajeron cuerpo), y desde hoy deja rastro. **Baja de prioridad porque lo
+medimos.** Queda una pregunta más pequeña y más rara: los cinco tienen cuerpo **y**
+snippet vacíos a la vez, y esa correlación el `attachmentId` no la explica.
+
+**Reparto:** §43.2 primero —se dispara justo al recuperarse de una caída, y los
+correos que fallan al descargarse ni llegan a `persistEmails`, así que el marcador
+avanza igual—; el `attachmentId` detrás.
+
 ### Estado del reparto — cierre del 2026-08-21
 
 | Capa | Estado | En qué |
