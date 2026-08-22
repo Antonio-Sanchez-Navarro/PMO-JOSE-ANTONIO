@@ -382,6 +382,28 @@ atributos hubiera estado completo, ese fichero habría seguido igual. Verificado
 Doc: los 40 de `apps/web/src` en `i/lf w/lf`, y sin `.bat`/`.cmd`/`.ps1` que el
 `eol=lf` pudiera romper.
 
+### Rutina de Doc — revisar los tres buzones (2026-08-21)
+
+El buzón lleva escrita desde el 20-08 su propia limitación: *«no hay nadie sondeando
+este archivo: escribir aquí deja constancia, pero no despierta a Doc»*. **Hoy se
+cumplió dos veces en la misma tarde.** @Claude dejó un bloqueo sobre el
+`trust proxy` que estuvo **un día** sin respuesta, y @Alana dejó el resultado de los
+27 con un «corre ahora mismo» encima. **Las dos las vi porque el Jefe me las
+señaló, no porque yo mirara.**
+
+Escribir la limitación no la arregla. **Desde hoy, revisar los tres buzones es
+parte de la rutina de Doc**, junto con `git log` y `git status`:
+
+```
+PROMPT_CLAUDE.md   → buzón
+PROMPT_GRAVITY.md  → buzón
+PROMPT_ALANA.md    → buzón
+```
+
+Y de paso: **retirar lo contestado.** Había una entrada de los tres roles de IAM
+que seguía viva días después de resolverse. Un buzón con entradas muertas dentro
+deja de leerse, que es la segunda forma de que un canal falle.
+
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 * **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.
