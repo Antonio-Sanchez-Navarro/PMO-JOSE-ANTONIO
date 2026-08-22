@@ -14,14 +14,35 @@ import type { ValidatorConstraintInterface } from 'class-validator';
  */
 
 /**
- * Donde trabaja quien usa esto. Es el corte por defecto de los días.
+ * **`America/Cancun`: UTC−5 fijo, sin horario de verano.** Es el corte por
+ * defecto de los días.
  *
- * Sale de aquí y no de `process.env` a propósito: es una decisión de producto
- * ("el día acaba a medianoche en México"), no de despliegue, y esconderla en
- * una variable de entorno haría que dos entornos dieran gráficas distintas con
- * los mismos datos.
+ * ⚠️ **Aquí decía `America/Mexico_City` y estuvo mal durante meses.**
+ * México‑Ciudad es UTC−6, así que **todo lo cerrado o fichado entre las 00:00 y
+ * la 01:00 se contaba en el día anterior**, en `GET /dashboard/metrics` y en
+ * `GET /time/report`. Un número equivocado una hora de cada veinticuatro, que
+ * nunca da error.
+ *
+ * **Y lo que lo mantuvo vivo fue el comentario, no el valor.** Decía «donde
+ * trabaja quien usa esto» y lo declaraba decisión de producto, así que cada vez
+ * que alguien pasaba por delante el error **parecía intencionado**. Un
+ * comentario que justifica un valor equivocado lo blinda mejor que el silencio.
+ * Por eso ahora dice **cuál es la zona y que es fija** —comprobable— en vez de
+ * una intención, que no lo es.
+ *
+ * Toda la infraestructura ya corría en `America/Cancun`: los disparadores de
+ * Cloud Scheduler en `deploy.yml` lo dicen desde el principio. El valor era el
+ * único sitio que no estaba de acuerdo.
+ *
+ * Que sea **UTC−5 fijo** importa: Quintana Roo no cambia la hora, así que el
+ * corte del día no se mueve dos veces al año y las gráficas no dan un salto que
+ * luego habría que explicar.
+ *
+ * Sale de aquí y no de `process.env` a propósito: es una decisión de producto,
+ * no de despliegue, y esconderla en una variable de entorno haría que dos
+ * entornos dieran gráficas distintas con los mismos datos.
  */
-export const ZONA_POR_DEFECTO = 'America/Mexico_City';
+export const ZONA_POR_DEFECTO = 'America/Cancun';
 
 /**
  * Cómo se pasa una columna de fecha de Prisma a la hora local de una zona.
@@ -64,7 +85,7 @@ export class EsZonaHoraria implements ValidatorConstraintInterface {
   }
 
   defaultMessage(): string {
-    return 'tz debe ser una zona horaria IANA válida, por ejemplo America/Mexico_City';
+    return 'tz debe ser una zona horaria IANA válida, por ejemplo America/Cancun';
   }
 }
 

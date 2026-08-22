@@ -18,9 +18,10 @@ export class QueryMetricsDto {
   to?: string;
 
   /**
-   * En qué zona se corta un "día". Por defecto `America/Mexico_City`, que es
-   * donde trabaja quien usa esto: con UTC, todo lo hecho después de las 18:00
-   * caería en la gráfica del día siguiente.
+   * En qué zona se corta un "día". Por defecto `America/Cancun` (UTC−5 fijo):
+   * con UTC, todo lo hecho después de las 19:00 caería en la gráfica del día
+   * siguiente. Ver `ZONA_POR_DEFECTO`, que cuenta por qué este valor decía
+   * `America/Mexico_City` durante meses y qué desplazaba.
    */
   @IsOptional()
   @EsZonaHorariaValida()

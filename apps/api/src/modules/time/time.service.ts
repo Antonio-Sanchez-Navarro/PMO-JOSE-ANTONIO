@@ -341,7 +341,7 @@ export class TimeService {
    * dieran números distintos.
    *
    * Los días y las semanas se cortan en **hora local** (`?tz=`, por defecto
-   * `America/Mexico_City`), no en UTC. Hasta el 2026-07-30 se cortaban en UTC y
+   * `America/Cancun`), no en UTC. Hasta el 2026-07-30 se cortaban en UTC y
    * `GET /dashboard/metrics` ya lo hacía en local: las dos gráficas del tablero
    * repartían los minutos de última hora de la tarde en días distintos y no
    * había forma de saber cuál de las dos mentía. Encargo de Doc: que las dos

@@ -167,8 +167,8 @@ export interface TimeSeriesPoint extends MetricsDayPoint {
  *    huecos ni ordenar claves.
  * 3. `byStatus` y `byPriority` traen **siempre** todas las claves del enum, con
  *    cero donde no hay nada, para que la leyenda no cambie de tamaño.
- * 4. Los días se cortan en `window.tz` (por defecto `America/Mexico_City`), no
- *    en UTC: cerrar algo a las 19:00 cuenta para ese día.
+ * 4. Los días se cortan en `window.tz` (por defecto `America/Cancun`, UTC−5
+ *    fijo), no en UTC: cerrar algo a las 19:00 cuenta para ese día.
  */
 export interface DashboardMetrics {
   generatedAt: string;
