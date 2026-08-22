@@ -22,6 +22,7 @@ const BASE: Email = {
   status: EmailStatus.PENDING,
   receivedAt: new Date('2026-07-24T15:30:00.000Z'),
   processedAt: null,
+  skipReason: null,
 };
 
 export const makeEmail = (overrides: Partial<Email> = {}): Email => ({

@@ -32,6 +32,30 @@ import { describirError, stackDe } from '../../common/observability/describir-er
 const CONCURRENCIA = 2;
 const LIMITE_POR_VENTANA = { max: 20, duration: 60_000 };
 
+/**
+ * Por qué un correo sale del procesador **sin clasificar** pero dado por
+ * terminado.
+ *
+ * Un correo con `processedAt` puesto y `skipReason` nulo se clasificó de verdad;
+ * con `skipReason` no nulo, se cerró sin clasificar y aquí está el motivo. La
+ * diferencia importa: sin ella, dentro de tres meses nadie sabría que la
+ * categoría existe.
+ *
+ * Para contarlos, que es de lo que se trata:
+ *
+ * ```sql
+ * SELECT "skipReason", count(*) FROM "Email" WHERE "skipReason" IS NOT NULL GROUP BY 1;
+ * ```
+ *
+ * **Cinco es una curiosidad; cincuenta el mes que viene es una avería de la
+ * ingesta** — probablemente el parseo MIME no sacando el cuerpo de cierto tipo
+ * de correo.
+ */
+export const SKIP_REASON = {
+  /** Ni `bodyText` ni `snippet`: no hay nada que darle al modelo. */
+  sinTexto: 'SIN_TEXTO',
+} as const;
+
 @Processor('classify-email', {
   concurrency: CONCURRENCIA,
   limiter: LIMITE_POR_VENTANA,
@@ -64,7 +88,7 @@ export class AiProcessor extends WorkerHost {
 
     const email = await this.prisma.email.findUnique({
       where: { id: emailId },
-      select: { id: true, processedAt: true, bodyText: true, snippet: true },
+      select: { id: true, processedAt: true, bodyText: true, snippet: true, labels: true },
     });
 
     if (!email) {
@@ -79,7 +103,33 @@ export class AiProcessor extends WorkerHost {
     }
 
     if (!email.bodyText && !email.snippet) {
-      this.logger.warn(`El email ${emailId} no tiene texto para analizar.`);
+      // ⚠️ **Antes esto era un `return` pelado y ahí estaba el bucle.**
+      //
+      // El barrido de reconciliación busca `processedAt IS NULL`. Sin escribir
+      // nada, el correo seguía siendo candidato **para siempre**: cinco correos
+      // reencolados cada quince minutos, 96 vueltas al día despertando Cloud Run
+      // y tocando Cloud SQL para volver a salir por esta misma línea.
+      //
+      // La salida fácil habría sido excluirlos en la consulta del barrido. Se
+      // descarta: eso cambia un problema ruidoso por uno silencioso. Aquí se
+      // cierra **dejando rastro** — `processedAt` lo saca del conjunto de
+      // candidatos y `skipReason` deja claro que **no se clasificó de verdad**.
+      //
+      // Y se registran las etiquetas de Gmail porque son la pista de **por qué**
+      // llega un correo sin texto: si todos resultan ser invitaciones de
+      // Calendar o mensajes solo-adjunto, es normal; si son correos corrientes,
+      // el parseo MIME se está comiendo el cuerpo y **ese** es el fallo gordo.
+      // Se dejan fuera el asunto y el remitente: para saber de qué tipo son
+      // basta la etiqueta, y el log no es sitio para el correo de nadie.
+      await this.prisma.email.update({
+        where: { id: emailId },
+        data: { processedAt: new Date(), skipReason: SKIP_REASON.sinTexto },
+      });
+
+      this.logger.warn(
+        `El email ${emailId} no tiene texto para analizar: marcado como ` +
+          `${SKIP_REASON.sinTexto} (etiquetas: ${email.labels.join(', ') || 'ninguna'}).`,
+      );
       return;
     }
 

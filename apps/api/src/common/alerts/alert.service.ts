@@ -64,8 +64,17 @@ export class AlertService {
    * @param titulo    Qué se rompió, en una línea.
    * @param detalle   El motivo. Si es un error, se pasa por `describirError`.
    * @param claveDeFreno Agrupa avisos equivalentes. Por defecto, el título.
+   * @param ventanaDeFrenoS Segundos de silencio tras un aviso. Por defecto
+   *   {@link VENTANA_DE_FRENO_S}. **Quien avisa desde un cron tiene que pasarlo**:
+   *   una ventana igual o menor que la cadencia no frena nada, porque cada
+   *   ejecución cae justo en el borde de la anterior.
    */
-  async avisar(titulo: string, detalle?: unknown, claveDeFreno?: string): Promise<void> {
+  async avisar(
+    titulo: string,
+    detalle?: unknown,
+    claveDeFreno?: string,
+    ventanaDeFrenoS?: number,
+  ): Promise<void> {
     const motivo = detalle === undefined ? '' : describirError(detalle);
     // Google Chat usa **un solo asterisco** para negrita, no dos: `**esto**`
     // saldría con los asteriscos a la vista.
@@ -78,7 +87,7 @@ export class AlertService {
 
     if (!this.url) return;
 
-    if (!(await this.debeMandarse(claveDeFreno ?? titulo))) return;
+    if (!(await this.debeMandarse(claveDeFreno ?? titulo, ventanaDeFrenoS))) return;
 
     try {
       const respuesta = await fetch(this.url, {
@@ -120,7 +129,7 @@ export class AlertService {
    * **Ante la duda, manda.** Si Redis no responde no se puede saber si ya se
    * avisó, y un aviso de más es mucho menos grave que un silencio.
    */
-  private async debeMandarse(clave: string): Promise<boolean> {
+  private async debeMandarse(clave: string, ventanaS = VENTANA_DE_FRENO_S): Promise<boolean> {
     try {
       const redis = (await this.cola.client) as unknown as {
         set(
@@ -136,7 +145,7 @@ export class AlertService {
         `alerta:${clave}`,
         '1',
         'EX',
-        VENTANA_DE_FRENO_S,
+        ventanaS,
         'NX',
       );
 

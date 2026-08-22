@@ -118,6 +118,22 @@ const GRACIA_RECONCILIACION_MS = 30 * 60_000;
  */
 const MAX_RECONCILIADOS = 100;
 
+/**
+ * Silencio entre avisos del barrido.
+ *
+ * ⚠️ **Este numero esta atado a la cadencia del cron, y hasta el 2026-08-21
+ * estaba mal.** Usaba el freno por defecto de `AlertService`: 900 s, contra un
+ * cron que corre **cada 900 s**. Una ventana igual a la cadencia **no frena
+ * nada** — cada pasada cae justo en el borde de la anterior, asi que un
+ * problema persistente avisaria 96 veces al dia y el canal acabaria silenciado,
+ * que es como se pierde una alerta buena.
+ *
+ * Una hora son **cuatro veces la cadencia**: un problema que dura avisa una vez
+ * por hora, se nota igual, y no ensordece. Si algun dia se cambia
+ * `--schedule` del barrido en `deploy.yml`, **este numero se cambia con el**.
+ */
+const FRENO_AVISO_RECONCILIACION_S = 3_600;
+
 @Injectable()
 export class GmailService {
   private readonly logger = new Logger(GmailService.name);
@@ -634,15 +650,40 @@ export class GmailService {
     candidatos: number;
     reencolados: number;
     fallidos: number;
+    sinTexto: number;
   }> {
     const limite = new Date(Date.now() - GRACIA_RECONCILIACION_MS);
 
+    // ⚠️ **El orden `asc` con tope se acepta a sabiendas, y conviene saber por
+    // que.** Los mas viejos primero es lo justo -son los que llevan mas
+    // esperando- pero significa que **un correo que se atasque ocupa plaza fija
+    // por delante de los recientes**. Con el tope lleno de casos
+    // irrecuperables, un correo nuevo que necesite el barrido no entraria nunca.
+    //
+    // Se deja `asc` porque despues del arreglo del 2026-08-21 **ya no hay
+    // atasco permanente**: un correo sin texto se marca terminal y sale del
+    // conjunto. Lo unico que puede volver a ocupar plaza para siempre es uno
+    // que falle la clasificacion una y otra vez, y de eso ya avisan los oyentes
+    // de la DLQ por su cuenta.
+    //
+    // Lo que **no** se acepta es que vuelva a pasar sin que nadie lo vea: si el
+    // tope se llena, se grita. Un contador de intentos por correo seria la
+    // solucion completa, y hoy seria complejidad especulativa para un problema
+    // que no existe; el chivato es lo que avisara el dia que exista.
     const huerfanos = await this.prisma.email.findMany({
       where: { processedAt: null, receivedAt: { lt: limite } },
       select: { id: true },
       orderBy: { receivedAt: 'asc' },
       take: MAX_RECONCILIADOS,
     });
+
+    if (huerfanos.length === MAX_RECONCILIADOS) {
+      this.logger.warn(
+        `El barrido llego al tope de ${MAX_RECONCILIADOS} candidatos: puede haber ` +
+          'correos recientes que no entren en esta pasada. Si se repite, mira si hay ' +
+          'correos atascados ocupando plaza fija (los mas viejos van primero).',
+      );
+    }
 
     let reencolados = 0;
     let fallidos = 0;
@@ -684,10 +725,20 @@ export class GmailService {
           'habria recogido. Si esto se repite, mira los avisos de sincronizacion ' +
           'de Gmail: el camino normal esta perdiendo el `add` a la cola.',
         'reconciliacion-huerfanos',
+        FRENO_AVISO_RECONCILIACION_S,
       );
     }
 
-    return { candidatos: huerfanos.length, reencolados, fallidos };
+    // Cuantos correos se cerraron sin clasificar, acumulado. Es el numero que
+    // convierte «cinco, que curioso» en «cincuenta, esto es una averia de la
+    // ingesta»: se registra cada pasada para que la tendencia se vea sola, sin
+    // que nadie tenga que acordarse de consultarla.
+    const sinTexto = await this.prisma.email.count({ where: { skipReason: { not: null } } });
+    if (sinTexto > 0) {
+      this.logger.log(`Correos cerrados sin clasificar (acumulado): ${sinTexto}`);
+    }
+
+    return { candidatos: huerfanos.length, reencolados, fallidos, sinTexto };
   }
 
   // ─── Suscripción push ──────────────────────────────────────────────────

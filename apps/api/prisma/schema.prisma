@@ -45,15 +45,15 @@ enum EmailStatus {
 }
 
 model User {
-  id             String       @id @default(cuid())
-  email          String       @unique
+  id             String            @id @default(cuid())
+  email          String            @unique
   name           String?
   googleTokens   String? // cifrado en reposo (AES-256-GCM)
   /// Último `historyId` de Gmail sincronizado: punto de partida de la sync incremental.
   gmailHistoryId String?
   whatsappNumber String?
-  role           String       @default("owner")
-  createdAt      DateTime     @default(now())
+  role           String            @default("owner")
+  createdAt      DateTime          @default(now())
   emails         Email[]
   tasks          Task[]
   timeEntries    TimeEntry[]
@@ -128,10 +128,10 @@ model CopilotAuditLog {
 }
 
 model Email {
-  id             String    @id @default(cuid())
+  id             String      @id @default(cuid())
   userId         String
-  user           User      @relation(fields: [userId], references: [id])
-  gmailMessageId String    @unique
+  user           User        @relation(fields: [userId], references: [id])
+  gmailMessageId String      @unique
   threadId       String
   from           String
   subject        String?
@@ -139,11 +139,15 @@ model Email {
   bodyText       String?
   labels         String[]
   category       String?
-  isActionable   Boolean   @default(false)
+  isActionable   Boolean     @default(false)
   /// Triage de la persona. Nace `PENDING` y solo lo mueve ella.
   status         EmailStatus @default(PENDING)
   receivedAt     DateTime
   processedAt    DateTime?
+  /// Por qué la IA no llegó a clasificarlo, cuando `processedAt` está puesto
+  /// pero no hubo clasificación de verdad. `null` = clasificado con normalidad.
+  /// Valores en `SKIP_REASON` (`ai.processor.ts`).
+  skipReason     String?
   tasks          Task[]
 
   @@index([threadId])
@@ -152,22 +156,22 @@ model Email {
 }
 
 model Task {
-  id            String       @id @default(cuid())
-  userId        String
-  user          User         @relation(fields: [userId], references: [id])
-  title         String
-  description   String?
-  status        TaskStatus   @default(TODO)
-  priority      TaskPriority @default(MEDIUM)
-  dueDate       DateTime?
-  startedAt     DateTime?
-  completedAt   DateTime?
-  sourceEmail   Email?       @relation(fields: [sourceEmailId], references: [id])
-  sourceEmailId String?
+  id                   String        @id @default(cuid())
+  userId               String
+  user                 User          @relation(fields: [userId], references: [id])
+  title                String
+  description          String?
+  status               TaskStatus    @default(TODO)
+  priority             TaskPriority  @default(MEDIUM)
+  dueDate              DateTime?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  sourceEmail          Email?        @relation(fields: [sourceEmailId], references: [id])
+  sourceEmailId        String?
   /// El default es `MANUAL` a propósito: si algún sitio olvida fijarlo, la
   /// tarea queda protegida del borrado por reproceso en vez de expuesta.
-  source        TaskSource   @default(MANUAL)
-  aiConfidence  Float?
+  source               TaskSource    @default(MANUAL)
+  aiConfidence         Float?
   /// Por qué la prioridad es la que es, cuando la subió el sistema y no la
   /// persona. `null` mientras nadie la haya tocado.
   ///
@@ -183,13 +187,13 @@ model Task {
   /// Etiquetas libres que extrae el modelo del texto del correo ("TC", "KYC").
   /// Son texto suelto a propósito: nacen de cada análisis, no tienen dueño ni
   /// color. No confundir con `labels`, que son las de la persona.
-  tags          String[]
+  tags                 String[]
   /// Etiquetas curadas por la persona, con color y reutilizables entre tareas.
-  labels        Tag[]
-  position      Int          @default(0)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  timeEntries   TimeEntry[]
+  labels               Tag[]
+  position             Int           @default(0)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  timeEntries          TimeEntry[]
 
   @@index([userId, status])
 }

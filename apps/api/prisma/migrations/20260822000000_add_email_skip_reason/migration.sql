@@ -1,0 +1,27 @@
+-- Por qué la IA no clasificó un correo, cuando no lo clasificó.
+--
+-- El barrido de reconciliación busca `processedAt IS NULL`. Un correo sin texto
+-- salía del procesador con un `return` **sin escribir `processedAt`**, así que
+-- volvía a ser candidato en la pasada siguiente: cinco correos, seis pasadas
+-- seguidas, 96 vueltas al día para no hacer nada.
+--
+-- La forma fácil de cerrarlo habría sido excluirlos de la consulta del barrido.
+-- Se descarta a propósito: eso cambia un problema ruidoso por uno silencioso, y
+-- dentro de tres meses nadie sabría que la categoría existe.
+--
+-- Así que se marcan como terminados **y se dice por qué**:
+--   · `processedAt` puesto  → deja de ser candidato. Terminal.
+--   · `skipReason` no nulo  → NO se clasificó de verdad. Distinguible.
+--   · se puede contar       → cinco es una curiosidad, cincuenta es una avería
+--                             de la ingesta, probablemente del parseo MIME.
+--
+-- Para contarlos:
+--   SELECT "skipReason", count(*) FROM "Email"
+--   WHERE "skipReason" IS NOT NULL GROUP BY 1;
+--
+-- Sin índice a propósito: con un usuario la tabla es pequeña y un índice para
+-- una consulta de diagnóstico ocasional cuesta más de lo que ahorra. Si algún
+-- día esto se consulta en caliente, es lo primero que hay que añadir.
+
+-- AlterTable
+ALTER TABLE "Email" ADD COLUMN     "skipReason" TEXT;

@@ -78,7 +78,8 @@ export class CronController {
     const resultado = await this.gmail.reconciliarSinClasificar();
     this.logger.log(
       `Reconciliación: ${resultado.reencolados} reencolado(s) de ` +
-        `${resultado.candidatos} candidato(s), ${resultado.fallidos} fallido(s)`,
+        `${resultado.candidatos} candidato(s), ${resultado.fallidos} fallido(s), ` +
+        `${resultado.sinTexto} cerrado(s) sin clasificar en total`,
     );
     return { ok: true, ...resultado };
   }

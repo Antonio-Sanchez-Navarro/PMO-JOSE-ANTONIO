@@ -346,14 +346,19 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
  * el trabajo anterior.
  */
 describe('GmailService · barrido de reconciliación', () => {
-  function crear(opciones: { huerfanos?: string[]; add?: jest.Mock; remove?: jest.Mock } = {}) {
+  function crear(
+    opciones: { huerfanos?: string[]; add?: jest.Mock; remove?: jest.Mock; sinTexto?: number } = {},
+  ) {
     const findMany = jest
       .fn()
       .mockResolvedValue((opciones.huerfanos ?? ['e1', 'e2']).map((id) => ({ id })));
     const add = opciones.add ?? jest.fn().mockResolvedValue({});
     const remove = opciones.remove ?? jest.fn().mockResolvedValue(undefined);
 
-    const prisma = { email: { findMany } };
+    // `count` cuenta los cerrados sin clasificar: es lo que convierte «cinco,
+    // qué curioso» en «cincuenta, esto es una avería de la ingesta».
+    const count = jest.fn().mockResolvedValue(opciones.sinTexto ?? 0);
+    const prisma = { email: { findMany, count } };
     const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
 
     const service = new GmailService(
@@ -364,7 +369,7 @@ describe('GmailService · barrido de reconciliación', () => {
       alertas as never,
     );
 
-    return { service, findMany, add, remove, alertas };
+    return { service, findMany, add, remove, alertas, count };
   }
 
   it('solo mira correos sin `processedAt` y con antigüedad: no toca los recién llegados', async () => {
@@ -424,7 +429,7 @@ describe('GmailService · barrido de reconciliación', () => {
 
     const res = await service.reconciliarSinClasificar();
 
-    expect(res).toEqual({ candidatos: 2, reencolados: 1, fallidos: 1 });
+    expect(res).toEqual({ candidatos: 2, reencolados: 1, fallidos: 1, sinTexto: 0 });
   });
 
   it('avisa cuando encuentra huérfanos, y calla cuando no hay nada', async () => {
