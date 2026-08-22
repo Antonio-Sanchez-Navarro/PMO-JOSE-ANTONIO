@@ -5820,3 +5820,203 @@ todas — el otro proveedor no contesta.
 **Los cuatro son un comentario que dice la verdad sobre su archivo y mentira
 sobre el sistema.** No hay `grep` que encuentre eso, y leer despacio tampoco
 basta: hay que ir al otro extremo y mirar.
+
+---
+
+## 45. Cierre de la auditoría (2026-08-22)
+
+Tercera y última pasada: lo que quedaba de la declaración de §44. Cinco
+hallazgos, y **siete hipótesis mías que se murieron al comprobarlas** — que van
+al final, porque son la mitad del informe.
+
+---
+
+### 45.1 🔴 Inyección de cabeceras por el asunto del correo
+
+`mime.ts`, `buildRawMessage`:
+
+```ts
+const cabeceras = [
+  `To: ${dto.to.join(', ')}`,
+  ...(dto.cc?.length ? [`Cc: ${dto.cc.join(', ')}`] : []),
+  `Subject: ${encodeHeader(dto.subject)}`,
+  ...
+];
+const mensaje = `${cabeceras.join('\r\n')}\r\n\r\n${...}`;
+```
+
+Y `encodeHeader` **devuelve el texto intacto si es ASCII puro**:
+
+```ts
+if (/^[\x00-\x7F]*$/.test(texto)) return texto;
+```
+
+`\r` y `\n` **son ASCII**. Un asunto como `Hola\r\nBcc: alguien@ejemplo.com`
+pasa el filtro sin tocarse y entra en el bloque de cabeceras como una cabecera
+más.
+
+**Qué está protegido y qué no**, comprobado campo por campo:
+
+| Campo | Protección | Estado |
+|---|---|---|
+| `to`, `cc` | `@IsEmail({}, { each: true })` en el DTO — rechaza cualquier cosa con espacios o control | ✅ |
+| `subject` | `@IsString()`, `@IsNotEmpty()`, `@MaxLength(500)` — **ninguna mira los saltos de línea** | ❌ |
+| `body` | Va en base64 después de la línea en blanco: no puede escapar | ✅ |
+
+**La cadena completa, y digo también lo que la frena:** llega un correo hostil →
+el copiloto lo lee (`search_emails` devuelve una vista previa del cuerpo) → una
+inyección de prompt le hace proponer un borrador cuyo asunto lleva el `\r\n` →
+la tarjeta lo pinta en un campo de una línea, **donde un salto no se ve** → una
+persona pulsa enviar → Gmail manda el correo con la cabecera añadida.
+
+**No es un exploit remoto sin autenticar**: hace falta que alguien apruebe el
+borrador. Pero es exactamente el modelo de amenaza que este proyecto ya tiene
+escrito —*«el copiloto lee correos, y un correo es texto de un desconocido»*— y
+la defensa elegida contra él es la confirmación humana. Un `\r\n` invisible en
+un campo de asunto es justo lo que esa defensa no puede ver.
+
+**Y el detalle que lo hace bonito y peor a la vez:** un asunto **con acento** se
+envuelve en base64 por RFC 2047 y queda **inofensivo**; uno en ASCII puro, no.
+La codificación que existe por corrección ortográfica protege unos asuntos y
+otros no, sin que nadie lo eligiera.
+
+### 45.2 🔴 Los tramos de tiempo manuales se guardan desplazados, y cada edición los desplaza más
+
+`TimeEntriesModal.tsx`. El ida y vuelta entre `<input type="datetime-local">` y
+la ISO está invertido en los dos sentidos:
+
+```ts
+setStartedAt(oneHourAgo.toISOString().slice(0, 16));   // ← UTC dentro de un campo LOCAL
+...
+const startedAtIso = new Date(startedAt).toISOString();  // ← lo local reinterpretado
+```
+
+`toISOString()` da **UTC**; el campo `datetime-local` lee lo que le pongan como
+**local**. Y al enviar, `new Date('2026-08-22T00:00')` se interpreta como local
+y se convierte a UTC otra vez.
+
+Con las 22:00 reales de Cancún (UTC−5):
+
+| Paso | Valor |
+|---|---|
+| «hace una hora» real | 21:00 local |
+| Lo que pinta el formulario | **02:00** (la hora UTC, con etiqueta local) |
+| Lo que se guarda al enviar | 02:00 local → **07:00 UTC** |
+| Desfase | **+5 h** |
+
+Y **`handleEditClick` hace lo mismo**: abre un tramo ya guardado con
+`toISOString().slice(0,16)`, así que lo muestra +5 h, y al guardar le suma otras
+cinco. **Abrir y guardar tres veces deja el tramo quince horas movido.**
+
+La duración sí sale bien —los dos extremos se desplazan igual— así que lo que se
+corrompe es **a qué día pertenece**, que es justo lo que alimenta
+`fichajesPorDia` y la gráfica del panel. Se suma a §44.2, y son dos defectos de
+zona horaria independientes en el mismo módulo.
+
+⚠️ **Hoy no ha hecho daño:** `TimeEntry` tiene **cero filas** en producción
+(anotado desde §33.3). El registro de tiempos no se usa.
+
+### 45.3 🟠 El formulario de tarea no ofrece «Urgente»
+
+`TaskModal.tsx` declara `z.enum(['LOW', 'MEDIUM', 'HIGH'])` y su desplegable
+tiene tres opciones. **`URGENT` existe en todo lo demás**: en el enum de Prisma,
+en `packages/shared`, en el esquema de extracción del modelo, en el filtro del
+tablero y en `adjustPriority` —que **escala precisamente a `URGENT`** cuando algo
+vence en menos de 24 h—.
+
+O sea: el sistema sube tareas a urgente solo, y **una persona no puede crear una
+urgente a mano**.
+
+### 45.4 🔵 El copiloto no envía correos en producción
+
+No es un fallo — lo escribo porque es un hecho de producto que conviene tener
+por escrito y hoy solo vive en el arranque de un contenedor.
+
+`MockSender` es **el transporte por defecto** desde el 2026-08-12, y solo se pasa
+a Gmail con `COPILOT_EMAIL_TRANSPORT=real`. Comprobado hoy:
+
+- **no está** en las variables del repositorio (`gh variable list`),
+- **no llega** a la revisión viva (`pmo-api-00087-s5v`).
+
+Así que el botón «enviar» del copiloto **registra y no envía**. Y está bien
+resuelto por los tres lados: el pipeline emite un `::notice::` al desplegar sin
+la variable, el módulo lo registra al arrancar, y la tarjeta del frontend
+distingue `transport: 'mock'` y se lo dice al usuario. **Este es el contraejemplo
+de §44.1**: la misma forma —una capacidad apagada— con el cable puesto en los
+tres extremos.
+
+### 45.5 🔵 El contrato SSE sigue diciendo que hay una sola herramienta
+
+`copilot.controller.ts:39`: *«El modelo pidió una herramienta (hoy solo
+`draft_email`)»*. Hay **tres** que se proponen. Es, literalmente, el comentario
+que habría delatado §44.1 si alguien lo hubiera actualizado al añadir las otras
+dos.
+
+---
+
+### 45.6 Lo que comprobé y estaba bien: siete hipótesis mías, muertas
+
+Esto no es cortesía. En §37 tuve **tres falsos positivos porque no seguí la
+llamada**; el contrapeso honesto es decir cuántas veces la sospecha no
+sobrevivió al mirar. En esta pasada, siete:
+
+| Sospeché | Lo que hay |
+|---|---|
+| Que el cliente no atiende el evento `error` del stream y una respuesta truncada parecería terminada | **Sí lo atiende** (`CopilotDrawer.tsx:173`) |
+| Que la interfaz da por enviado lo que el `MockSender` no manda | **Lo distingue** y lo pinta (§45.4) |
+| Que el `code` de OAuth acaba en Cloud Logging | `sanitizeUrl` tapa `code`, `state`, `token` y siete más — **y el comentario dice que ya pasó una vez y por eso existe** |
+| Que los logs llevan la cookie de sesión, que es un JWT vigente | `redact` tapa `cookie`, `authorization` y `set-cookie` |
+| Que el guard de OIDC pasa si falta la cuenta esperada | **Falla cerrado**, y explica por qué: una firma de Google no acredita que la llamada sea nuestra |
+| Que `?tz=` llega a SQL sin parametrizar | Es parámetro de Prisma; `Prisma.raw` solo toca nombres de columna nuestros |
+| Que reabrir una tarea deja el cierre contado para siempre | `completionStamp` lo limpia al salir de `DONE`, y está razonado |
+
+**Siete de doce sospechas no sobrevivieron.** Es la proporción que hace creíbles
+las cinco que sí.
+
+### 45.7 Cobertura final, y lo que sigue sin leer
+
+**Cubierto en las tres pasadas (§43, §44, §45):** todo `gmail`, `emails`,
+`tasks`, `time` (servicio), `ai`, `copilot` (servicio, controlador, catálogo, las
+dos estrategias, hilos, MIME, emisor), `metrics`, `overdue`, `auth` (sesión,
+servicio, constantes), `common/` (prisma, crypto, alerts, observability salvo lo
+de abajo, security, time-zone, anthropic-client, bullmq), el esquema, los
+workflows, los Dockerfiles, los scripts de respaldo, y del frontend `lib/api`,
+`useSocket`, `useSession`, `useInbox`, `InboxPage`, `KanbanBoard`, `TaskCard`,
+`CopilotDrawer`, `TaskModal`, `TimeEntriesModal`, `AiValidationModal`,
+`tasks.api`, `types` y `packages/shared`.
+
+**Sigue sin leer, y por tanto este informe no dice nada de ello:**
+`TimeReportModal`, `TagManagerModal`, `EmailDetailModal`, `CopilotHeader`,
+`ChatMessage`, `CreateTaskCard`, `KanbanColumn`, `AiAuditBadge`,
+`CopilotContext`, `format.ts`, `App.tsx`, `LoginPage`, `DashboardPage`; y del
+backend `auth.guard`, `pubsub-auth.guard`, `redis.health`, `con-plazo`,
+`dead-letter.listener`, `copilot-audit.service`, `copilot-context.service`,
+`tags.service`, `overdue.cron-purge`, `title.prefix`, `gcp-logging` (salvo
+`sanitizeUrl`) y los controladores de `tasks`, `tags`, `time` y `emails`.
+
+Es superficie de bajo riesgo —presentación, guards ya ejercitados por las rutas
+que sí leí, y utilidades con prueba— pero **bajo riesgo no es leído**, y la
+diferencia entre las dos cosas es lo único que hace que este informe se pueda
+usar sin miedo.
+
+### 45.8 El saldo de las tres pasadas
+
+**Veintisiete hallazgos.** Y una cosa que ya no puedo llamar casualidad: **los
+seis graves de las tres pasadas están todos en una junta, y ninguno dentro de un
+archivo.**
+
+El socket que se cierra bien y el cliente que no lo escucha. El contador que
+decide si el marcador avanza y la capa de arriba que ya había perdido los
+correos. La guarda de fecha que existe para el modelo y no para el remitente. La
+herramienta completa en el backend y sin tarjeta en la interfaz. El comentario
+que dice Ciudad de México y la infraestructura que corre en Cancún. Y la
+codificación de cabeceras que protege los asuntos con acento y deja pasar los
+otros.
+
+Los seis los encontró la misma pregunta: **este archivo afirma algo sobre alguien
+que está en otro sitio, ¿es verdad allí?** Ninguno lo habría dado un `grep`, y
+—esto es lo que me llevo— **ninguno lo habría dado tampoco leer despacio**. Leer
+línea a línea da los veintiuno menores. Los seis grandes salen de levantarse del
+archivo e ir al otro extremo del cable.
+
+Un archivo no se audita. Se audita el cable que sale de él.
