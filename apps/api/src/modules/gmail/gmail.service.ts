@@ -810,10 +810,28 @@ export class GmailService {
     // ciegas, y **de ese número sale una decisión que no es de este código**:
     // si lo ya clasificado hay que reprocesar. Cuesta llamadas a Anthropic y la
     // toma el Jefe.
-    const soloSnippet = await this.prisma.email.count({
-      where: { bodyText: null, snippet: { not: '' } },
-    });
-    this.logger.log(`SONDA alcance · correos clasificados solo con snippet: ${soloSnippet}`);
+    // ⚠️ **Con testigos, porque un 0 puede ser una buena noticia o una consulta
+    // rota, y desde fuera se ven igual.**
+    //
+    // `total` y `conSnippet` son el control: si `conSnippet` sale 0 tambien, el
+    // que no funciona es el operador `not: ''` sobre una columna que admite
+    // nulos, no la ingesta. Y `sinCuerpo` tiene que cuadrar con la suma
+    // -`soloSnippet` + los cerrados sin texto- o falta algo por entender.
+    //
+    // Es el mismo error que llevamos una semana persiguiendo, aplicado a una
+    // medicion: **un numero que no se puede distinguir de su propio fallo no
+    // mide nada**.
+    const [soloSnippet, sinCuerpo, conSnippet, total] = await Promise.all([
+      this.prisma.email.count({ where: { bodyText: null, snippet: { not: '' } } }),
+      this.prisma.email.count({ where: { bodyText: null } }),
+      this.prisma.email.count({ where: { snippet: { not: '' } } }),
+      this.prisma.email.count(),
+    ]);
+
+    this.logger.log(
+      `SONDA alcance · solo-snippet=${soloSnippet} · sin-cuerpo=${sinCuerpo} · ` +
+        `con-snippet=${conSnippet} · total=${total}`,
+    );
 
     return { candidatos: huerfanos.length, reencolados, fallidos, sinTexto };
   }
