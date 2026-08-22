@@ -99,10 +99,21 @@ nueva.
 
 #### Dónde viven los nombres
 
-`CODIGO_SESION` en `apps/api/src/modules/auth/session.service.ts` y
-`SESSION_EVENTS` en `apps/api/src/modules/tasks/tasks.gateway.ts`. **Si se
-cambian ahí, se cambian aquí**, y al revés: es un contrato entre dos dominios y
-quien lo consume no lee el código del otro.
+**En `@pmo/shared` desde el 2026-08-22** (`packages/shared/src/index.ts`):
+`CODIGO_SESION`, `CodigoSesion`, `SESSION_EVENTS` y `SesionRechazadaEvento`.
+
+Se importan igual desde los dos lados:
+
+```ts
+import { CODIGO_SESION, SESSION_EVENTS } from '@pmo/shared';
+```
+
+⚠️ **Vivieron en `apps/api` un día y estuvo mal.** Es un contrato entre dominios:
+mientras solo existieran en el backend, la única forma de que el frontend
+programara contra ellos era **copiar las cadenas a mano**, y una constante
+copiada es una constante que se desincroniza el día que alguien la cambia de un
+solo lado. `apps/api` los reexporta para no romper lo que ya los importaba, pero
+**el sitio donde se cambian es el paquete**.
 
 Los tres casos están **provocados**, no razonados, en
 `tasks.gateway.handshake.spec.ts`: servidor y cliente de socket.io reales, y un

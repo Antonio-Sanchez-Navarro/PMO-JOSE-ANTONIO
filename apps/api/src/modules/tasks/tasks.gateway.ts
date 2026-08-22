@@ -8,7 +8,8 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Task, TaskStatus } from '@prisma/client';
-import { CODIGO_SESION, SesionRechazadaError, SessionService } from '../auth/session.service';
+import { SesionRechazadaError, SessionService } from '../auth/session.service';
+import { CODIGO_SESION, SESSION_EVENTS } from '@pmo/shared';
 import cookie from 'cookie';
 import { SESSION_COOKIE } from '../auth/auth.constants';
 import { describirError, stackDe } from '../../common/observability/describir-error';
@@ -63,16 +64,10 @@ export const SOCKET_ID_HEADER = 'x-socket-id';
 const MAX_SOCKET_ID_LENGTH = 64;
 
 /**
- * Evento que avisa de que la sesión del socket ya no vale, **antes** de cerrarlo.
- *
- * Hace falta porque `connect_error` solo existe durante el handshake: una vez
- * conectado, un cierre del servidor le llega al cliente como un `disconnect`
- * pelado, indistinguible de que se haya caído el wifi. Este evento es lo que
- * convierte ese cierre en algo que el cliente puede entender y actuar.
+ * El contrato del socket vive en `@pmo/shared`: lo consumen los dos lados. Se
+ * reexporta para no romper lo que ya lo importaba desde aquí.
  */
-export const SESSION_EVENTS = {
-  rechazada: 'session.rechazada',
-} as const;
+export { SESSION_EVENTS, type SesionRechazadaEvento } from '@pmo/shared';
 
 /**
  * Cada cuánto se revisa que la sesión del socket siga viva cuando el token no

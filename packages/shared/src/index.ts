@@ -214,3 +214,52 @@ export const KANBAN_COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: TaskStatus.DONE, label: "Cumplidas" },
   { status: TaskStatus.OVERDUE, label: "Atrasadas" },
 ];
+
+// ─── Contrato del socket ─────────────────────────────────────────────────────
+//
+// **Viven aquí y no en el backend porque los consumen los dos lados.** El
+// servidor los emite y el cliente decide qué hacer con ellos; mientras estuvieron
+// solo en `apps/api`, la única forma de que el frontend programara contra ellos
+// era copiar las cadenas a mano — y una constante copiada es una constante que se
+// desincroniza el día que alguien la cambia de un solo lado.
+
+/**
+ * Por qué el servidor rechaza o cierra una sesión de socket.
+ *
+ * **Se programa contra el `codigo`, nunca contra el mensaje**: el mensaje es
+ * texto para un humano y puede cambiar sin avisar.
+ *
+ * | Código | Qué debe hacer el cliente |
+ * |---|---|
+ * | `SESION_CADUCADA` | Refrescar **una vez** y reconectar. Sin molestar al usuario |
+ * | `SESION_INVALIDA` | **Dejar de reintentar** y mandar al login |
+ * | `ERROR_INTERNO` | Reconexión normal, con tope. **No** mandar al login |
+ *
+ * La diferencia entre las dos primeras decide si el usuario ve un login o no ve
+ * nada. Y `ERROR_INTERNO` existe para que un tropiezo del servidor no eche a
+ * nadie: un rechazo que no sabe por qué rechaza no debería poder cerrar sesión.
+ */
+export const CODIGO_SESION = {
+  caducada: "SESION_CADUCADA",
+  invalida: "SESION_INVALIDA",
+  errorInterno: "ERROR_INTERNO",
+} as const;
+
+export type CodigoSesion = (typeof CODIGO_SESION)[keyof typeof CODIGO_SESION];
+
+/**
+ * Eventos de sesión que el servidor emite por el socket ya establecido.
+ *
+ * Hace falta un evento propio porque **`connect_error` solo existe durante el
+ * handshake**: una vez conectado, un cierre del servidor le llega al cliente como
+ * un `disconnect` pelado, indistinguible de que se haya caído el wifi.
+ */
+export const SESSION_EVENTS = {
+  /** La sesión del socket dejó de valer. Cuerpo: `{ codigo: CodigoSesion }`. */
+  rechazada: "session.rechazada",
+} as const;
+
+/** Cuerpo de {@link SESSION_EVENTS.rechazada}. */
+export interface SesionRechazadaEvento {
+  codigo: CodigoSesion;
+}

@@ -1,5 +1,6 @@
 import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { CODIGO_SESION, type CodigoSesion } from "@pmo/shared";
 import { JwtService } from "@nestjs/jwt";
 import type { CookieOptions, Response } from "express";
 import {
@@ -22,28 +23,19 @@ export interface SessionPayload {
 }
 
 /**
- * Los dos motivos por los que se rechaza una sesión, y **son distintos para
- * quien los recibe**.
+ * Los motivos por los que se rechaza una sesión **viven en `@pmo/shared`**, no
+ * aquí: los consumen los dos lados, y una constante copiada a mano es una
+ * constante que se desincroniza el día que alguien la cambia de un solo lado.
  *
- * - `SESION_CADUCADA` → la sesión era buena y se le pasó el plazo. Se arregla
- *   sola refrescando: el usuario no tiene que enterarse.
- * - `SESION_INVALIDA` → no hay sesión, o la que hay no sirve. Refrescar no
- *   arregla nada; toca volver a entrar.
+ * Se reexportan para que nada de lo que ya importaba desde este archivo se
+ * rompa, y para que el contrato tenga **un solo sitio donde cambiarse**.
  *
- * Hasta el 2026-08-21 esta diferencia **se perdía aquí dentro**: `verify`
+ * Hasta el 2026-08-21 esta distinción **se perdía aquí dentro**: `verify`
  * envolvía cualquier fallo del JWT en un `catch` desnudo y el mensaje era el
  * mismo para los dos. Da igual lo que haga el cliente si el servidor ya se
  * comió el motivo.
- *
- * Los nombres son parte del contrato con el frontend y están en
- * `API_CONTRACTS.md`: **si se cambian aquí, se cambian allí**.
  */
-export const CODIGO_SESION = {
-  caducada: 'SESION_CADUCADA',
-  invalida: 'SESION_INVALIDA',
-} as const;
-
-export type CodigoSesion = (typeof CODIGO_SESION)[keyof typeof CODIGO_SESION];
+export { CODIGO_SESION, type CodigoSesion } from '@pmo/shared';
 
 /**
  * Rechazo de sesión que **sí dice por qué**.
