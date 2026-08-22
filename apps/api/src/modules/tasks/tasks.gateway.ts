@@ -84,6 +84,43 @@ export const SESSION_EVENTS = {
 const REVALIDACION_POR_DEFECTO_MS = 5 * 60_000;
 
 /**
+ * ⚠️ **APAGADO desde el 2026-08-22, y no es una limpieza: es una retirada.**
+ *
+ * La revalidación periódica hacía lo que tenía que hacer —cerrar el socket
+ * cuando su token caducaba— pero **la otra mitad no existe todavía**: el cliente
+ * no escucha `SESSION_EVENTS.rechazada`, no tiene manejador de `connect_error`, y
+ * socket.io reintenta indefinidamente por defecto.
+ *
+ * El resultado medido: **una reconexión cada ~5 s por pestaña abierta**, del orden
+ * de 17.000 al día, **cada una despertando Cloud Run**. Antes el socket se rompía
+ * con un corte de red; con esto encendido se rompía **siempre, cada cuarto de
+ * hora**. La mitad servidor sola no es media solución: **convierte un fallo
+ * ocasional en uno garantizado**.
+ *
+ * ── Qué tiene que existir para volver a encenderlo ──────────────────────────
+ *
+ * En `apps/web`, el cliente del socket:
+ *   1. escuchando `SESSION_EVENTS.rechazada` y refrescando la sesión al recibirlo;
+ *   2. con manejador de `connect_error` que distinga `SESION_CADUCADA` (refresca y
+ *      reconecta) de `SESION_INVALIDA` (para y al login);
+ *   3. con tope de reintentos, para que un rechazo permanente no reintente eterno.
+ *
+ * Con esas tres, se pone esto a `true` y ya está. **Se vuelve a encender cambiando
+ * una constante, no rehaciendo el trabajo** — por eso el código se queda.
+ *
+ * ── Qué reabre tenerlo apagado, dicho sin suavizar ──────────────────────────
+ *
+ * **Un socket abierto sobrevive a su token**, y **si el usuario cierra sesión el
+ * socket sigue oyendo** hasta que se caiga por otro motivo. Ese es exactamente el
+ * agujero que la revalidación tapaba.
+ *
+ * Se acepta **temporalmente y con un solo usuario**. **Con dos, no**: con dos
+ * cuentas, un socket que sobrevive a su sesión es una fuga de datos entre
+ * personas, no una molestia. Decisión de Doc, con esas palabras.
+ */
+const REVALIDACION_ACTIVA = false;
+
+/**
  * Margen que se añade al `exp` antes de revisar.
  *
  * El reloj del servidor y el del emisor del token no tienen por qué coincidir al
@@ -217,6 +254,11 @@ export class TasksGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
    * la cookie nueva, que para entonces el navegador ya habrá refrescado.
    */
   private programarCaducidad(client: Socket) {
+    // Ver `REVALIDACION_ACTIVA`: apagada mientras el cliente no sepa escuchar el
+    // cierre. Cerrar sockets sanos contra un cliente sordo es peor que no
+    // cerrarlos.
+    if (!REVALIDACION_ACTIVA) return;
+
     const expiraEn = client.data.expiraEn as number | undefined;
 
     const msHastaCaducar = expiraEn

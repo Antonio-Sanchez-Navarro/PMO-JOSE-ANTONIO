@@ -128,7 +128,35 @@ describe('TasksGateway · el contrato del handshake, de punta a punta', () => {
     expect(resultado.codigo).toBe('SESION_INVALIDA');
   });
 
-  it('el socket no sobrevive a su propio token: avisa y cierra al caducar', async () => {
+  it('con la revalidación apagada, un token caducado NO cierra el socket', async () => {
+    // Es el comportamiento vigente desde el 2026-08-22 y **está elegido, no
+    // heredado**: cerrar el socket contra un cliente que no escucha el cierre
+    // producía una reconexión cada ~5 s por pestaña, unas 17.000 al día, cada
+    // una despertando Cloud Run. La mitad servidor sola convertía un fallo
+    // ocasional en uno garantizado.
+    //
+    // Esta prueba existe para que apagarlo sea una decisión visible: si alguien
+    // enciende `REVALIDACION_ACTIVA` sin la mitad del cliente, esto salta.
+    const token = await firmar({ expiresIn: 1 });
+    const cliente = conectar(`${SESSION_COOKIE}=${token}`);
+
+    await desenlace(cliente);
+
+    const cerroSolo = await new Promise<boolean>((resolve) => {
+      cliente.on(SESSION_EVENTS.rechazada, () => resolve(true));
+      setTimeout(() => resolve(false), 3_000);
+    });
+
+    expect(cerroSolo).toBe(false);
+    expect(cliente.connected).toBe(true);
+  }, 10_000);
+
+  // ⏸️ Dormida a propósito, no rota. Es la guarda de la revalidación periódica:
+  // el día que `apps/web` escuche `SESSION_EVENTS.rechazada`, se pone
+  // `REVALIDACION_ACTIVA = true`, se cambia este `it.skip` por `it` y se borra
+  // la prueba de arriba. Se queda escrita para que reencender sea cambiar dos
+  // líneas y no reconstruir la prueba que demostraba que funcionaba.
+  it.skip('el socket no sobrevive a su propio token: avisa y cierra al caducar', async () => {
     // Antes se validaba una sola vez en el handshake y el socket vivía
     // indefinidamente: uno abierto toda la noche seguía recibiendo eventos con
     // una sesión caducada hacía horas.
