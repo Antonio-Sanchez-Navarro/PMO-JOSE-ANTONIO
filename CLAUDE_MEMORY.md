@@ -9,6 +9,82 @@
 
 ---
 
+## Los seis correos sin texto: eran correos sin texto (2026-08-24)
+
+**Cerrado midiendo, no razonando**, y la respuesta no era la que ninguno de los
+dos esperaba.
+
+### La forma, pedida a Gmail
+
+```
+1a02ae24…  snippet=NO  sizeEstimate=273867
+  partes=[multipart/alternative:vacia | multipart/related:vacia
+        | text/html:data:1661 | image/jpeg:attachmentId:192179]
+
+1a02693b…  snippet=NO  sizeEstimate=493300
+  partes=[multipart/mixed:vacia | application/pdf:attachmentId:355259]
+```
+
+**Cinco de seis sí traían una parte `text/html` con `data`.** El parseo la
+encontró y la leyó: el `attachmentId` de esos mensajes es **la imagen**, no el
+texto. El sexto no tiene ninguna parte de texto, solo un PDF.
+
+Ese HTML **solo envuelve una imagen incrustada**, y `htmlToText` lo deja en cadena
+vacía — correctamente. Comprobado en seco antes de afirmarlo:
+
+```
+solo imagen  -> ""             (897–1661 bytes de HTML, cero texto)
+con texto    -> "Hola
+que tal"
+```
+
+### Lo que enseña, y es lo que importa
+
+**La correlación que parecía rara tenía UNA sola causa.** Yo escribí que eran
+«dos cosas y la segunda sin explicar»: cuerpo vacío por un lado y `snippet` vacío
+por otro. Era una. Gmail devuelve el snippet vacío **por el mismo motivo** por el
+que nosotros no sacamos cuerpo: no hay texto que previsualizar.
+
+Y dos hipótesis cómodas se cayeron por el camino, las dos mías:
+
+| Lo que supuse | Lo que era |
+|---|---|
+| El hueco del `attachmentId` se está comiendo cuerpos | Aquí no perdió ni uno: el `attachmentId` era la imagen |
+| Son dos fallos distintos | Es uno, y no es un fallo |
+
+**Y lo que hizo posible contestarlo fue registrar la forma** —`mimeType`,
+`data`/`attachmentId`, tamaño— en vez del contenido. Un diagnóstico que no toca
+el correo de nadie y aun así responde.
+
+### Lo que se retiró, y por qué cuenta
+
+La ruta de diagnóstico llevaba escrito en su propio comentario que era **código
+con fecha de caducidad**: que el día que supiéramos la respuesta sobraría. Ese día
+llegó y se fue con ella. Una herramienta de diagnóstico que se queda acaba siendo
+código que nadie sabe si se usa.
+
+Lo mismo con el permiso: `roles/iam.serviceAccountTokenCreator` sobre
+`pmo-scheduler@`, **acotado al recurso y no al proyecto**, concedido para esto y
+retirado después — con la retirada **dentro del encargo**, no como limpieza
+opcional. Se descartó crear un disparador temporal en Scheduler por lo contrario:
+es estado en una pieza delicada, y una limpieza fallida deja un disparador sin
+documentar.
+
+### Y la sonda cambia de criterio
+
+Con la respuesta en la mano, registrar **todo** cuerpo vacío como aviso sería
+repetir el error del barrido **dentro del log**: gritar por una condición conocida
+y estable hasta que nadie lo lea.
+
+Ahora avisa **solo si hay una parte de texto con `attachmentId`** — el cuerpo
+perdido de verdad, que sigue siendo posible y todavía no ha ocurrido. Lo demás
+queda en registro normal.
+
+**El hueco del `attachmentId` sigue abierto y ahora sabemos qué aspecto tendrá
+cuando muerda**, que es mejor sitio del que estábamos.
+
+---
+
 ## El bucle del barrido, cerrado — y lo que aparecía detrás (2026-08-22)
 
 **La traza, que es como se firma esto:**
