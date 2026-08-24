@@ -125,6 +125,43 @@ describe('FrontendAlDiaService · pregunta si producción está al día', () => 
     expect((await service.comprobar()).estado).toBe('indeterminado');
   });
 
+  it('dos pasadas seguidas en indeterminado piden UN solo mensaje', async () => {
+    // No basta con que el freno exista en el diseno: si GitHub se cae media
+    // hora con un freno corto, la sonda pasa de «no puedo comprobarlo» a
+    // inundar el canal con «no puedo comprobarlo» cada quince minutos. El
+    // barrido otra vez, con otro disfraz.
+    //
+    // Aqui se fija el contrato: las dos pasadas usan **la misma clave de freno**
+    // y una ventana mayor que la cadencia, que es lo que hace que `AlertService`
+    // deje pasar solo la primera. Que el freno funcione de verdad se comprueba
+    // en vivo; esto impide que alguien le cambie la clave o la acorte sin darse
+    // cuenta.
+    const { service, avisar } = crear({ compare: { ok: false } });
+
+    await service.comprobar();
+    await service.comprobar();
+
+    const claves = avisar.mock.calls.map((c) => c[2]);
+    const ventanas = avisar.mock.calls.map((c) => c[3]);
+
+    expect(new Set(claves).size).toBe(1);
+    expect(ventanas.every((v) => v >= 12 * 3_600)).toBe(true);
+  });
+
+  it('el freno de indeterminado es MAS largo que el de atrasado', async () => {
+    // No saber es menos urgente que saber que esta mal, pero no es lo mismo que
+    // estar bien: avisa, y con mas silencio entre avisos.
+    const atrasado = crear({ compare: { ok: true, status: 'behind' } });
+    await atrasado.service.comprobar();
+
+    const indeterminado = crear({ compare: { ok: false } });
+    await indeterminado.service.comprobar();
+
+    expect(indeterminado.avisar.mock.calls[0][3]).toBeGreaterThan(
+      atrasado.avisar.mock.calls[0][3] as number,
+    );
+  });
+
   it('los avisos llevan freno mas largo que la cadencia del cron', async () => {
     const { service, avisar } = crear({ compare: { ok: true, status: 'behind' } });
 
