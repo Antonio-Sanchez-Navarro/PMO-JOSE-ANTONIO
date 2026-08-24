@@ -85,27 +85,6 @@ export class CronController {
   }
 
   /**
-   * Diagnóstico puntual: le pregunta a Gmail la **forma** de los correos que se
-   * cerraron sin texto.
-   *
-   * **No la dispara Cloud Scheduler**, y por eso no hay trabajo que la llame: se
-   * invoca a mano cuando hace falta contestar una pregunta concreta. La sonda de
-   * la ingesta solo ve correos nuevos; esto mira los que ya están.
-   *
-   * ⚠️ **Es código con fecha de caducidad.** El día que se sepa por qué llegan
-   * correos sin cuerpo ni snippet, esta ruta sobra y hay que quitarla — una
-   * herramienta de diagnóstico que se queda para siempre acaba siendo código que
-   * nadie sabe si se usa.
-   */
-  @Post('diagnostico-sin-texto')
-  @HttpCode(200)
-  async diagnosticarSinTexto() {
-    const resultado = await this.gmail.diagnosticarSinTexto();
-    this.logger.log(`Diagnóstico de correos sin texto: ${resultado.revisados} revisado(s)`);
-    return { ok: true, ...resultado };
-  }
-
-  /**
    * Registra o renueva la suscripción push de Gmail de todos los usuarios.
    *
    * **Sirve para las dos cosas a propósito**, y no es un detalle de comodidad:

@@ -117,8 +117,6 @@ const MARGEN_FECHA_FUTURA_MS = 60 * 60_000;
  */
 const TANDA_DESCARGA = 10;
 
-/** Tope del diagnostico de correos sin texto. Es un diagnostico, no un barrido. */
-const MAX_DIAGNOSTICO = 20;
 
 /**
  * Antiguedad minima para que el barrido de reconciliacion toque un correo.
@@ -308,32 +306,48 @@ export class GmailService {
 
     const bodyText = this.extractBodyText(message.payload);
 
-    // ─── Sonda de diagnóstico (2026-08-22) ──────────────────────────
+    // ─── Cuerpo vacío: distinguir lo normal de lo anómalo ──────────────
     //
-    // **Está aquí para medir, no para arreglar**, y por orden expresa: primero el
-    // número, luego el parseo.
+    // **Un cuerpo vacío no es un fallo por sí solo, y esto se supo midiendo.**
+    // Los seis casos que había el 2026-08-24 resultó que eran correos **sin
+    // texto de verdad**: cinco con un `text/html` que solo envuelve una imagen
+    // incrustada —`htmlToText` lo deja en cadena vacía, correctamente— y uno con
+    // un PDF y ninguna parte de texto. Gmail devuelve el `snippet` vacío **por
+    // el mismo motivo**: no hay nada que previsualizar. Esa correlación que
+    // parecía rara tenía una sola causa, y no era el parseo.
     //
-    // Las tres ramas de `extractBodyText` exigen `p.body?.data`, y **Gmail manda
-    // `attachmentId` en vez de `data` cuando la parte pasa de cierto tamaño**.
-    // Un correo grande pierde el cuerpo entero — y si además trae `snippet`,
-    // **no queda huérfano**: se clasifica igual, leyendo doscientos caracteres
-    // de vista previa en lugar del correo. Termina bien, no da error y no
-    // aparece en ningún contador. Eso es lo que hay que medir.
+    // Registrarlos todos como aviso sería repetir el error del barrido en el
+    // log: gritar por una condición conocida y estable hasta que nadie lo lea.
     //
-    // Se registran **solo formas, nunca contenido**: los `mimeType` de las
-    // partes, si cada una trae `data` o `attachmentId`, y el tamaño. Ni asunto,
-    // ni remitente, ni una línea del cuerpo. El log no es sitio para el correo
-    // de nadie.
+    // Lo que **sí** es anómalo es que haya una parte de texto que no hayamos
+    // podido leer — Gmail manda `attachmentId` en vez de `data` cuando la parte
+    // pasa de cierto tamaño, y ahí sí se perdería un cuerpo de verdad. Eso no ha
+    // ocurrido todavía (242 de 247 correos extrajeron cuerpo), pero cuando
+    // ocurra hay que verlo, y hay que verlo **separado del ruido**.
     if (!bodyText) {
-      const partes = this.collectParts(message.payload).map((p) => {
-        const tiene = p.body?.data ? 'data' : p.body?.attachmentId ? 'attachmentId' : 'vacia';
-        return `${p.mimeType ?? '?'}:${tiene}:${p.body?.size ?? 0}`;
-      });
-
-      this.logger.warn(
-        `SONDA cuerpo vacio · mensaje=${message.id} · snippet=${message.snippet ? 'si' : 'NO'} · ` +
-          `partes=[${partes.join(' | ')}]`,
+      const partes = this.collectParts(message.payload);
+      const textoIlegible = partes.filter(
+        (p) => p.mimeType?.startsWith('text/') && !p.body?.data && p.body?.attachmentId,
       );
+
+      const forma = partes
+        .map((p) => {
+          const tiene = p.body?.data ? 'data' : p.body?.attachmentId ? 'attachmentId' : 'vacia';
+          return `${p.mimeType ?? '?'}:${tiene}:${p.body?.size ?? 0}`;
+        })
+        .join(' | ');
+
+      if (textoIlegible.length > 0) {
+        // Esto sí es un cuerpo perdido: había texto y no se pudo leer.
+        this.logger.warn(
+          `Mensaje ${message.id}: hay ${textoIlegible.length} parte(s) de texto con ` +
+            `attachmentId que no se descargan, asi que el cuerpo se pierde. partes=[${forma}]`,
+        );
+      } else {
+        // Lo esperado en un correo de solo imagen o solo adjunto. Se deja
+        // constancia sin nivel de aviso: no hay nada que arreglar.
+        this.logger.log(`Mensaje ${message.id} sin texto (sin parte legible). partes=[${forma}]`);
+      }
     }
 
     return {
@@ -1042,67 +1056,6 @@ export class GmailService {
     }
   }
 
-
-  /**
-   * Le pregunta a Gmail **la forma** de los correos que se cerraron sin texto.
-   *
-   * Existe porque la sonda de `toEmailSnippet` solo se dispara al ingerir, y los
-   * cinco casos conocidos entraron antes de que existiera. **Estan en Gmail
-   * ahora**, asi que no hay que esperar a que llegue uno nuevo para contestar la
-   * pregunta que queda: por que traen el cuerpo **y** el snippet vacios a la vez.
-   * Esa correlacion es justo la que el hueco del `attachmentId` no explica.
-   *
-   * Se registran **solo formas, nunca contenido**: `mimeType` de cada parte, si
-   * trae `data` o `attachmentId`, el tamano, y si Gmail devuelve `snippet`. Ni
-   * asunto, ni remitente, ni una linea del cuerpo.
-   *
-   * Acotado a {@link MAX_DIAGNOSTICO} correos: es un diagnostico, no un barrido.
-   */
-  async diagnosticarSinTexto(): Promise<{ revisados: number }> {
-    const correos = await this.prisma.email.findMany({
-      where: { skipReason: { not: null } },
-      // `userId` porque cada correo se consulta con las credenciales de su
-      // dueno: pedirlo con las de otro daría 404 y parecería que no existe.
-      select: { gmailMessageId: true, userId: true },
-      take: MAX_DIAGNOSTICO,
-    });
-
-    if (correos.length === 0) return { revisados: 0 };
-
-    const clientes = new Map<string, GmailClient>();
-
-    for (const { gmailMessageId, userId } of correos) {
-      let gmail = clientes.get(userId);
-      if (!gmail) {
-        gmail = await this.getGmailClient(userId);
-        clientes.set(userId, gmail);
-      }
-
-      try {
-        const { data } = await gmail.users.messages.get({
-          userId: 'me',
-          id: gmailMessageId,
-          format: 'full',
-        });
-
-        const partes = this.collectParts(data.payload).map((p) => {
-          const tiene = p.body?.data ? 'data' : p.body?.attachmentId ? 'attachmentId' : 'vacia';
-          return `${p.mimeType ?? '?'}:${tiene}:${p.body?.size ?? 0}`;
-        });
-
-        this.logger.log(
-          `DIAGNOSTICO ${gmailMessageId} · snippet=${data.snippet ? `si(${data.snippet.length})` : 'NO'} · ` +
-            `sizeEstimate=${data.sizeEstimate ?? '?'} · partes=[${partes.join(' | ')}]`,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `DIAGNOSTICO ${gmailMessageId} · no se pudo consultar: ${describirError(err)}`,
-        );
-      }
-    }
-
-    return { revisados: correos.length };
-  }
 
   // ─── Suscripción push ──────────────────────────────────────────────────
 
