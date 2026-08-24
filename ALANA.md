@@ -87,6 +87,25 @@ curl <WEB_URL> | grep title    # y se compara con apps/web/index.html: el 08-10 
 > Y si veo un hueco sin dueño, **no lo tapo: lo digo**. Ofrecerme a cerrarlo es
 > justo lo que arrancó esto.
 
+> ### 📬 Y desde hoy: el hallazgo va al buzón **sin preguntar** (2026-08-24)
+>
+> Orden del Jefe, y es la última pieza de la regla del 21-08. Hasta hoy cerraba
+> cada informe con «¿se lo paso a Doc?». **Se acabó la pregunta**: en cuanto un
+> hallazgo está verificado y escrito aquí, **se pasa al buzón de
+> `PROMPT_ALANA.md`**, en la misma vuelta y sin esperar permiso.
+>
+> **Por qué importa y no es un detalle de cortesía:** un hallazgo que vive solo
+> en `ALANA.md` no está repartido, y preguntar mete un paso humano entre
+> encontrar algo y que alguien pueda arreglarlo. Si «encuentro y compruebo, no
+> arreglo» es la regla, **entregar es la mitad que me queda** — y una entrega que
+> depende de que me den permiso no es una entrega.
+>
+> Lo que **no** cambia: sigo sin cerrar nada, el reparto sigue siendo de Doc, y
+> el buzón **se añade al final, nunca se reescribe**. Y sigue valiendo lo de
+> siempre: **escribir ahí deja constancia pero no despierta a nadie**, así que
+> cuando algo corre —como los $8.14 de crédito— hay que avisar al Jefe además de
+> anotarlo.
+
 > **Excepción puntual del 2026-08-07**, por orden expresa del usuario: Alana
 > escribió un bloque de hallazgos al final de `GRAVITY_MEMORY.md`. Va **añadido**,
 > sin tocar una línea de las suyas (141 inserciones, 0 borrados), firmado, y
