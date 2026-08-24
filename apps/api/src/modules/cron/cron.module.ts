@@ -5,6 +5,8 @@ import { CronAuthGuard } from './cron-auth.guard';
 import { SecurityModule } from '../../common/security/security.module';
 import { OverdueModule } from '../overdue/overdue.module';
 import { GmailModule } from '../gmail/gmail.module';
+import { AlertModule } from '../../common/alerts/alert.module';
+import { FrontendAlDiaService } from './frontend-al-dia.service';
 
 /**
  * Las rutas que dispara Cloud Scheduler.
@@ -15,8 +17,8 @@ import { GmailModule } from '../gmail/gmail.module';
  * desde otro sitio, sin pasar por la ruta.
  */
 @Module({
-  imports: [ConfigModule, SecurityModule, OverdueModule, GmailModule],
+  imports: [ConfigModule, SecurityModule, OverdueModule, GmailModule, AlertModule],
   controllers: [CronController],
-  providers: [CronAuthGuard],
+  providers: [CronAuthGuard, FrontendAlDiaService],
 })
 export class CronModule {}

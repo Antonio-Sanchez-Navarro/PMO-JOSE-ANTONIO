@@ -3,6 +3,7 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { CronAuthGuard } from './cron-auth.guard';
 import { OverdueService } from '../overdue/overdue.service';
 import { GmailService } from '../gmail/gmail.service';
+import { FrontendAlDiaService } from './frontend-al-dia.service';
 
 /**
  * Los temporizadores del producto, como rutas HTTP.
@@ -38,6 +39,7 @@ export class CronController {
   constructor(
     private readonly overdue: OverdueService,
     private readonly gmail: GmailService,
+    private readonly frontend: FrontendAlDiaService,
   ) {}
 
   /**
@@ -82,6 +84,24 @@ export class CronController {
         `${resultado.sinTexto} cerrado(s) sin clasificar en total`,
     );
     return { ok: true, ...resultado };
+  }
+
+  /**
+   * ¿Está producción sirviendo el frontend que le toca?
+   *
+   * **Capa 2 del despliegue.** La Capa 1 avisa por evento y solo cuenta lo que
+   * **llega a fallar**; si Vercel deja de publicar su estado o el build ni se
+   * lanza, no hay evento y el silencio parece normalidad. Esto **pregunta**.
+   *
+   * Devuelve tres estados y ninguno sobra: `al-dia`, `atrasado` y
+   * **`indeterminado`** — que no es lo mismo que estar bien, y por eso también
+   * avisa. Una sonda muda cuando no puede mirar es una sonda apagada con
+   * apariencia de encendida.
+   */
+  @Post('frontend-al-dia')
+  @HttpCode(200)
+  async comprobarFrontend() {
+    return { ok: true, ...(await this.frontend.comprobar()) };
   }
 
   /**

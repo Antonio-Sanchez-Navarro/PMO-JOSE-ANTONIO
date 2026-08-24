@@ -955,6 +955,76 @@ jobs:
           echo "Disparador ${TRABAJO} ${ESTADO}: 03:30 y 15:30 America/Cancun."
 
 
+      # La sonda del frontend, cada 30 minutos (Capa 2 del despliegue)
+      #
+      # **Pregunta en vez de esperar a que le cuenten**, que es toda la
+      # diferencia con la Capa 1. Los avisos por evento —`deployment_status`,
+      # `workflow_run`— solo cuentan lo que **llega a fallar**; si Vercel deja de
+      # publicar su estado, si alguien desconecta la integración o si el build ni
+      # se lanza, no hay evento y el silencio parece normalidad.
+      #
+      # ⚠️ **Cada 30 min y no cada 5.** La sonda concede una hora de margen antes
+      # de reclamar —CI, build y la caché del CDN, que sirve copia vieja aunque
+      # el recurso diga `no-store`: medido `Age: 988` el 2026-08-24— así que
+      # preguntar más a menudo no adelanta nada y solo gasta cuota de la API de
+      # GitHub. Si alguien cambia esta cadencia, **mira antes el margen y los
+      # frenos de los avisos** en `frontend-al-dia.service.ts`: los tres números
+      # van juntos.
+      #
+      # ⚠️ Igual que los demás: **solo `create` o `update`, nunca `delete` ni
+      # `pause`.**
+      - name: Desplegar la sonda del frontend
+        run: |
+          set -eo pipefail
+
+          TRABAJO=pmo-frontend-al-dia
+
+          if ! SALIDA=$(gcloud scheduler jobs list --project "${PROJECT_ID}" --location "${REGION}" --limit=1 2>&1); then
+            echo "Lo que respondio gcloud:"
+            printf '%s\n' "${SALIDA}"
+            echo "::error::gcloud scheduler no responde en el runner (motivo exacto encima). NO se toca la sonda del frontend: nadie estara comprobando que produccion sirva el frontend que le toca."
+            exit 0
+          fi
+
+          if gcloud scheduler jobs describe "${TRABAJO}" \
+               --project "${PROJECT_ID}" --location "${REGION}" >/dev/null 2>&1; then
+            ACCION=update
+          else
+            ACCION=create
+          fi
+          echo "La sonda ${TRABAJO}: se hace ${ACCION}."
+
+          URL=$(gcloud run services describe "${SERVICE}" \
+                  --project "${PROJECT_ID}" --region "${REGION}" --format 'value(status.url)')
+
+          if [ -z "${URL}" ]; then
+            echo "::error::No se pudo leer la URL de ${SERVICE}. NO se toca la sonda del frontend."
+            exit 0
+          fi
+
+          # La audiencia es <URL>/cron, no <URL>: es lo que vale
+          # CRON_OIDC_AUDIENCE en el servicio. Con la URL a secas el token se
+          # firma bien, Scheduler lo da por entregado y la ruta devuelve 401
+          # para siempre.
+          gcloud scheduler jobs "${ACCION}" http "${TRABAJO}" \
+            --project="${PROJECT_ID}" \
+            --location="${REGION}" \
+            --schedule="*/30 * * * *" \
+            --time-zone="America/Cancun" \
+            --uri="${URL}/cron/frontend-al-dia" \
+            --http-method=POST \
+            --oidc-service-account-email="pmo-scheduler@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --oidc-token-audience="${URL}/cron" \
+            --quiet
+
+          ESTADO=$(gcloud scheduler jobs describe "${TRABAJO}" \
+            --project "${PROJECT_ID}" --location "${REGION}" --format='value(state)')
+          if [ "${ESTADO}" != "ENABLED" ]; then
+            echo "::error::La sonda ${TRABAJO} esta en estado ${ESTADO}, no ENABLED. Mientras siga asi, nadie comprueba que produccion sirva el frontend que le toca. Reanudala con: gcloud scheduler jobs resume ${TRABAJO} --location ${REGION}"
+            exit 0
+          fi
+          echo "Sonda ${TRABAJO} ${ESTADO}: cada 30 min contra ${URL}/cron/frontend-al-dia"
+
       # El barrido de reconciliación, cada 15 minutos (§37.7)
       #
       # **Sustituye a `--min-instances=1` y al ping, y la comparación no la

@@ -1,6 +1,7 @@
 import { CronController } from './cron.controller';
 import type { OverdueService } from '../overdue/overdue.service';
 import type { GmailService } from '../gmail/gmail.service';
+import type { FrontendAlDiaService } from './frontend-al-dia.service';
 
 /**
  * Las dos rutas que dispara Cloud Scheduler.
@@ -11,17 +12,19 @@ import type { GmailService } from '../gmail/gmail.service';
  */
 describe('CronController', () => {
   function crear(
-    opciones: { sweep?: jest.Mock; renovar?: jest.Mock } = {},
+    opciones: { sweep?: jest.Mock; renovar?: jest.Mock; frontend?: jest.Mock } = {},
   ) {
     const sweep = opciones.sweep ?? jest.fn().mockResolvedValue({ candidates: 5, moved: 2, users: 1 });
     const renovar = opciones.renovar ?? jest.fn().mockResolvedValue({ candidatos: 1, renovados: 1 });
+    const frontend = opciones.frontend ?? jest.fn().mockResolvedValue({ estado: 'al-dia' });
 
     const controller = new CronController(
       { sweep } as unknown as OverdueService,
       { renovarWatchDeTodos: renovar } as unknown as GmailService,
+      { comprobar: frontend } as unknown as FrontendAlDiaService,
     );
 
-    return { controller, sweep, renovar };
+    return { controller, sweep, renovar, frontend };
   }
 
   describe('POST /cron/overdue', () => {
