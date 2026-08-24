@@ -449,3 +449,19 @@ línea a línea, está en la sección 12 de `ALANA.md`.
   ```
 
   Ambas salidas deben coincidir exactamente antes de confirmar cualquier commit amplio.
+
+### 3. Fronteras de Dominio y Avisos de Cruce
+
+- **Regla de propiedad de dominios:** `apps/web` es dominio de Gravity; `apps/api` es dominio de Claude.
+- **Excepciones comunicadas en el buzón:** Si para desbloquear el CI de todos es imprescindible tocar código fuera de nuestro dominio, **se debe comunicar explícitamente en el buzón en ese mismo instante**. Un cruce avisado es una excepción de emergencia visible; un cruce silencioso es una sorpresa en un commit con otro nombre.
+- **Nunca borrar aserciones en pruebas:** Relajar una aserción estricta cambiándola a `expect.any(String)` o similar no soluciona el desacoplamiento: elimina el test y enmascara fallos reales de configuración (como regresiones de IDs de modelos 404).
+
+### 4. Verificación Obligatoria Pre-Push (`npm run lint`)
+
+- **Ejecutar siempre en el monorepo completo:** Antes de pushear cualquier commit, correr `npm run lint` sobre los 3 paquetes (`@pmo/shared`, `@pmo/api`, `@pmo/web`) y `npm run test --workspaces --if-present`.
+- **Preservación de causa de error (`preserve-caught-error`):** Al capturar y relanzar un error sintomático, incluir siempre `{ cause: err }` en `new Error('...', { cause: err })`.
+
+### 5. Detección Tipada de Errores HTTP vs. Antipatrones de Cadenas
+
+- **Nunca usar substrings sobre `error.message`:** No usar `error.message.includes('401')` ni `error.message.includes('409')`.
+- **Inspección tipada:** Comprobar siempre `err instanceof ApiError && err.status === 409` (o el código correspondiente) utilizando la clase `ApiError` centralizada en `lib/api`.
