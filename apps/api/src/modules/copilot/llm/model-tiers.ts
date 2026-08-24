@@ -86,6 +86,20 @@ const TIERS: Record<LlmProvider, Record<LlmTier, TierConfig>> = {
 };
 
 /**
+ * Las variables de entorno que puede pisar el modelo de un nivel.
+ *
+ * Se exporta para que quien llame a {@link tierConfig} pueda leerlas **de su
+ * propia fuente de configuración** sin duplicar los nombres aquí y allá.
+ */
+export function clavesDeEntorno(
+  provider: LlmProvider,
+  tier: LlmTier,
+): { propia: string; compartida?: string } {
+  const base = TIERS[provider][tier];
+  return { propia: base.envVar, compartida: base.envVarCompartida };
+}
+
+/**
  * La configuración de ese nivel, con el entorno pisando al valor por defecto.
  *
  * El orden es de lo más específico a lo más general: primero la variable del
@@ -94,13 +108,25 @@ const TIERS: Record<LlmProvider, Record<LlmTier, TierConfig>> = {
  * obliga a mover la configuración del despliegue, y la configuración del
  * despliegue no queda ignorada cuando no hay prueba puntual.
  *
- * `env` se recibe en vez de leer `process.env` aquí para poder probarlo sin
- * ensuciar el entorno del proceso de pruebas.
+ * ⚠️ **`env` es obligatorio, y antes tenía `= process.env` por defecto.** Eso
+ * parecía una comodidad y era un agujero: las estrategias llamaban sin tercer
+ * argumento, así que leían `process.env` **a espaldas del `ConfigService` que
+ * tenían inyectado**. En una prueba, el doble de configuración no controlaba
+ * toda la configuración — y un doble que no controla lo que dice controlar no
+ * es un doble.
+ *
+ * El síntoma fue que `copilot.spec.ts` pasaba o fallaba **según el `.env` de la
+ * máquina**: en CI no hay `.env` y salía verde; en la del desarrollador, con
+ * `CLAUDE_MODEL_REASONING` puesta, rojo. Verde donde se mira, rojo donde se
+ * trabaja.
+ *
+ * Sin valor por defecto, olvidarse de pasarlo **no compila**. Es la diferencia
+ * entre una regla escrita y una que se sostiene sola.
  */
 export function tierConfig(
   provider: LlmProvider,
   tier: LlmTier,
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined>,
 ): TierConfig {
   const base = TIERS[provider][tier];
   const override =

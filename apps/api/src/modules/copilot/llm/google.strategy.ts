@@ -8,7 +8,7 @@ import {
   Part,
 } from '@google/genai';
 import { LlmChatRequest, LlmChunk, LlmProvider, LlmStrategy, LlmTier } from './llm.types';
-import { tierConfig } from './model-tiers';
+import { clavesDeEntorno, tierConfig } from './model-tiers';
 import { COPILOT_TOOLS, esEjecutable, parseToolArgs } from './tools';
 
 /** Mismo techo que en Anthropic: con streaming no hay riesgo de agotar el tiempo de HTTP. */
@@ -78,8 +78,32 @@ export class GoogleStrategy implements LlmStrategy {
     );
   }
 
+
+  /**
+   * Lo que esta estrategia sabe del entorno, **leído de su `ConfigService`**.
+   *
+   * ⚠️ **No se pasa `process.env`, y esa es toda la gracia.** `tierConfig` lo
+   * leía por su cuenta cuando no se le daba nada, saltando por encima del
+   * `ConfigService` inyectado: en una prueba, el doble de configuración no
+   * controlaba la configuración. El síntoma fue una prueba que pasaba en CI —sin
+   * `.env`— y fallaba en la máquina del desarrollador. Verde donde se mira,
+   * rojo donde se trabaja.
+   *
+   * Los nombres salen de `clavesDeEntorno` en vez de escribirse aquí: duplicarlos
+   * es cómo se acaba añadiendo una variable en la tabla y olvidándola en las dos
+   * estrategias.
+   */
+  private entorno(tier: LlmTier): Record<string, string | undefined> {
+    const { propia, compartida } = clavesDeEntorno(this.provider, tier);
+    const env: Record<string, string | undefined> = {
+      [propia]: this.config.get<string>(propia),
+    };
+    if (compartida) env[compartida] = this.config.get<string>(compartida);
+    return env;
+  }
+
   modelFor(tier: LlmTier): string {
-    return tierConfig(this.provider, tier).model;
+    return tierConfig(this.provider, tier, this.entorno(tier)).model;
   }
 
   async *stream(request: LlmChatRequest): AsyncIterable<LlmChunk> {

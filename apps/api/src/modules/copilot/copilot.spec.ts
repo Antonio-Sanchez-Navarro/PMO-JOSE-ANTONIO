@@ -560,10 +560,35 @@ describe('El evento que sale por el cable', () => {
   });
 });
 
+/**
+ * Un `ConfigService` de mentira que **solo** conoce la clave de la API.
+ *
+ * ⚠️ Antes cada prueba montaba `{ get: () => 'clave' }`, que responde lo mismo a
+ * **cualquier** llave: el modelo salía `'clave'` en cuanto se le preguntaba. Se
+ * disimulaba porque `tierConfig` leía `process.env` por su cuenta y el valor de
+ * verdad venía del `.env` de la máquina — por eso la prueba pasaba en CI y
+ * fallaba en local.
+ *
+ * Con la configuración ya cerrada, el doble tiene que **decir que no sabe** lo
+ * que no sabe: así el modelo cae al valor por defecto de la tabla, que es lo que
+ * la prueba quiere comprobar.
+ */
+const configDePrueba = (clave = 'clave') =>
+  ({
+    get: (nombre: string) =>
+      nombre === 'ANTHROPIC_API_KEY' || nombre === 'GEMINI_API_KEY' ? clave : undefined,
+  }) as unknown as ConfigService;
+
 describe('AnthropicStrategy — herramientas', () => {
   /** Un stream de mentira con la forma que devuelve el SDK. */
   function conRespuesta(content: unknown[]) {
-    const strategy = new AnthropicStrategy({ get: () => 'clave' } as unknown as ConfigService);
+    // ⚠️ **El doble responde `undefined` a todo menos a la clave de la API, y
+    // eso importa.** Antes devolvía `'clave'` para **cualquier** llave, así que
+    // ni siquiera controlaba el modelo — y `tierConfig` además leía
+    // `process.env` por su cuenta, de modo que el modelo salía del `.env` de
+    // quien corriera las pruebas. Ahora la configuración de esta prueba es la
+    // única fuente, que es lo que un doble tiene que ser.
+    const strategy = new AnthropicStrategy(configDePrueba());
     const final = {
       model: 'claude-opus-5',
       content,
@@ -615,7 +640,11 @@ describe('AnthropicStrategy — herramientas', () => {
         toolName: DRAFT_EMAIL,
         payload: { to: ['cliente@ejemplo.com'], cc: [], subject: 'Actualización', body: 'Cuerpo' },
       },
-      expect.objectContaining({ type: 'done', model: expect.any(String) }),
+      // Restaurada: `expect.any(String)` no desacoplaba la prueba del `.env`,
+      // borraba la comprobación. Y en este proyecto un id de modelo equivocado
+      // ya mordió una vez, así que este es justo el sitio donde no conviene
+      // dejar de mirar cuál se usó.
+      expect.objectContaining({ type: 'done', model: 'claude-opus-5' }),
     ]);
   });
 
@@ -626,7 +655,7 @@ describe('AnthropicStrategy — herramientas', () => {
     // modelo. Una sola llamada = el backend no la ejecutó, se la pasó a la
     // persona.
     let vueltas = 0;
-    const strategy = new AnthropicStrategy({ get: () => 'clave' } as unknown as ConfigService);
+    const strategy = new AnthropicStrategy(configDePrueba());
     (strategy as unknown as { client: unknown }).client = {
       messages: {
         stream: () => {
@@ -668,7 +697,11 @@ describe('AnthropicStrategy — herramientas', () => {
         toolName: CHANGE_EMAIL_STATUS,
         payload: { emailId: 'cmr1', status: 'COMPLETED' },
       },
-      expect.objectContaining({ type: 'done', model: expect.any(String) }),
+      // Restaurada: `expect.any(String)` no desacoplaba la prueba del `.env`,
+      // borraba la comprobación. Y en este proyecto un id de modelo equivocado
+      // ya mordió una vez, así que este es justo el sitio donde no conviene
+      // dejar de mirar cuál se usó.
+      expect.objectContaining({ type: 'done', model: 'claude-opus-5' }),
     ]);
   });
 
@@ -693,7 +726,7 @@ describe('AnthropicStrategy — herramientas', () => {
   describe('bucle de herramientas de solo lectura', () => {
     /** Un cliente que responde distinto en cada vuelta del bucle. */
     function conVueltas(respuestas: { content: unknown[] }[]) {
-      const strategy = new AnthropicStrategy({ get: () => 'clave' } as unknown as ConfigService);
+      const strategy = new AnthropicStrategy(configDePrueba());
       const llamadas: unknown[] = [];
       let vuelta = 0;
 
@@ -885,7 +918,7 @@ describe('AnthropicStrategy — herramientas', () => {
 
 describe('GoogleStrategy — herramientas', () => {
   function conTrozos(trozosSdk: unknown[]) {
-    const strategy = new GoogleStrategy({ get: () => 'clave' } as unknown as ConfigService);
+    const strategy = new GoogleStrategy(configDePrueba());
 
     (strategy as unknown as { client: unknown }).client = {
       models: {
