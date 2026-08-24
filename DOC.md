@@ -572,6 +572,51 @@ qué hacían falta las dos. Para el despliegue, **cero**. La misma casa, el mism
 Repartido: la Capa 1 y la sonda a @Claude; publicar el commit del build en una URL
 sin sesión, a @Gravity.
 
+### ✅ Cerrado el hilo de los 27 huérfanos, y no era lo que parecía (2026-08-24)
+
+El diagnóstico de los cinco correos sin texto cierra una cadena que empezó con
+«la ingesta pierde correos en silencio». **Ninguna de las tres alarmas sucesivas
+resultó ser lo que se supuso**, y cada una se desmontó midiendo:
+
+| Se supuso | Lo que era |
+|---|---|
+| Un rechazo de Redis dejaba correos sin encolar | **Cero fallos de Redis en 30 días.** La única línea del `catch` era `P1001` contra la base |
+| La IA llevaba semanas leyendo solo la vista previa | **`solo-snippet = 0`**, con testigos que lo hacen falsable |
+| El hueco del `attachmentId` se está comiendo cuerpos | **Aquí no perdió ni uno.** Cinco de seis sí tenían `text/html` con `data` |
+| Son dos fallos, y el del `snippet` vacío sin explicar | **Es uno, y no es un fallo** |
+
+**La respuesta, con mecanismo y no con deducción:** esos correos son
+legítimamente vacíos — un `text/html` que solo envuelve una imagen incrustada, y
+uno con `multipart/mixed` y un PDF. El `attachmentId` de esos mensajes **es la
+imagen, no el cuerpo**, y el parseo hizo bien en ignorarla. Comprobado en seco:
+solo imagen → `""`, con texto → `"Hola
+que tal"`.
+
+> **Gmail devuelve el snippet vacío por el mismo motivo por el que nosotros no
+> sacamos cuerpo: no hay nada que previsualizar. No eran dos cosas, era una.**
+
+**Lo que queda vivo de todo esto**, que no es poco: el marcador que ya no avanza
+sobre lo que falló, los reintentos que antes no existían, el tope de paginación,
+`skipReason` como estado terminal y contable, el barrido de reconciliación —que
+rescató 23 correos reales con una tarea dentro— y su aviso por novedad. **Las
+alarmas eran falsas; los arreglos, no.**
+
+**Y el `attachmentId` sigue abierto a propósito**: es un hueco real que no ha
+mordido nunca. La diferencia con ayer es que **la sonda solo se enciende en el caso
+que import** — una parte **de texto** con `attachmentId`—, así que sabremos qué
+aspecto tiene el día que muerda.
+
+**Tres cosas de método que salieron de aquí y valen para el resto del proyecto:**
+
+1. **Un número que no se puede distinguir de su propio fallo no mide nada.** El
+   `solo-snippet = 0` solo valió cuando trajo `con-snippet = 242` al lado y la
+   aritmética cerró.
+2. **Se puede diagnosticar sin leer el contenido de nadie.** Solo formas —
+   `mimeType`, `data`/`attachmentId`, tamaño— y contestó la pregunta entera.
+3. **El código con fecha de caducidad se retira el día que caduca.** La ruta de
+   diagnóstico llevaba escrito que sobraba en cuanto se supiera la respuesta, y se
+   fue con ella. Lo contrario es un endpoint sin dueño que nadie se atreve a borrar.
+
 ### Estado del reparto — cierre del 2026-08-21
 
 | Capa | Estado | En qué |
