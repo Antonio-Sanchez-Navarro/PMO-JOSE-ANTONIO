@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Logger, Post, UseGuards } from '@nestjs/common';
+import { Controller, HttpCode, Logger, Post, UseGuards } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { CronAuthGuard } from './cron-auth.guard';
 import { OverdueService } from '../overdue/overdue.service';
@@ -102,29 +102,6 @@ export class CronController {
   @HttpCode(200)
   async comprobarFrontend() {
     return { ok: true, ...(await this.frontend.comprobar()) };
-  }
-
-  /**
-   * ⚠️ **Ruta temporal para ver correr la sonda en sus tres estados.**
-   *
-   * `al-dia` se comprueba solo; los otros dos —`atrasado` e `indeterminado`—
-   * son justo los que no ocurren cuando uno quiere, y son los que importan. Un
-   * vigilante visto solo en su camino feliz es medio vigilante.
-   *
-   * Esto los provoca **contra el código desplegado**, no contra un doble:
-   *
-   * - `referencia` = un commit posterior al que sirve producción → `atrasado`.
-   * - `repo` = un repositorio que no existe → GitHub 404 → `indeterminado`.
-   *
-   * **Código con fecha de caducidad, igual que el diagnóstico de los correos
-   * sin texto:** se retira en cuanto los tres casos estén vistos, junto con el
-   * parámetro `forzar` del servicio. Una herramienta de diagnóstico que se queda
-   * acaba siendo código que nadie sabe si se usa.
-   */
-  @Post('diagnostico-sonda')
-  @HttpCode(200)
-  async diagnosticarSonda(@Body() body: { repo?: string; referencia?: string }) {
-    return { ok: true, ...(await this.frontend.comprobar(body)) };
   }
 
   /**

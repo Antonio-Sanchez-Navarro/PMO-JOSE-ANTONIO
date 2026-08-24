@@ -85,18 +85,8 @@ export class FrontendAlDiaService {
     private readonly alertas: AlertService,
   ) {}
 
-  /**
-   * @param forzar Solo para **provocar** los casos que no se pueden esperar.
-   *   Un vigilante visto solo en su camino feliz es medio vigilante: los otros
-   *   dos estados —atrasado e indeterminado— son los que importan y son justo
-   *   los que no ocurren cuando uno quiere. Esto los provoca contra el codigo
-   *   desplegado, no contra un doble.
-   *
-   *   **Codigo con fecha de caducidad**: se retira junto con la ruta que lo usa
-   *   en cuanto los tres casos esten vistos.
-   */
-  async comprobar(forzar?: { repo?: string; referencia?: string }): Promise<ResultadoFrontend> {
-    const resultado = await this.evaluar(forzar);
+  async comprobar(): Promise<ResultadoFrontend> {
+    const resultado = await this.evaluar();
 
     this.logger.log(
       `Frontend ${resultado.estado}` +
@@ -131,7 +121,7 @@ export class FrontendAlDiaService {
     return resultado;
   }
 
-  private async evaluar(forzar?: { repo?: string; referencia?: string }): Promise<ResultadoFrontend> {
+  private async evaluar(): Promise<ResultadoFrontend> {
     const web = this.config.get<string>('WEB_URL')?.replace(/\/+$/, '');
     if (!web) {
       return { estado: 'indeterminado', motivo: 'WEB_URL no esta configurada' };
@@ -157,9 +147,7 @@ export class FrontendAlDiaService {
       return { estado: 'indeterminado', motivo: `no se pudo leer /version.json: ${describirError(err)}` };
     }
 
-    const referencia = forzar?.referencia
-      ? { sha: forzar.referencia, fecha: 0 }
-      : await this.ultimoCommitDelFrontend();
+    const referencia = await this.ultimoCommitDelFrontend();
     if (!referencia) {
       return {
         estado: 'indeterminado',
@@ -179,7 +167,7 @@ export class FrontendAlDiaService {
       };
     }
 
-    return this.compararAscendencia(referencia.sha, servido, forzar?.repo);
+    return this.compararAscendencia(referencia.sha, servido);
   }
 
   /**
@@ -201,18 +189,9 @@ export class FrontendAlDiaService {
    * problema del clon superficial, donde `merge-base --is-ancestor` falla si el
    * commit no está en el clon.
    */
-  private async compararAscendencia(
-    referencia: string,
-    servido: string,
-    repoForzado?: string,
-  ): Promise<ResultadoFrontend> {
-    // Se valida la forma aunque solo llegue de la ruta de diagnostico: un slug
-    // que se interpola en una URL sin comprobar es como se cuela una peticion a
-    // donde no toca.
-    const repo = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoForzado ?? '') ? repoForzado : REPO;
-
+  private async compararAscendencia(referencia: string, servido: string): Promise<ResultadoFrontend> {
     try {
-      const res = await fetch(`https://api.github.com/repos/${repo}/compare/${referencia}...${servido}`, {
+      const res = await fetch(`https://api.github.com/repos/${REPO}/compare/${referencia}...${servido}`, {
         headers: { accept: 'application/vnd.github+json' },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
