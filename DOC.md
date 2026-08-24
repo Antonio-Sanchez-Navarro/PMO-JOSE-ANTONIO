@@ -617,6 +617,82 @@ aspecto tiene el día que muerda.
    diagnóstico llevaba escrito que sobraba en cuanto se supiera la respuesta, y se
    fue con ella. Lo contrario es un endpoint sin dueño que nadie se atreve a borrar.
 
+### 🔴 Vigilamos lo que el sistema hace y no lo que consume (2026-08-24)
+
+@Alana barrió las consolas (§46) y su conclusión reordena las prioridades:
+
+> **«Las tres pasadas de código dieron 27 hallazgos y ninguno era una cuenta atrás.
+> De las dos formas de que esto se pare un martes por la mañana, la segunda es hoy
+> la más probable.»**
+
+**Anthropic: quedan $8,14.** Consumo de agosto — 1.354.565 tokens de entrada,
+113.599 de salida— cuesta entre **$3,85 y $9,61** con los precios vigentes (Sonnet 5
+a $3/$15 por millón, con lanzamiento a $2/$10 **hasta el 31 de agosto**; Opus 5 a
+$5/$25). **Tres a seis semanas**, y el **31 de agosto la clasificación sube un 50 %**.
+
+**Y lo que pasa al llegar a cero, trazado por ella en el código:** `convieneEsperar`
+leerá el 429 como falta de cuota, **`frenarLaCola` pausará el worker entero**, y los
+correos entrarán sin clasificar. **La DLQ avisaría del síntoma; la causa no la dice
+nadie.**
+
+**GCP factura desde el 19-08**, y comprobado por Doc: **la Cloud Billing API ni
+siquiera está activada en el proyecto**. No es que el umbral esté mal puesto — no
+existe dónde ponerlo.
+
+**Dato de producto que cambia la lectura:** el cliente OAuth marca «último uso: 20
+de agosto». **Nadie entra desde hace cuatro días**, así que el gasto actual no es de
+uso: es de clasificar los correos que siguen llegando solos. Se quema saldo sin que
+nadie mire el tablero.
+
+**Repartida la Capa 3 a @Claude**, con la misma forma que las dos anteriores:
+
+| | Qué | Su punto ciego |
+|---|---|---|
+| **Pronto** | Estimación del gasto desde el `usage` que ya devuelve cada llamada, contra un presupuesto configurado. Avisa en **días restantes**, no en porcentaje | No es exacto |
+| **Nativo** | Presupuesto de Cloud Billing con notificación por Pub/Sub | Solo GCP |
+| **Al filo** | Distinguir el 429 de **saldo agotado** del 429 de ritmo, y decir la causa | Llega cuando ya pasó |
+
+**Y una condición escrita en el encargo:** los precios van **en configuración con su
+fecha**, porque el de Sonnet 5 caduca el 31 de agosto. Un precio incrustado que
+caduca en una fecha conocida es la familia del `maxScale` del comentario.
+
+**Lo que NO se toca todavía:** `--no-cpu-throttling`, la cadencia del barrido y el
+escalado — las tres decisiones que se tomaron cuando esto era gratis. Revisarlas sin
+la factura delante es cambiar un número por otro inventado. Primero la Capa 3.
+
+---
+
+### ⚠️ Decisiones pendientes del Jefe (2026-08-24)
+
+1. **Recargar el saldo de Anthropic, o decidir qué se apaga.** Cuatro días sin
+   entrar nadie y el sistema consumiendo por su cuenta. Las dos respuestas son
+   válidas; **«seguir como estamos» no lo es.**
+2. **La clave de Gemini de producción vive en otro proyecto de Google**
+   (`gen-lang-client-0325947422`), la paga otra cuenta de facturación y se creó el
+   20 de mayo — dos meses antes de que este producto existiera. **No se puede rotar,
+   revocar ni ver su gasto desde la consola del proyecto.** No es un fallo técnico:
+   es una pieza de producción fuera del control administrativo del dueño.
+
+---
+
+### 🔧 Fallo de mi diseño de canales, dos veces en un día (2026-08-24)
+
+@Alana reportó como hallazgo que la URL del webhook acabó en dos sitios — **y fue
+una decisión mía**, deliberada y razonada: que el avisador no comparta suerte con la
+autenticación de GCP. **Ella no podía saberlo**: vive en `DOC.md` y en el prompt de
+@Claude, y desde el 21-08 no lee `DOC.md`.
+
+Es la segunda vez hoy. La primera: @Gravity tocó la prueba de @Claude sin poder
+saber que había una decisión tomada sobre ella.
+
+**El patrón:** separar los canales evita que hereden el relato ajeno — y de paso
+**esconde las decisiones que restringen a otros**. Una decisión que obliga a alguien
+tiene que vivir donde ese alguien la vea. `DOC.md` no vale si no todos lo leen.
+
+**Pendiente de arreglar**, y es de Doc: llevar las decisiones vigentes que cruzan
+dominios a un sitio que los tres lean — `AI_ROLES.md` es el candidato — en vez de
+dejarlas solo en el prompt de quien las ejecuta.
+
 ### Estado del reparto — cierre del 2026-08-21
 
 | Capa | Estado | En qué |
