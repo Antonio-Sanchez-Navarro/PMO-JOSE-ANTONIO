@@ -6201,10 +6201,8 @@ durante seis meses se elimina**, con aviso previo y 30 días para restaurarlo.
 
 ### 46.9 Lo que NO he podido revisar
 
-- **Upstash** (`console.upstash.com`) — la extensión de Chrome **no tiene permiso
-  para ese dominio**: `Permission denied for reading page content`. Es justo la
-  consola del recurso con la historia de cuota más larga del proyecto (§32), así
-  que queda pendiente de que se le dé permiso.
+- ~~**Upstash**~~ — **revisado al final de la sesión**, en cuanto el Jefe dio
+  permiso a la extensión. Va en §46.11.
 - **El espacio de Google Chat** donde caen las alertas. No lo abro: la URL del
   webhook es una credencial y no es cosa de un barrido de lectura.
 - **El importe exacto de la factura de GCP.** Llegué a la cuenta vinculada («Mi
@@ -6222,3 +6220,46 @@ construyendo.
 **Vigilamos lo que el sistema hace y no lo que el sistema consume.** Y de las dos
 formas de que esto se pare un martes por la mañana, la segunda es hoy la más
 probable.
+
+### 46.11 Upstash, ya con permiso: **369 k de 500 k**, y el barrido se ve en el número
+
+Cierra el hueco declarado en §46.9. La consola, hoy 24-08:
+
+| | |
+|---|---|
+| Comandos (mes) | **369 k** |
+| Almacenamiento medio | 250 KB |
+| Coste | **$0.00** |
+| Base | `pmo-redis` (clean-flamingo), AWS US-EAST-2, **Free Tier** |
+
+**La proyección de §32.5 se sostiene.** Aquella decía: *«con el peor de los dos
+números se cierra agosto en torno a 435 k de 500 k, así que la fecha de
+agotamiento del 29-30 queda cancelada»*. Con los datos de hoy:
+
+| Fecha | Comandos | Ritmo |
+|---|---|---|
+| 14-08 | 177 k | — |
+| 18-08 22:15 | 297 k | ~30 k/día (antes del ajuste) |
+| 19-08 16:04 | 305 k | ~10,8 k/día (después) |
+| **24-08** | **369 k** | **~12,8 k/día** |
+
+Quedan **131 k y siete días**: a este ritmo agosto cierra sobre **459 k de
+500 k**. No se agota — con un margen del 8 %, que es más estrecho de lo que decía
+mi estimación y sigue siendo suficiente.
+
+**Y hay un dato que no esperaba encontrar: el barrido de reconciliación se ve en
+el contador.** El ritmo pasó de **10,8 k/día** (medido el 19-08) a **12,8 k/día**
+(hoy), unos **+2 k/día**, y en medio solo se desplegó una cosa que toque Redis de
+forma periódica: el barrido cada 15 minutos del 21-08 —96 pasadas al día, cada
+una con su lectura y escritura de `huerfanos-vistos` más el `remove`/`add` de los
+que encuentre—.
+
+O sea: **el barrido cuesta alrededor de un 18 % más de comandos de Redis**, y esa
+factura no estaba en la comparación cuando se eligió frente al ping y a
+`min-instances=1`. No cambia la decisión —sigue siendo la única de las tres que
+recoge los huérfanos— pero **el «coste: cero» con el que se aprobó era el de
+Cloud Scheduler, no el del sistema entero**.
+
+⚠️ **Con la salvedad de siempre** ([[pmo-medir-redis-upstash]]): el contador de
+la consola **redondea a miles**, así que los ritmos derivados de restar dos
+lecturas arrastran ese error. La tendencia es sólida; el segundo decimal, no.
