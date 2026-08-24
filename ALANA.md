@@ -6020,3 +6020,205 @@ línea a línea da los veintiuno menores. Los seis grandes salen de levantarse d
 archivo e ir al otro extremo del cable.
 
 Un archivo no se audita. Se audita el cable que sale de él.
+
+---
+
+## 46. Las consolas externas, una por una (2026-08-24)
+
+Encargo del Jefe: revisar en Chrome los registros de los servicios que el código
+describe. Ocho consolas en el inventario; **cinco revisadas, tres no**, y las
+tres van nombradas al final.
+
+**Todo lo de aquí es lectura.** No he tocado un solo ajuste, y donde Google pidió
+contraseña me paré: eso lo hace el Jefe.
+
+---
+
+### 46.1 🔴 Anthropic: quedan **$8.14** de crédito
+
+Consola de Anthropic, org «Jose Antonio's Individual Org». Consumo de agosto:
+**1 354 565 tokens de entrada** y **113 599 de salida**, repartidos entre
+`claude-sonnet-5` (la clasificación) y `claude-opus-5` (el nivel `pro` del
+copiloto). La gráfica diaria se mueve entre 60 k y 250 k tokens.
+
+**Créditos restantes: $8.14.**
+
+Es la dependencia más dura del producto y **no la vigila nadie**. Ni la Capa 1
+—que mira despliegues— ni la Capa 2 —que mira la ingesta de Pub/Sub— ni la
+política del respaldo. Cuando ese saldo llegue a cero:
+
+- la **clasificación de correo** deja de funcionar,
+- el **copiloto** deja de funcionar,
+- y por el camino que el código ya tiene escrito: un 429 lo trata
+  `convieneEsperar` como «no hay cuota ahora», así que `frenarLaCola` **pausa el
+  worker entero** en vez de fallar. La cola se queda quieta y los correos entran
+  sin clasificar.
+- La DLQ avisaría de los síntomas —clasificaciones fallidas— pero **la causa no
+  la dice nadie**.
+
+Es el mismo patrón que costó la semana del respaldo: una cuenta atrás visible
+para quien la mire, sin nadie mirándola.
+
+### 46.2 🔴 Google Cloud factura de verdad desde el 19 de agosto
+
+Aviso en la consola, en todas las páginas del proyecto:
+
+> *«Actualmente, estás generando cargos en tu cuenta de facturación **Mi cuenta
+> de facturación** a partir del 19 de agosto de 2026.»*
+
+Se acabó el crédito de prueba. **Todo lo que se decidió cuando esto era gratis
+ahora tiene precio**, y hay tres decisiones nuestras que conviene volver a mirar
+con esa luz:
+
+- **`--no-cpu-throttling`**, que factura CPU **toda la vida de la instancia** y
+  no solo mientras atiende. El propio `deploy.yml` lo avisa: *«si algún día la
+  factura de Cloud Run sorprende, este flag es el primer sitio donde mirar»*.
+- **El barrido de reconciliación cada 15 minutos**, que por diseño **despierta el
+  contenedor** 96 veces al día. Se eligió sobre `min-instances=1` porque era
+  gratis; ahora no lo es del todo.
+- **`--max-instances=8`** con `--cpu=1` y `--memory=512Mi`, que acota el techo.
+
+No digo que sea caro: digo que **nadie ha mirado el número desde que dejó de ser
+cero**, y que las tres decisiones se tomaron con la premisa contraria.
+
+### 46.3 🟠 La clave de Gemini vive fuera del proyecto y la paga otra cuenta
+
+En `pmo-dashboard-503418` → Credenciales: **«No hay claves de API para
+mostrar»**. Ninguna. Y sin embargo el copiloto tiene un proveedor Google
+configurado.
+
+En Google AI Studio hay **dos** claves, las dos del **20 de mayo de 2026** —dos
+meses antes de que este proyecto existiera—:
+
+| Clave | Proyecto | Facturación |
+|---|---|---|
+| `...YnSQ` | **My First Project** (`continual-loop-496922-h9`) | Nivel 1 · Pospago |
+| `...BNpY` | **Gemini Project** (`gen-lang-client-0325947422`) | **Nivel 2 · Pospago · «My Billing Account»** |
+
+Y la que corre en producción es **`...BNpY`** — comprobado leyendo solo los
+cuatro últimos caracteres del secreto `pmo-gemini-api-key`, que es lo mínimo que
+identifica sin exponer nada.
+
+O sea: una dependencia de producción de este proyecto **está en otro proyecto de
+Google, la paga otra cuenta de facturación, se creó antes que el producto y se
+comparte con lo que sea «My First Project»**. Desde la consola de
+`pmo-dashboard-503418` **no se puede rotar, ni revocar, ni ver su gasto**, y no
+aparece en su factura.
+
+Hoy no rompe nada. Lo que rompe es el día que haya que rotarla, o que alguien
+audite qué consume este proyecto y no la encuentre.
+
+### 46.4 🟠 La URL del webhook de Chat acabó en dos sitios
+
+La instrucción de Doc para la Capa 1 fue explícita: *«léelo con
+`gcloud secrets versions access` en vez de crear un secreto nuevo en GitHub. Una
+sola fuente, un sitio donde rotarlo.»*
+
+Lo que hay es un **secreto de GitHub Actions `ALERT_WEBHOOK_URL`**, creado el
+2026-08-22 a las 02:23:33. Así que la misma URL vive ahora en **Secret Manager**
+y en **Actions**, y rotarla exige acordarse de los dos.
+
+Y al lado queda un **`ALERT_WEBHOOK_SECRET` como *secreto*** de Actions, del
+14-08, con el **mismo nombre que una *variable*** que significa otra cosa —la
+variable guarda el *nombre* del secreto de GCP—. Dos objetos homónimos y de
+naturaleza distinta en el mismo repositorio.
+
+_No lo cuento como un fallo del arreglo: funciona. Lo cuento porque el motivo
+que Doc escribió para elegir la otra vía sigue siendo cierto, y ahora hay que
+vivir con él._
+
+### 46.5 🔵 La Capa 1 **sí sonó en fuego real**, y así consta
+
+Esto es lo contrario de un hallazgo y por eso lo escribo. El historial del
+workflow «Avisar si falla Vercel o el CI» cuenta la historia entera:
+
+| Hora (22-08) | Qué |
+|---|---|
+| 02:21:45 | **Fallo.** `URL:` vacía → *«El secreto ALERT_WEBHOOK_URL de GitHub Actions no existe o esta vacio. NO se ha avisado del fallo.»* |
+| 02:23:33 | El Jefe crea el secreto — **dos minutos después** |
+| 02:30:02 | `workflow_dispatch` manual → **verde**. El simulacro |
+| 02:30:27 y 02:37:09 | Dos avisos **reales** por `workflow_run` → verdes |
+
+Es exactamente cómo se firma una alerta: **provocarla y verla llegar**. Y el
+mensaje de error del fallo traía el comando para arreglarlo, que es lo que hizo
+que se resolviera en dos minutos en vez de en dos días.
+
+**Y Vercel está dentro**: hay ejecuciones disparadas por `deployment_status` y
+«created by vercel Bot». El hueco que señalé —que un job en Actions no ve los
+despliegues de Vercel— está cubierto por otro camino.
+
+### 46.6 🔵 El frontend en producción **está al día**, y ahora se puede comprobar
+
+`https://pmo-frontend-ten.vercel.app/version.json`:
+
+```json
+{ "commit": "f634efacd25bfdacef0f13cb5ed83ae305238b40",
+  "construido": "2026-08-22T02:39:47.804Z" }
+```
+
+Y el último commit que toca `apps/web` o `packages/shared` es `d2ae401`, que es
+**ancestro** de ése. Nada posterior toca el frontend.
+
+**Los arreglos de frontend llegaron al navegador.** Lo digo con énfasis porque en
+§38 escribí «comprobado en el código, archivo por archivo» y era cierto **y no
+era suficiente**: comprobé que el arreglo existía, no que estuviera sirviendo.
+Ese `version.json` es la pieza que convierte esa comprobación en una de un
+segundo, y no existía cuando me equivoqué.
+
+### 46.7 🔵 El cliente OAuth, y dos detalles
+
+**Lo que está bien:** un solo cliente («Cliente web PMO», 24 jul), un solo
+secreto habilitado, tipo de usuario **Interno** —confirmado en la pantalla de
+Público, así que sin verificación de Google— y la **URI de redirección exacta**:
+`https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback`, que coincide con
+`GOOGLE_REDIRECT_URI`. Las cinco cuentas de servicio son las cinco esperadas.
+
+**Dos detalles, ninguno rompe hoy:**
+
+1. Los **orígenes de JavaScript** autorizados son
+   `https://pmo-frontend-antoniosanchez-5466s-projects.vercel.app` y
+   `http://localhost:3000`. El dominio que sirve el producto y que está en
+   `WEB_URL` —`pmo-frontend-ten.vercel.app`— **no está**. No importa **porque
+   este flujo es de servidor**: el navegador va a `/auth/google` con una
+   navegación completa y el origen JS no interviene. Importaría el día que
+   alguien añada un botón de Google del lado del cliente, y ese día la
+   configuración parecerá correcta de un vistazo.
+2. Las **tres tablas de permisos están vacías** —no sensibles, sensibles y
+   restringidos— mientras la app pide `gmail.modify` y `gmail.send`, que son
+   restringidos. En una app **Interna** es legítimo y no hay verificación que
+   pase. El efecto es que **la consola dice que esta app no pide nada**, y la
+   respuesta real solo está en `auth.constants.ts`.
+
+### 46.8 🔵 Nadie inicia sesión desde el 20 de agosto
+
+El cliente OAuth dice **«Última fecha de uso: 20 de agosto de 2026»** (con el
+aviso de Google de que el dato puede retrasarse un día). Hoy es el 24.
+
+No es un fallo — es un dato de producto que conviene tener delante cuando se
+decide qué arreglar: **el producto lleva cuatro días sin que nadie entre.** Y va
+con una advertencia de Google que sí es accionable: **un cliente OAuth sin uso
+durante seis meses se elimina**, con aviso previo y 30 días para restaurarlo.
+
+### 46.9 Lo que NO he podido revisar
+
+- **Upstash** (`console.upstash.com`) — la extensión de Chrome **no tiene permiso
+  para ese dominio**: `Permission denied for reading page content`. Es justo la
+  consola del recurso con la historia de cuota más larga del proyecto (§32), así
+  que queda pendiente de que se le dé permiso.
+- **El espacio de Google Chat** donde caen las alertas. No lo abro: la URL del
+  webhook es una credencial y no es cosa de un barrido de lectura.
+- **El importe exacto de la factura de GCP.** Llegué a la cuenta vinculada («Mi
+  cuenta de facturación», y hay **varias** cuentas en la organización) y no
+  entré al informe de costes.
+
+### 46.10 Lo que enseña el barrido
+
+Las tres pasadas de código encontraron 27 hallazgos y **ninguno de ellos era una
+cuenta atrás**. Los dos más urgentes de hoy —**$8.14 de crédito** y **una factura
+que empezó el 19**— no están en el código, no los ve una prueba, no los ve el
+CI, y no los ve ninguna de las dos capas de vigilancia que llevamos un mes
+construyendo.
+
+**Vigilamos lo que el sistema hace y no lo que el sistema consume.** Y de las dos
+formas de que esto se pare un martes por la mañana, la segunda es hoy la más
+probable.
