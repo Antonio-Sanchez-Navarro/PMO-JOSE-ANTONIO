@@ -23,7 +23,6 @@ infraestructura de Gravity.
 
 | Encargo | Dónde quedó |
 | --- | --- |
-| Resolución 19 Hallazgos de Auditoría (Backend y Frontend) | `780ad95` — Corregido semáforo backend (`App.tsx`), `subidas` tipadas como `[]` en `precios-modelo.ts`, array de `creadas: Task[]` para evitar error `never[]` en Prisma y corrección sintáctica de requires vs imports en tests. |
 | §47.2: Inclusión de `vercel.json` en `ignoreCommand` | `37727b9` — Añadido `vercel.json` al filtro `git diff` de `vercel.json` para que cambios en la configuración de cabeceras o build de Vercel disparen despliegue. |
 | §47.6: Soporte de campo `cc` en borrador de correo del Copiloto | `7a3cd68` — Añadido `cc` a `DraftEmailData`, inputs de edición en `DraftEmailCard.tsx`, envío hacia `/copilot/emails/send` y extracción del payload SSE en `CopilotDrawer.tsx`. |
 | §47.7: Toast de error y limpieza en creación/carga de etiquetas (`TagManagerModal.tsx` y `useTags.ts`) | `7a3cd68` — Sustituido `console.error` silencioso por `toast.error(err.message)` y reseteo del campo de texto tras error en `TagManagerModal.tsx`; añadido `toast.error` en `fetchTags` (`useTags.ts`). |
@@ -259,7 +258,7 @@ gh secret set WEB_URL --body "https://pmo-frontend-ten.vercel.app"
 ### GitHub Variables (configuradas por el script del Paso 6)
 
 | Variable | Valor | Origen |
-|---|---|---|
+| --- | --- | --- |
 | `GCP_PROJECT_ID` | `pmo-jose-antonio` | Paso 6.3 |
 | `GCP_REGION` | `us-central1` | Paso 6.4 |
 
