@@ -664,9 +664,7 @@ la factura delante es cambiar un número por otro inventado. Primero la Capa 3.
 
 ### ⚠️ Decisiones pendientes del Jefe (2026-08-24)
 
-1. **Recargar el saldo de Anthropic, o decidir qué se apaga.** Cuatro días sin
-   entrar nadie y el sistema consumiendo por su cuenta. Las dos respuestas son
-   válidas; **«seguir como estamos» no lo es.**
+1. **Recargar el saldo de Anthropic:** ✅ **RESUELTO (2026-08-25).** El Jefe confirmó que la cuenta tiene recarga automática. El riesgo de que la máquina se apague sola por falta de fondos está mitigado. La Capa 3 (alerta de consumo) de @Claude sigue siendo válida para vigilar el ritmo de gasto, pero ya no es un aviso de muerte inminente del sistema.
 2. **La clave de Gemini de producción vive en otro proyecto de Google**
    (`gen-lang-client-0325947422`), la paga otra cuenta de facturación y se creó el
    20 de mayo — dos meses antes de que este producto existiera. **No se puede rotar,
@@ -765,7 +763,8 @@ El trabajo en local resultó en un 100% de éxito en los 704 tests unitarios de 
 Con esto el código y la documentación están inmaculados, el CI/CD en verde, y la Fase 5 cierra su bloque de implementación preparándose para las pruebas en vivo.
 
 ### ⚠️ Aviso sobre cuota de Upstash (Sondeo de 30s)
-Alana verificó el entorno y alertó (en `PROMPT_ALANA.md`) que el arreglo del semáforo en `App.tsx` usa un `setInterval` que sondea `/health/ready` cada 30 segundos. Esto consume cuota del límite mensual de comandos en Redis (Upstash) por cada pestaña del navegador abierta, sumando unos ~2.9k comandos/día adicionales. Dejamos constancia porque consume un recurso que hemos estado racionando. Lo tendremos en la mira si se dispara el límite.
+
+⏳ **EN PROGRESO (2026-08-25).** Alana alertó que el arreglo original de @Gravity usaba `/health` para el latido periódico y reservaba `/health/ready` para fallos (`failing === true`). Esto dejaba al semáforo "ciego": si Redis o Postgres caían, `/health` seguía devolviendo 200 OK y `failing` nunca pasaba a `true`. Se le ha asignado a @Gravity deshacer la condición y hacer que el latido llame a `/health/ready` pero cada **5 minutos** (300s) en lugar de 30s. Esto recorta el consumo a 288 comandos/día por pestaña (1.7% del plan gratuito), siendo sostenible y manteniendo la visibilidad de las dependencias.
 
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 

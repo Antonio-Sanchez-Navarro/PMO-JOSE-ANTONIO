@@ -214,9 +214,83 @@ Nadie hizo nada raro; el defecto fue que existiera la categoría.
 2. **Un encargo nunca dice «ciérralos» sobre hallazgos sin verificar.** Dice
    **«comprueba y, si es cierto, cierra»**. La palabra importó: *«el encargo fue
    ciérralos, no compruébalos»*.
+3. **Cada hallazgo verificado va al buzón sin preguntar y en la misma vuelta.** Si quien audita no arregla, entregar al buzón es la mitad del trabajo que le queda.
 
 **Lo que sí queda como regla de la casa, y es suya:** *un hallazgo tampoco se
 audita: se comprueba antes de arreglarlo.*
+
+---
+
+### Dónde están los hallazgos — en las juntas, no en las líneas
+
+Escrito el **2026-08-25**, después de cuatro barridos del árbol. No es una
+preferencia de estilo: es el resultado medido.
+
+**De los 27 hallazgos de los tres primeros barridos, los seis graves estaban
+todos en una junta y ninguno dentro de un archivo.** Leer línea a línea, incluso
+despacio y entero, produce los menores. Los graves salen de otras dos preguntas,
+y hay que hacerlas a propósito.
+
+**1 · ¿Quién está al otro lado del cable?** Casi todo lo serio ha sido una pieza
+cuya otra mitad vive en otro archivo:
+
+| Lo que había | Lo que faltaba al otro lado |
+|---|---|
+| El socket se cerraba al caducar el token | El cliente no escuchaba el evento |
+| El contador decidía si el marcador avanza | La capa de arriba ya había perdido los correos |
+| `change_email_status` completa en el backend | Sin tarjeta en la interfaz |
+| El backend normalizaba `cc` **para el frontend** | El frontend no lo leía |
+
+**Cómo se buscan:** cuando un archivo **afirma algo sobre otro** —«la tarjeta
+sabrá qué hacer con `null`», «el cliente ya sabe refrescar», «es el mismo
+criterio que el `ignoreCommand`»— hay que ir al otro extremo y comprobarlo. Esas
+frases son el mejor localizador de fallos que tiene este repositorio.
+
+**2 · ¿Dónde se rompe la regla que este código enuncia?** Este proyecto
+**documenta sus reglas mejor de lo que las cumple**, y siempre igual: la regla
+está escrita en el archivo donde se aprendió y rota en el tercero.
+`logger.error(msg, error)` —que `describir-error.ts` existe entero para
+prohibir— reapareció por décima vez; `Promise.all` dentro de una transacción
+interactiva, que dos servicios prohíben por escrito, apareció en un tercero.
+
+**Un comentario solo protege el archivo en el que vive.** Por eso, cuando una
+regla se rompe dos veces, la corrección no es otro párrafo: es hacerla
+comprobable —una regla de ESLint, una prueba que compare las dos listas, un DTO
+base—. Lo dice mejor otro archivo del proyecto: **«olvidarse NO COMPILA»**.
+
+---
+
+### Comprobar en `master` no es comprobar
+
+Vale para los tres agentes, no solo para la auditoría. **Un arreglo correcto,
+commiteado y en `master` puede llevar días sin llegar a nadie.** Pasó el
+2026-08-22 —seis arreglos de frontend dados por cerrados y ausentes del
+navegador— y el 2026-08-25, con once despliegues seguidos fallando mientras el
+código estaba bien.
+
+**Nadie declara «desplegado» sin uno de estos dos:**
+
+| Qué | Cómo se comprueba |
+|---|---|
+| **Frontend** | `https://<WEB_URL>/version.json` → y que ese commit sea **descendiente** del último que toca `apps/web`, `packages/shared` o `vercel.json`. Ancestría, no igualdad: el build lo etiqueta el commit que lo disparó, que suele ser de otro agente |
+| **Backend** | `SERVICE_VERSION` de la revisión viva de Cloud Run |
+
+Y una alerta no se firma porque esté escrita: **se provoca y se ve llegar.**
+
+---
+
+### Declarar la cobertura
+
+Norma de informe, desde el **2026-08-22**.
+
+**Todo informe dice qué NO se miró, con los archivos nombrados.** Un informe que
+parece completo y no lo es es peor que uno corto: **hace que nadie vuelva a
+mirar esa zona**.
+
+Va con su recíproco: **decir también cuántas sospechas no sobrevivieron a la
+comprobación.** En el último barrido, siete de doce se cayeron al seguir la
+llamada. Esa proporción es lo que hace creíbles las cinco que quedaron.
+
 
 ### El puente — `API_CONTRACTS.md`
 
@@ -316,6 +390,10 @@ Si una mezcla es deliberada, se dice en voz alta en vez de rodearla:
 Dos límites, escritos para que nadie los descubra tarde: el gancho **no ve los
 flags** con que se le invoca, así que no bloquea `-a` ni `-A` como tales — mira
 el efecto, que es la mezcla de dueños; y no protege a quien no lo activó.
+
+**Dos comprobaciones obligatorias antes de commitear:**
+1. **`git diff --stat` contra `git diff --ignore-cr-at-eol --stat`**: un cambio de dos líneas puede llevar 726 dentro si el archivo tiene finales mezclados. La diferencia expone la trampa.
+2. **`npx tsc --noEmit`**: el CI falla si el código Typescript es incorrecto, incluso si las pruebas locales pasan (porque ts-jest ignora tipos por rendimiento). Un `tsc` local convierte tres viajes al CI en cero.
 
 ## Excepciones vigentes
 

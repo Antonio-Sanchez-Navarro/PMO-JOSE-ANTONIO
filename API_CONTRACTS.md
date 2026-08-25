@@ -1243,9 +1243,11 @@ exige un cast acotado. Está documentado en `gmail.service.ts`.
 | `GET /health/live` | ¿El proceso responde? No mira Postgres ni Redis |
 | `GET /health/ready` | ¿Puedo atender? Comprueba Postgres y Redis; **503** con el detalle de cuál falló |
 
-Ninguna necesita sesión y ninguna cuenta para el límite de peticiones. Si alguna
-vez pintas un indicador de estado del sistema, la que quieres es `/health/ready`:
-las otras dos dicen que sí con la base caída, que es justo su trabajo.
+Ninguna necesita sesión y ninguna cuenta para el límite de peticiones.
+
+Para pintar un indicador de estado del sistema:
+- Usa **`/health/ready`** cada **5 minutos** (300,000 ms) para el latido periódico. Hacerlo más frecuente (ej. 30s) evaporará la cuota gratuita de Redis. **Ojo con la forma:** devuelve el esquema de Terminus (`status`, `info`, `error`, `details`), sin `version` ni `uptimeSec`.
+- No uses `/health` para latidos de estado: responde `200 OK` incluso con la base de datos caída, dejando la UI ciega a fallos de dependencias.
 
 **2. Cada respuesta trae `x-request-id`.** Es el identificador con el que esa
 petición quedó registrada en el servidor. Si te encuentras un fallo raro y lo
