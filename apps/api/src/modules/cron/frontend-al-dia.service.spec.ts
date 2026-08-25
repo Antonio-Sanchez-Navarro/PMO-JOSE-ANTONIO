@@ -1,6 +1,8 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import type { ConfigService } from '@nestjs/config';
 import type { AlertService } from '../../common/alerts/alert.service';
-import { FrontendAlDiaService } from './frontend-al-dia.service';
+import { FrontendAlDiaService, RUTAS_DEL_FRONTEND } from './frontend-al-dia.service';
 
 /**
  * La sonda que pregunta si producción sirve el frontend que le toca.
@@ -192,10 +194,6 @@ describe('FrontendAlDiaService · pregunta si producción está al día', () => 
       // ⚠️ Si la sonda mira rutas distintas a las que Vercel usa para
       // reconstruir, gritará de falsos positivos o callará verdaderos atrasos.
       // Aquí se fija que ambas listas sean la misma.
-      const fs = require('fs');
-      const path = require('path');
-      
-      const { RUTAS_DEL_FRONTEND } = require('./frontend-al-dia.service');
       const ignorePath = path.resolve(__dirname, '../../../../../scripts/vercel-ignore.sh');
       const script = fs.readFileSync(ignorePath, 'utf8');
 
