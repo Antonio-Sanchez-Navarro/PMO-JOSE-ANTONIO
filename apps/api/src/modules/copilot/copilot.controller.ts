@@ -36,9 +36,21 @@ export const COPILOT_EVENTS = {
   /** Un trozo de texto según lo genera el modelo. */
   token: 'token',
   /**
-   * El modelo pidió una herramienta (hoy solo `draft_email`). Va por su propio
-   * evento y **no** como texto: el frontend lo pinta como un componente —el
-   * editor de borrador— en vez de como una línea más de la conversación.
+   * El modelo **propone** una herramienta. Va por su propio evento y **no**
+   * como texto: el frontend lo pinta como un componente —el editor de borrador,
+   * la tarjeta de tarea— en vez de como una línea más de la conversación.
+   *
+   * ⚠️ **Por aquí no pasan todas las herramientas, solo las que espera una
+   * confirmación humana** (`kind: 'propose'` en `llm/tools.ts`): hoy
+   * `draft_email`, `create_task` y `change_email_status`. Las de `kind:
+   * 'execute'` —`search_emails` y `get_metrics`— las corre el backend en el
+   * mismo turno y su resultado vuelve al modelo, así que el cliente no las ve
+   * nunca.
+   *
+   * El número es lo que envejece de un comentario, así que lo que hay que
+   * recordar es **el criterio**: si actúa o cambia algo, se propone y sale por
+   * aquí; si solo consulta, se ejecuta y no sale. Antes esto decía «hoy solo
+   * `draft_email`» y llevaba tres herramientas de retraso.
    */
   tool_call: 'tool_call',
   /** Fin limpio, con el modelo que respondió y los contadores de la llamada. */
