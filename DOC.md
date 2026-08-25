@@ -759,7 +759,10 @@ El trabajo en local resultó en un 100% de éxito en los 704 tests unitarios de 
 - **ESLint en CI**: Unas quejas estrictas del linter por usar `require('fs')` y `require('path')` dentro de `frontend-al-dia.service.spec.ts` reventaron la etapa `build-and-lint`. Se cambió por `import * as fs` (`030b003`).
 - **Prisma y el inferido `never[]`**: Los arrays vacíos `subidas` y `creadas` en `precios-modelo.ts` y `email-classification.service.ts` rompían la compilación de TypeScript al no poder inferir tipo. Se tiparon explícitamente (`3c4cf5d` y `780ad95`).
 
-Con esto el código está limpio, el CI/CD en verde, y la Fase 5 cierra su bloque de implementación.
+- **Contrato de DashboardMetrics (§48.5)**: Eliminada la duplicación de tipos en `apps/api`. Ahora el backend consume el contrato directamente desde `@pmo/shared`, resolviendo el último detalle técnico pendiente.
+- **Formato Documental (MD-Lint)**: Corrección de reglas MD040 (bloques sin lenguaje) y MD031 (espaciado) en `DOC.md` y `RUNBOOK.md` mediante Prettier.
+
+Con esto el código y la documentación están inmaculados, el CI/CD en verde, y la Fase 5 cierra su bloque de implementación preparándose para las pruebas en vivo.
 
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
