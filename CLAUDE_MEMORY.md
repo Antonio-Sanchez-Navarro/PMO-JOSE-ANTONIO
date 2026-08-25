@@ -9,6 +9,115 @@
 
 ---
 
+## El cron de coste, de diario a horario — y los dos supuestos que iban colgados de la hora (2026-08-25)
+
+Hallazgo de @Alana, desde fuera: de los seis disparadores, `pmo-coste-ia` era el
+único con **una cuenta atrás corriendo por debajo**, y corría **una vez al día a
+las 08:00**. Cruzar el umbral a las 09:00 costaba **23 horas de silencio** con el
+crédito bajando. Encargo de Doc: ponerlo cada hora, comprobar que el freno no
+empiece a spamear, y arreglar el divisor.
+
+### Lo que estaba mal no era la hora: era lo que colgaba de ella
+
+Cambiar `0 8 * * *` por `0 * * * *` es una línea. Lo caro fue que **dos números
+del servicio estaban justificados por la hora del cron** y ninguno lo decía en su
+nombre. Los dos aparecen si se busca «el cron corre por la mañana» en los
+comentarios — que es exactamente por qué los comentarios de este repo dicen el
+porqué y no el qué.
+
+| Lo que colgaba de la cadencia diaria | Qué le pasa al pasar a horario |
+|---|---|
+| `FRENO_S = 23 h` | **Nada, y hay que saber por qué** |
+| `MINIMO_DE_DIAS = 2` | Se queda sin motivo: existía para compensar «el día está a medias» |
+| La ventana `ahora − 168 h` | Empieza a **cambiar de tamaño 24 veces al día** |
+| El divisor contando hoy como día entero | El sesgo pasa de un tercio de día a **entero cada madrugada** |
+
+### El freno: acelerar la cadencia NO obliga a subirlo
+
+Era la duda de Doc y la respuesta es que no, pero por un motivo que conviene
+tener escrito porque **la lección del barrido parece decir lo contrario**. Lo que
+rompe un freno es ser **igual o menor** que la cadencia: el barrido tenía 24 h
+contra una cita de 24 h y cada pasada caía justo en el borde de la anterior, así
+que no frenaba nada. 23 h contra una cita horaria están veintitrés veces al otro
+lado.
+
+`AlertService.debeMandarse` es un `SET NX EX` en Redis: el primer aviso pone la
+clave con 82 800 s y las **22 pasadas siguientes** se encuentran la clave puesta
+y se callan. Sigue siendo **un mensaje al día por umbral**. Lo que baja de 24 h a
+1 h no es el número de avisos, es la espera hasta el primero — que era todo el
+problema.
+
+Y las claves están separadas por umbral (`coste-ia-0.75`, `coste-ia-0.9`), así
+que cruzar el 90 % dentro de las 23 h del aviso del 75 % **sí** dispara. Con la
+cadencia horaria eso importa mucho más que antes: compartir clave habría sido un
+día entero callando justo el aviso que más urge. Está fijado en una prueba.
+
+⚠️ **Donde la cadencia sí amplifica es el fallo abierto.** Si Redis no responde,
+el freno no se puede consultar y el aviso sale igual — a propósito, porque un
+mensaje de más es menos grave que un silencio. Con la cita diaria eso era un
+mensaje repetido al día; con la horaria son **veinticuatro**. Se acepta —un Redis
+caído se lleva las colas por delante y ya está gritando por otros sitios— pero es
+consecuencia de este cambio y queda escrito en `FRENO_S`.
+
+### El divisor: el día en curso ya no vale por un día entero
+
+Doc pidió «que divida entre los días con datos reales, con un mínimo de 1». Lo
+primero **ya estaba hecho** y con motivo escrito: se divide entre los días que la
+observación **cubre**, no entre los que tienen fila, porque un sábado sin correos
+es un cero real y descontarlo inflaría el ritmo. Eso no se toca.
+
+Lo que sí faltaba es que **el día en curso contaba como un día entero**:
+
+    a la 01:00 del segundo día han transcurrido 1,04 días, y el divisor decía 2.
+
+Con la cita de las 08:00 el error valía un tercio de día y era un redondeo
+tolerable. Con una cita horaria aparece **entero cada madrugada**: a las 00:30, un
+día todavía vacío pesa tanto como cualquier día vivido y el ritmo sale hasta un
+tercio por debajo del real. Y va hacia **«queda más de lo que queda»**, que es la
+misma dirección del `/7` fijo que este módulo ya corrigió y el lado por el que se
+llega a cero sin aviso. **Acelerar la cadencia convirtió un redondeo aceptable en
+una mentira horaria.**
+
+Arreglado midiendo en vez de suponiendo: `instanteLocal()` da las 00:00 locales
+más lo que va del día, y `cubiertos` pasa a ser fraccionario. Con eso el suelo de
+2 días se queda sin motivo —compensaba a ojo justo lo que ahora se mide— y baja a
+**1**, que es lo que pidió Doc. Al suelo solo le queda evitar la división entre
+casi cero: a las 00:05 han pasado 0,003 días y dividir por eso convierte tres
+céntimos en diez dólares al día.
+
+⚠️ **Ojo con las escalas al tocar esto.** Las filas de `aiUsage` guardan el día
+local **disfrazado de medianoche UTC**, así que restarles un `Date` real se
+equivoca en las cinco horas del huso. `instanteLocal` se construye sobre
+`diaLocal` por eso, no sobre `ahora.getTime()`.
+
+### La ventana también iba colgada de la hora
+
+`ahora − 168 h` incluía o excluía el día más viejo **según la hora a la que
+corriera el cron**. Con una cita diaria fija daba siempre lo mismo; con una
+horaria la ventana cambiaría de tamaño veinticuatro veces al día y el ritmo daría
+saltos que **no están en el gasto**. Ahora se corta por días locales: hoy y los
+seis anteriores, siempre los mismos.
+
+### Lo que quedó fuera, y no es mío decidirlo
+
+🟠 **`precioDe(fila.model, fila.dia)` se come el día de la subida.** Las filas
+llevan `2026-08-31T00:00:00Z`, y el umbral de la subida es
+`2026-08-31T00:00:00-05:00` = `05:00Z`. Como `00:00Z < 05:00Z`, **todo el día 31
+se cobra al precio viejo** y la estimación sale hasta un 50 % baja ese día. Es un
+día y solo el de cada subida, pero va en la dirección incómoda —la misma que
+acabo de cerrar en dos sitios— y es una línea. **No lo toco: no está en el
+encargo.** Queda para que Doc decida.
+
+### Comprobado
+
+- `apps/api`: **707 pruebas en 36 suites, todas en verde**; `tsc --noEmit` limpio;
+  ESLint limpio en los tres archivos tocados.
+- `deploy.yml` se parsea como YAML válido y los otros cuatro disparadores
+  conservan su horario (`30 3,15`, `*/30`, `*/15`).
+- Cuatro pruebas nuevas o reescritas fijan lo de arriba: el día en curso medido a
+  dos horas distintas del mismo día, la ventana cortada por días locales, el
+  freno contra la cadencia **horaria** (≥ 23 h) y las claves separadas por umbral.
+
 ## Tres formas de que «verde» no signifique nada, en una sola tarde (2026-08-25)
 
 Salieron seguidas al desplegar la revalidación del socket, y las tres dan la
