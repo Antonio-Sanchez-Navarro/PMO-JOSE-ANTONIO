@@ -9,6 +9,68 @@
 
 ---
 
+## §45.1: el asunto colaba cabeceras, y la condición que lo permitía parecía una defensa (2026-08-25)
+
+`encodeHeader` devolvía el texto **intacto** si era ASCII puro:
+
+```ts
+if (/^[\x00-\x7F]*$/.test(texto)) return texto;
+```
+
+**`\r` y `\n` son ASCII** —0x0D y 0x0A—, así que un asunto como
+`Hola\r\nBcc: alguien@ejemplo.com` pasaba entero a `buildRawMessage`, que une
+las cabeceras **justo con `\r\n`**. El `Bcc` se convertía en una cabecera de
+verdad: copia oculta, sin aparecer en ninguna pantalla.
+
+> **La condición tenía cara de comprobación de seguridad y era la puerta.** Es la
+> familia de «verde por la razón equivocada», pero peor: aquí el código que
+> tranquiliza al que lo lee es el mismo que abre el agujero.
+
+Y el asunto de un borrador **lo redacta el modelo**, así que basta con que el
+copiloto lea un correo que lleve dentro la instrucción para que llegue hasta aquí
+sin que ninguna persona la teclee.
+
+**Arreglado en dos capas, y la separación es el fondo del asunto:**
+
+| Capa | Qué hace | Por qué ahí |
+|---|---|---|
+| `SendEmailDto` | **Rechaza** con un motivo legible | Es la frontera: quien se equivoca merece enterarse |
+| `encodeHeader` | **Sanea y no lanza** | Es la única que ninguna ruta puede saltarse |
+
+No es duplicar. Si mañana otra herramienta del copiloto arma un correo sin pasar
+por ese DTO, la garantía tiene que seguir en pie — y **una garantía que lanza deja
+de garantizar el día que alguien la envuelve en un `try`**.
+
+Dos detalles que costaría redescubrir:
+
+- **Los controles se sustituyen por un espacio, no se borran**, para que
+  `linea1\r\nlinea2` no acabe como `linea1linea2`.
+- **Se sanea antes de decidir la rama.** Codificar el original en base64 habría
+  metido los saltos **dentro** del *encoded-word*, y vuelven al decodificar.
+
+**`To` y `Cc` no estaban expuestos**: los cubre `@IsEmail`, que no admite CRLF. Se
+comprobó antes de tocarlos, en vez de blindarlos por si acaso.
+
+**La prueba arma el mensaje entero** y comprueba que no existe una cabecera `Bcc`.
+Probar `encodeHeader` a solas dejaría pasar una regresión que volviera a meter el
+texto en crudo desde otro sitio: el daño no se hace en la función, se hace al unir.
+
+### ⚠️ Un `\0` en el fuente es un byte NUL de verdad
+
+Escribiendo esas pruebas dejé un NUL **literal** dentro de `copilot.spec.ts`. El
+archivo compila y las pruebas pasan, pero `grep` lo declara **binario** y deja de
+buscar dentro — en un repositorio donde media verificación es un `grep`, eso es un
+archivo que se vuelve invisible sin que nadie lo note.
+
+Y de paso me hizo perder un rato en falso: `grep -c $'\x00'` **no sirve para
+detectarlo**, porque bash no puede pasar un NUL como argumento y el patrón llega
+vacío — con lo que cuenta **todas** las líneas y parece que todo está infectado.
+Se comprueba leyendo los bytes (`.count(b'\x00')`), no con `grep`.
+
+En las pruebas, los controles se escriben `String.fromCharCode(0)`.
+
+---
+
 ## Capa 3: vigilar lo que se consume, no lo que se hace (2026-08-25)
 
 Las tres pasadas de código dieron 27 hallazgos y **ninguno era una cuenta atrás**.
@@ -162,6 +224,24 @@ eligió para el modelo desconocido, que se estima **por arriba** a propósito.
 Dura una semana desde el estreno y vuelve cada vez que el consumo se interrumpe
 varios días. No lo he tocado: es un cambio de criterio, no un descuido, y va en el
 buzón para que lo decida Doc.
+
+### ✅ El ritmo, corregido (2026-08-25, autorizado por Doc)
+
+Ya no divide entre 7 fijo: **entre los días que la observación cubre de verdad**,
+contados desde el primer dato. Con la ventana entera cubierta el resultado no
+cambia, que es el caso de todos los días a partir de la primera semana.
+
+**Los días sin fila cuentan igual.** Un sábado sin correos es un cero **real** y
+tiene que pesar en la media; descontarlo inflaría el ritmo y adelantaría el aviso
+sin motivo. Lo que no era real es contar como observados los seis días anteriores
+a que la tabla existiera.
+
+**El divisor tiene suelo de dos días, y eso cuesta algo.** El primer día el ritmo
+sale la mitad del real y el aviso llega más tarde de lo que debería. Se acepta
+porque dura un día y porque un aviso falso el día del estreno es la forma más
+rápida de que alguien silencie el canal — pero **es una decisión, no una
+propiedad**, y va en la dirección incómoda. Está escrito en el código, junto al
+número.
 
 ### La estimación arranca hoy, y el mes ya llevaba gasto
 
