@@ -955,6 +955,72 @@ jobs:
           echo "Disparador ${TRABAJO} ${ESTADO}: 03:30 y 15:30 America/Cancun."
 
 
+      # La estimación de coste de IA, una vez al día (Capa 3)
+      #
+      # **Vigila lo que se consume, no lo que se hace.** Las tres pasadas de
+      # código dieron veintisiete hallazgos y ninguno era una cuenta atrás — y de
+      # las dos formas de que esto se pare un martes por la mañana, quedarse sin
+      # crédito es hoy la más probable: quedaban ~$8 en Anthropic y no los miraba
+      # nadie.
+      #
+      # ⚠️ **Diaria, y la cadencia va atada al freno del aviso** (23 h, en
+      # `ai-cost.service.ts`). El gasto es un fenómeno lento: preguntarlo cada
+      # hora no adelantaría el aviso, solo gastaría instancia. Y si alguien
+      # acelera este cron sin subir el freno, cada pasada caería en el borde y
+      # dejaría de frenar — que es exactamente lo que le pasó al barrido.
+      #
+      # ⚠️ Igual que los demás: **solo `create` o `update`, nunca `delete` ni
+      # `pause`.**
+      - name: Desplegar la estimacion de coste de IA
+        run: |
+          set -eo pipefail
+
+          TRABAJO=pmo-coste-ia
+
+          if ! SALIDA=$(gcloud scheduler jobs list --project "${PROJECT_ID}" --location "${REGION}" --limit=1 2>&1); then
+            echo "Lo que respondio gcloud:"
+            printf '%s\n' "${SALIDA}"
+            echo "::error::gcloud scheduler no responde en el runner (motivo exacto encima). NO se toca la estimacion de coste: nadie estara mirando cuanto credito queda."
+            exit 0
+          fi
+
+          if gcloud scheduler jobs describe "${TRABAJO}" \
+               --project "${PROJECT_ID}" --location "${REGION}" >/dev/null 2>&1; then
+            ACCION=update
+          else
+            ACCION=create
+          fi
+          echo "La estimacion ${TRABAJO}: se hace ${ACCION}."
+
+          URL=$(gcloud run services describe "${SERVICE}" \
+                  --project "${PROJECT_ID}" --region "${REGION}" --format 'value(status.url)')
+
+          if [ -z "${URL}" ]; then
+            echo "::error::No se pudo leer la URL de ${SERVICE}. NO se toca la estimacion de coste."
+            exit 0
+          fi
+
+          # 08:00 de Tulum: temprano, para que el aviso llegue al empezar el dia
+          # y no a media tarde con el gasto ya hecho.
+          gcloud scheduler jobs "${ACCION}" http "${TRABAJO}" \
+            --project="${PROJECT_ID}" \
+            --location="${REGION}" \
+            --schedule="0 8 * * *" \
+            --time-zone="America/Cancun" \
+            --uri="${URL}/cron/coste-ia" \
+            --http-method=POST \
+            --oidc-service-account-email="pmo-scheduler@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --oidc-token-audience="${URL}/cron" \
+            --quiet
+
+          ESTADO=$(gcloud scheduler jobs describe "${TRABAJO}" \
+            --project "${PROJECT_ID}" --location "${REGION}" --format='value(state)')
+          if [ "${ESTADO}" != "ENABLED" ]; then
+            echo "::error::La estimacion ${TRABAJO} esta en estado ${ESTADO}, no ENABLED. Mientras siga asi, nadie mira cuanto credito queda. Reanudala con: gcloud scheduler jobs resume ${TRABAJO} --location ${REGION}"
+            exit 0
+          fi
+          echo "Estimacion ${TRABAJO} ${ESTADO}: cada dia a las 08:00 America/Cancun"
+
       # La sonda del frontend, cada 30 minutos (Capa 2 del despliegue)
       #
       # **Pregunta en vez de esperar a que le cuenten**, que es toda la

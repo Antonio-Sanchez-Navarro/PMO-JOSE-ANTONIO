@@ -4,6 +4,7 @@ import { CronAuthGuard } from './cron-auth.guard';
 import { OverdueService } from '../overdue/overdue.service';
 import { GmailService } from '../gmail/gmail.service';
 import { FrontendAlDiaService } from './frontend-al-dia.service';
+import { AiCostService } from '../../common/costs/ai-cost.service';
 
 /**
  * Los temporizadores del producto, como rutas HTTP.
@@ -40,6 +41,7 @@ export class CronController {
     private readonly overdue: OverdueService,
     private readonly gmail: GmailService,
     private readonly frontend: FrontendAlDiaService,
+    private readonly costes: AiCostService,
   ) {}
 
   /**
@@ -102,6 +104,23 @@ export class CronController {
   @HttpCode(200)
   async comprobarFrontend() {
     return { ok: true, ...(await this.frontend.comprobar()) };
+  }
+
+  /**
+   * ¿Cuánto se está consumiendo de las APIs de modelos, y cuánto queda?
+   *
+   * **Capa 3: vigilar lo que se consume, no lo que se hace.** Las tres pasadas
+   * de código dieron veintisiete hallazgos y ninguno era una cuenta atrás — y de
+   * las dos formas de que esto se pare un martes por la mañana, quedarse sin
+   * crédito es hoy la más probable.
+   *
+   * Diaria y no más frecuente: el gasto es un fenómeno lento y preguntarlo cada
+   * hora no adelantaría el aviso, solo gastaría instancia.
+   */
+  @Post('coste-ia')
+  @HttpCode(200)
+  async comprobarCosteIa() {
+    return { ok: true, ...(await this.costes.comprobar()) };
   }
 
   /**

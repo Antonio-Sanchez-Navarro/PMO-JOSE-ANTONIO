@@ -2,6 +2,7 @@ import { CronController } from './cron.controller';
 import type { OverdueService } from '../overdue/overdue.service';
 import type { GmailService } from '../gmail/gmail.service';
 import type { FrontendAlDiaService } from './frontend-al-dia.service';
+import type { AiCostService } from '../../common/costs/ai-cost.service';
 
 /**
  * Las dos rutas que dispara Cloud Scheduler.
@@ -22,6 +23,7 @@ describe('CronController', () => {
       { sweep } as unknown as OverdueService,
       { renovarWatchDeTodos: renovar } as unknown as GmailService,
       { comprobar: frontend } as unknown as FrontendAlDiaService,
+      { comprobar: jest.fn().mockResolvedValue({ gastado: 0 }) } as unknown as AiCostService,
     );
 
     return { controller, sweep, renovar, frontend };

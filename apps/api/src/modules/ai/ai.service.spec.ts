@@ -32,12 +32,16 @@ const analizar = (service: AiService) =>
 describe('AiService', () => {
   let service: AiService;
 
+  /** El contador de costes: no decide nada aqui, solo se le llama. */
+  const costesDeMentira = () =>
+    ({ registrar: jest.fn().mockResolvedValue(undefined) }) as never;
+
   beforeEach(() => {
     const config = {
       get: jest.fn().mockReturnValue('sk-ant-de-prueba'),
       getOrThrow: jest.fn().mockReturnValue('claude-sonnet-5'),
     } as unknown as ConfigService;
-    service = new AiService(config);
+    service = new AiService(config, costesDeMentira());
   });
 
   it('exige ANTHROPIC_API_KEY al construirse', () => {
@@ -45,7 +49,7 @@ describe('AiService', () => {
       get: jest.fn().mockReturnValue(undefined),
       getOrThrow: jest.fn().mockReturnValue('claude-sonnet-5'),
     } as unknown as ConfigService;
-    expect(() => new AiService(config)).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => new AiService(config, costesDeMentira())).toThrow(/ANTHROPIC_API_KEY/);
   });
 
   describe('extracción de dueDate', () => {

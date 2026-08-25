@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AiCostService } from '../../common/costs/ai-cost.service';
 import Anthropic from '@anthropic-ai/sdk';
 import { TaskPriority } from '@prisma/client';
 import {
@@ -164,7 +165,10 @@ export class AiService {
   private readonly model: string;
   private readonly logger = new Logger(AiService.name);
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly costes: AiCostService,
+  ) {
     // Sin fallback: una clave inventada solo difiere el fallo hasta el primer
     // job y lo disfraza de error 401. Mejor no arrancar.
     const apiKey = this.config.get<string>('ANTHROPIC_API_KEY');
@@ -230,6 +234,21 @@ export class AiService {
       }
       throw error;
     }
+
+    // ─── Anotar lo que costo, antes de interpretar la respuesta ──────────
+    //
+    // Va **aqui y no despues de validar** a proposito: una respuesta que llega
+    // y no sirve —un `refusal`, un bloque que falta— **ya se pago**. Anotarla
+    // solo cuando el resultado es util haria que el gasto pareciera menor justo
+    // cuando algo va mal, que es cuando mas importa saberlo.
+    //
+    // No se espera al `await`... si se espera, pero el metodo no lanza nunca:
+    // el contador no puede tumbar el trabajo que esta midiendo.
+    await this.costes.registrar(
+      response.model ?? this.model,
+      response.usage?.input_tokens ?? 0,
+      response.usage?.output_tokens ?? 0,
+    );
 
     if (response.stop_reason === 'refusal') {
       throw new Error('Claude rechazó analizar el correo (stop_reason: refusal)');

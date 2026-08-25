@@ -250,3 +250,31 @@ model TimeEntry {
   /// Y la tarjeta, por los fichajes de su tarea.
   @@index([taskId])
 }
+
+/// Lo que se consume de las APIs de modelos, por dia y por modelo.
+///
+/// Existe porque hasta el 2026-08-25 **no se registraba nada**: cada llamada
+/// devolvia su `usage` y se tiraba. Vigilabamos lo que el sistema hace y no lo
+/// que consume, y de las dos formas de que esto se pare un martes por la
+/// manana, la segunda era la mas probable.
+///
+/// Una fila por dia y modelo, no una por llamada: lo que se necesita es el
+/// ritmo, no la auditoria. Miles de filas al mes para responder "cuanto queda"
+/// serian caras de sumar y no dirian nada mas.
+model AiUsage {
+  id           String   @id @default(cuid())
+  /// Dia en hora local (ver ZONA_POR_DEFECTO), para que el corte coincida con
+  /// el resto de las metricas del tablero.
+  dia          DateTime @db.Date
+  /// El id exacto del modelo, no su familia: los precios difieren entre ellos
+  /// y agregarlos haria imposible estimar el coste.
+  model        String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  /// Cuantas llamadas hubo. Sirve para ver si el gasto sube por volumen o por
+  /// tamano de los correos, que se arreglan de formas distintas.
+  llamadas     Int      @default(0)
+  actualizado  DateTime @updatedAt
+
+  @@unique([dia, model])
+}

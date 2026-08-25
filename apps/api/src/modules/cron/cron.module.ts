@@ -6,6 +6,7 @@ import { SecurityModule } from '../../common/security/security.module';
 import { OverdueModule } from '../overdue/overdue.module';
 import { GmailModule } from '../gmail/gmail.module';
 import { AlertModule } from '../../common/alerts/alert.module';
+import { CostsModule } from '../../common/costs/costs.module';
 import { FrontendAlDiaService } from './frontend-al-dia.service';
 
 /**
@@ -17,7 +18,7 @@ import { FrontendAlDiaService } from './frontend-al-dia.service';
  * desde otro sitio, sin pasar por la ruta.
  */
 @Module({
-  imports: [ConfigModule, SecurityModule, OverdueModule, GmailModule, AlertModule],
+  imports: [ConfigModule, SecurityModule, OverdueModule, GmailModule, AlertModule, CostsModule],
   controllers: [CronController],
   providers: [CronAuthGuard, FrontendAlDiaService],
 })
