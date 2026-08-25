@@ -764,7 +764,7 @@ Con esto el código y la documentación están inmaculados, el CI/CD en verde, y
 
 ### ⚠️ Aviso sobre cuota de Upstash (Sondeo de 30s)
 
-⏳ **EN PROGRESO (2026-08-25).** Alana alertó que el arreglo original de @Gravity usaba `/health` para el latido periódico y reservaba `/health/ready` para fallos (`failing === true`). Esto dejaba al semáforo "ciego": si Redis o Postgres caían, `/health` seguía devolviendo 200 OK y `failing` nunca pasaba a `true`. Se le ha asignado a @Gravity deshacer la condición y hacer que el latido llame a `/health/ready` pero cada **5 minutos** (300s) en lugar de 30s. Esto recorta el consumo a 288 comandos/día por pestaña (1.7% del plan gratuito), siendo sostenible y manteniendo la visibilidad de las dependencias.
+✅ **RESUELTO (2026-08-25).** Alana alertó que el primer arreglo de @Gravity usaba `/health` para el latido periódico y reservaba `/health/ready` para fallos, lo que dejaba al semáforo ciego a las caídas de Redis/Postgres. @Gravity lo corrigió (`ba609aa`): el latido ahora es contra `/health/ready` para mantener lectura profunda, pero el intervalo subió a **5 minutos (300s)**. Esto recorta el consumo a ~288 comandos/día por pestaña (1.7% del plan gratuito), siendo sostenible y devolviendo al semáforo su utilidad.
 
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
