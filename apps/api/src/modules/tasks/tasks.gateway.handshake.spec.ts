@@ -147,10 +147,44 @@ describe('TasksGateway · el contrato del handshake, de punta a punta', () => {
 
     await desenlace(cliente);
 
-    const aviso = await new Promise<{ codigo?: string }>((resolve) => {
-      cliente.on(SESSION_EVENTS.rechazada, resolve);
-    });
+    // ⚠️ **Esta espera dura ~6 s de reloj de pared por diseño**: 1 s de token
+    // más los 5 s de `MARGEN_DE_RELOJ_MS`. No se puede acortar sin hacer
+    // configurable ese margen, que es código de producción.
+    //
+    // Y por eso lleva **30 s y no 15**: con 15 se cayó en CI el 2026-08-25
+    // —`Exceeded timeout of 15000 ms`— mientras en local pasaba tres de tres.
+    // La diferencia no es el código: **en CI jest reparte las 36 suites entre
+    // varios workers y el `setTimeout` del gateway compite por CPU**, así que
+    // seis segundos de reloj se estiran. En local, con `--runInBand`, no compite
+    // con nadie. Es la trampa de siempre del revés: verde donde miramos.
+    //
+    // El corte propio está para que, si el aviso no llega, el fallo diga **qué**
+    // no pasó en vez del error genérico de jest — que además señalaba la línea
+    // equivocada y me mandó a mirar una prueba que no era.
+    // El corte **se cancela al ganar la carrera**. Sin ese `clearTimeout`, el
+    // temporizador de 20 s sigue vivo cuando la prueba ya terminó y jest avisa
+    // con «Jest did not exit one second after the test run has completed» —
+    // exactamente lo que me salió al escribir esto sin limpiarlo. Un vigía que
+    // sobrevive a lo que vigilaba es un recurso colgando.
+    let corte: NodeJS.Timeout | undefined;
+
+    const aviso = await Promise.race([
+      new Promise<{ codigo?: string }>((resolve) => {
+        cliente.on(SESSION_EVENTS.rechazada, resolve);
+      }),
+      new Promise<never>((_, reject) => {
+        corte = setTimeout(
+          () =>
+            reject(
+              new Error(
+                'No llegó SESSION_EVENTS.rechazada en 20 s: ¿REVALIDACION_ACTIVA está apagada?',
+              ),
+            ),
+          20_000,
+        );
+      }),
+    ]).finally(() => clearTimeout(corte));
 
     expect(aviso.codigo).toBe('SESION_CADUCADA');
-  }, 15_000);
+  }, 30_000);
 });
