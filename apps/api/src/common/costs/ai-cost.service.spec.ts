@@ -2,7 +2,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { AlertService } from '../alerts/alert.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { AiCostService } from './ai-cost.service';
-import { precioDe, subidaCercana } from './precios-modelo';
+import { precioDe, precioDelDia, subidaCercana } from './precios-modelo';
 
 /**
  * La estimación de coste — Capa 3.
@@ -74,6 +74,24 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
 
     expect((await antes.service.estimar(new Date('2026-08-30T12:00:00Z'))).gastado).toBeCloseTo(2, 5);
     expect((await despues.service.estimar(new Date('2026-09-01T12:00:00Z'))).gastado).toBeCloseTo(3, 5);
+  });
+
+  it('el DIA de la subida ya se cobra caro, no el siguiente', async () => {
+    // Regresion del 2026-08-25: `aiUsage.dia` guarda el dia local como
+    // medianoche UTC, asi que la fila del 31 lleva dentro 2026-08-31T00:00:00Z
+    // -las 19:00 del dia 30 en Tulum-. Pasandola por `precioDe`, que compara
+    // instantes, el dia entero de la subida se cobraba al precio viejo: hasta
+    // un 50% de menos justo el dia en que el gasto se encarece, y hacia «queda
+    // mas de lo que queda». Se caza antes de que muerda: la subida es el 31.
+    const { service } = crear([
+      { dia: '2026-08-31', model: 'claude-sonnet-5', entrada: 1_000_000, salida: 0 },
+    ]);
+
+    const e = await service.estimar(new Date('2026-08-31T12:00:00Z'));
+
+    // $3 por el millon de entrada, que es el precio nuevo. Con el fallo eran $2.
+    expect(e.gastado).toBeCloseTo(3, 5);
+    expect(e.gastado).not.toBeCloseTo(2, 5);
   });
 
   it('un modelo desconocido se estima por ARRIBA, no como gratis', async () => {
@@ -347,6 +365,37 @@ describe('precios · el dato que caduca', () => {
 
     expect(vispera.entrada).toBe(2);
     expect(diaD.entrada).toBe(3);
+  });
+
+  describe('precioDelDia · una fecha del calendario NO es un instante', () => {
+    // Las dos funciones reciben un `Date` y hacen cosas distintas a proposito.
+    // `precioDe` compara instantes; `precioDelDia` compara dias del calendario,
+    // que es lo que guarda `aiUsage.dia`. Confundirlas costaba un dia entero de
+    // estimacion al 50% de menos.
+
+    it('la fila del dia de la subida ya lleva el precio nuevo', () => {
+      expect(precioDelDia('claude-sonnet-5', new Date('2026-08-31T00:00:00Z')).entrada).toBe(3);
+    });
+
+    it('y la vispera sigue con el viejo', () => {
+      expect(precioDelDia('claude-sonnet-5', new Date('2026-08-30T00:00:00Z')).entrada).toBe(2);
+    });
+
+    it('las dos funciones NO coinciden sobre la misma fila, y por eso hay dos', () => {
+      // La misma marca de dia por los dos caminos. Si esto empezara a coincidir
+      // seria que alguien reunifico las escalas y el fallo puede volver.
+      const marca = new Date('2026-08-31T00:00:00Z');
+
+      expect(precioDelDia('claude-sonnet-5', marca).entrada).toBe(3);
+      expect(precioDe('claude-sonnet-5', marca).entrada).toBe(2);
+    });
+
+    it('un modelo sin subida programada da igual por que camino se pregunte', () => {
+      const marca = new Date('2026-08-31T00:00:00Z');
+
+      expect(precioDelDia('claude-opus-5', marca)).toEqual(precioDe('claude-opus-5', marca));
+      expect(precioDelDia('modelo-que-nadie-anadio', marca).entrada).toBe(10);
+    });
   });
 
   it('la subida se anuncia antes de que ocurra', () => {

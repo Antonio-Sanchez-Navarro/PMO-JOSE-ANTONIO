@@ -70,19 +70,71 @@ export const PRECIO_DESCONOCIDO: PrecioModelo = {
   revisadoEl: '2026-08-25',
 };
 
-/** El precio de un modelo en una fecha dada, aplicando los cambios programados. */
+/**
+ * Cuándo entra en vigor un cambio de precio, como instante.
+ *
+ * ⚠️ **`-05:00` y no `Z`.** Una subida anunciada «el 31» empieza a las 00:00 de
+ * Tulum, que son las 05:00 UTC: con `Z` se encarecerían las cinco últimas horas
+ * del día 30. `America/Cancun` es UTC−5 fijo y no cambia con el horario de
+ * verano —ver `ZONA_POR_DEFECTO` en `common/time-zone.ts`—, así que el desfase
+ * se puede escribir aquí sin que caduque.
+ */
+const entraEnVigor = (el: string): Date => new Date(`${el}T00:00:00-05:00`);
+
+/** El día del calendario de una fila de `aiUsage`, como `YYYY-MM-DD`. */
+const diaDelCalendario = (dia: Date): string => dia.toISOString().slice(0, 10);
+
+/** El mismo precio con la subida ya aplicada. */
+const conLaSubidaPuesta = (
+  base: PrecioModelo,
+  cambia: NonNullable<PrecioModelo['cambia']>,
+): PrecioModelo => ({
+  entrada: cambia.entrada,
+  salida: cambia.salida,
+  revisadoEl: base.revisadoEl,
+});
+
+/**
+ * El precio de un modelo en un **instante** dado.
+ *
+ * ⚠️ **Para las filas de `aiUsage` NO es esta, es
+ * {@link precioDelDia}.** No son intercambiables aunque las dos reciban un
+ * `Date`, y confundirlas cuesta un día entero de estimación — está contado ahí.
+ */
 export function precioDe(model: string, cuando: Date = new Date()): PrecioModelo {
   const base = PRECIOS[model] ?? PRECIO_DESCONOCIDO;
 
-  if (base.cambia && cuando >= new Date(`${base.cambia.el}T00:00:00-05:00`)) {
-    return {
-      entrada: base.cambia.entrada,
-      salida: base.cambia.salida,
-      revisadoEl: base.revisadoEl,
-    };
-  }
+  return base.cambia && cuando >= entraEnVigor(base.cambia.el)
+    ? conLaSubidaPuesta(base, base.cambia)
+    : base;
+}
 
-  return base;
+/**
+ * El precio que rigió un **día del calendario**, para las filas de `aiUsage`.
+ *
+ * ⚠️ **Existe porque `aiUsage.dia` no es un instante: es una fecha disfrazada de
+ * `Date`.** `AiCostService.diaLocal` guarda el día local como medianoche UTC, así
+ * que la fila del 31 de agosto lleva dentro `2026-08-31T00:00:00Z` — que como
+ * instante son **las 19:00 del día 30 en Tulum**, cinco horas antes de que la
+ * subida entre en vigor.
+ *
+ * Pasándola por {@link precioDe}, el resultado era que **el día entero de la
+ * subida se cobraba al precio viejo**: hasta un 50 % de menos justo el día en que
+ * el gasto se encarece, y en la dirección de «queda más de lo que queda», que es
+ * por donde se llega a cero sin aviso. Encontrado el 2026-08-25, antes de que
+ * mordiera: la primera subida es el 31.
+ *
+ * **La cura es no volver a mezclar las dos escalas.** Aquí no se convierte nada a
+ * instante: se comparan dos fechas `YYYY-MM-DD` como texto, que en formato ISO
+ * ordena igual que el calendario. Sin husos por medio no hay desfase que
+ * equivocarse.
+ */
+export function precioDelDia(model: string, dia: Date): PrecioModelo {
+  const base = PRECIOS[model] ?? PRECIO_DESCONOCIDO;
+
+  return base.cambia && diaDelCalendario(dia) >= base.cambia.el
+    ? conLaSubidaPuesta(base, base.cambia)
+    : base;
 }
 
 /** ¿Hay subidas de precio pendientes en los próximos `dias`? */
@@ -95,7 +147,7 @@ export function subidaCercana(
 
   for (const [model, precio] of Object.entries(PRECIOS)) {
     if (!precio.cambia) continue;
-    const el = new Date(`${precio.cambia.el}T00:00:00-05:00`);
+    const el = entraEnVigor(precio.cambia.el);
     if (el < cuando || el > limite) continue;
 
     subidas.push({

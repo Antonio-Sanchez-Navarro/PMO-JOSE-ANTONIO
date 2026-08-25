@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AlertService } from '../alerts/alert.service';
 import { describirError } from '../observability/describir-error';
 import { ZONA_POR_DEFECTO } from '../time-zone';
-import { precioDe, subidaCercana } from './precios-modelo';
+import { precioDe, precioDelDia, subidaCercana } from './precios-modelo';
 
 /** Presupuesto por defecto, en dólares, si no se configura otro. */
 const PRESUPUESTO_POR_DEFECTO = 20;
@@ -160,7 +160,12 @@ export class AiCostService {
       // El precio del **día en que se consumió**, no el de hoy: si Sonnet 5 sube
       // el 31, lo gastado antes siguió costando lo de antes. Sumar todo al
       // precio nuevo inflaría el pasado y el aviso llegaría antes de tiempo.
-      const precio = precioDe(fila.model, fila.dia);
+      //
+      // ⚠️ **`precioDelDia` y no `precioDe`**: `fila.dia` es una fecha del
+      // calendario disfrazada de `Date`, no un instante. Con `precioDe` se le
+      // aplicaban las cinco horas del huso y **el día entero de la subida se
+      // cobraba barato** — está contado en `precios-modelo.ts`.
+      const precio = precioDelDia(fila.model, fila.dia);
       const coste =
         (fila.inputTokens / 1_000_000) * precio.entrada +
         (fila.outputTokens / 1_000_000) * precio.salida;
@@ -301,7 +306,8 @@ export class AiCostService {
     let primerDia = filas[0].dia.getTime();
 
     for (const fila of filas) {
-      const precio = precioDe(fila.model, fila.dia);
+      // Por día del calendario, igual que en `estimar`: ver `precios-modelo.ts`.
+      const precio = precioDelDia(fila.model, fila.dia);
       total +=
         (fila.inputTokens / 1_000_000) * precio.entrada +
         (fila.outputTokens / 1_000_000) * precio.salida;
