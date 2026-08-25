@@ -23,9 +23,9 @@ infraestructura de Gravity.
 
 | Encargo | Dónde quedó |
 | --- | --- |
-| §47.2: Inclusión de `vercel.json` en `ignoreCommand` | `7a3cd68` — Añadido `':(top)vercel.json'` al filtro `git diff` de `vercel.json` para que cambios en la configuración de cabeceras o build de Vercel no sean ignorados. |
+| §47.2: Inclusión de `vercel.json` en `ignoreCommand` | `37727b9` — Añadido `vercel.json` al filtro `git diff` de `vercel.json` para que cambios en la configuración de cabeceras o build de Vercel disparen despliegue. |
 | §47.6: Soporte de campo `cc` en borrador de correo del Copiloto | `7a3cd68` — Añadido `cc` a `DraftEmailData`, inputs de edición en `DraftEmailCard.tsx`, envío hacia `/copilot/emails/send` y extracción del payload SSE en `CopilotDrawer.tsx`. |
-| §47.7: Toast de error y limpieza en creación de etiquetas duplicadas (`TagManagerModal.tsx`) | `7a3cd68` — Sustituido `console.error` silencioso por `toast.error(err.message)` y reseteo del campo de texto tras error. |
+| §47.7: Toast de error y limpieza en creación/carga de etiquetas (`TagManagerModal.tsx` y `useTags.ts`) | `7a3cd68` — Sustituido `console.error` silencioso por `toast.error(err.message)` y reseteo del campo de texto tras error en `TagManagerModal.tsx`; añadido `toast.error` en `fetchTags` (`useTags.ts`). |
 | §47.8: Protección contra carreras al cambiar de agrupación en `TimeReportModal.tsx` | `7a3cd68` — Implementado contador de generación con `generationRef` para descartar respuestas asíncronas desordenadas de `getTimeReport`. |
 | §45.2: Deriva de zona horaria en tramos manuales (`TimeEntriesModal.tsx`) | `d141f71` — Implementada conversión local `toLocalDatetimeValue` para alimentar `<input type="datetime-local">` sin la deriva de +5h de UTC; parseo limpio a ISO al guardar sin doble-desplazamiento. |
 | §45.3: Habilitada prioridad `URGENT` en creación manual de tareas (`TaskModal.tsx`) y traducción en `CreateTaskCard.tsx` | `d141f71` — Añadido `URGENT` al esquema Zod y al `<select>` de `TaskModal.tsx`; añadidas etiquetas `Baja`, `Media`, `Alta`, `Urgente` (`PRIORITY_LABELS`) en `CreateTaskCard.tsx`. |
