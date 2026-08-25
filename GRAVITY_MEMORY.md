@@ -23,6 +23,7 @@ infraestructura de Gravity.
 
 | Encargo | Dónde quedó |
 | --- | --- |
+| §49: Fuga de cuota de Upstash por el sondeo de salud de 30 s | `8453d3f` — El latido periódico de `App.tsx` pasa de `/health/ready` a `/health`, que responde sin tocar Postgres ni Redis. La profunda queda para la carga inicial y para los reintentos mientras la API está caída. De paso se arregló la tarjeta: `/health/ready` devuelve la forma de Terminus y pintaba `vundefined · uptime undefineds`, así que tras pasar la profunda se pide la superficial para tener `version` y `uptimeSec`. |
 | §47.2: Inclusión de `vercel.json` en `ignoreCommand` | `37727b9` — Añadido `vercel.json` al filtro `git diff` de `vercel.json` para que cambios en la configuración de cabeceras o build de Vercel disparen despliegue. |
 | §47.6: Soporte de campo `cc` en borrador de correo del Copiloto | `7a3cd68` — Añadido `cc` a `DraftEmailData`, inputs de edición en `DraftEmailCard.tsx`, envío hacia `/copilot/emails/send` y extracción del payload SSE en `CopilotDrawer.tsx`. |
 | §47.7: Toast de error y limpieza en creación/carga de etiquetas (`TagManagerModal.tsx` y `useTags.ts`) | `7a3cd68` — Sustituido `console.error` silencioso por `toast.error(err.message)` y reseteo del campo de texto tras error en `TagManagerModal.tsx`; añadido `toast.error` en `fetchTags` (`useTags.ts`). |
@@ -471,3 +472,24 @@ línea a línea, está en la sección 12 de `ALANA.md`.
 
 - **Nunca usar substrings sobre `error.message`:** No usar `error.message.includes('401')` ni `error.message.includes('409')`.
 - **Inspección tipada:** Comprobar siempre `err instanceof ApiError && err.status === 409` (o el código correspondiente) utilizando la clase `ApiError` centralizada en `lib/api`.
+
+### 6. Un indicador de estado en el navegador no usa la sonda profunda
+
+- **`/health/ready` cuesta dinero por vuelta.** Hace ping a Postgres y a Redis
+  en cada llamada. Un `setInterval` de 30 s en el navegador son ~2.900 comandos
+  de Upstash al día **por pestaña abierta**: la fuga escala con las pestañas, no
+  con los usuarios, y no aparece en ningún log de error.
+- **El latido va contra `/health`**, que responde con la misma forma
+  (`status`, `service`, `version`, `uptimeSec`, `timestamp`) sin tocar
+  dependencias. La profunda se reserva para la primera carga y para los
+  reintentos **mientras ya sabes que está caída** — ahí el coste está
+  justificado porque es cuando el detalle de *cuál* dependencia falló sirve
+  para algo.
+- **Las dos sondas no devuelven lo mismo.** `/health` da el objeto plano;
+  `/health/ready` da la forma de Terminus (`status`, `info`, `error`,
+  `details`), **sin `version` ni `uptimeSec`**. Tipar la respuesta de una con el
+  tipo de la otra compila igual y pinta `undefined` en pantalla: el `as T` de
+  `apiFetch` no comprueba nada en tiempo de ejecución.
+- **`API_CONTRACTS.md` sigue recomendando `/health/ready` para pintar el estado
+  del sistema.** Era el consejo correcto antes de que el coste importara; queda
+  anotado en el buzón para que Doc decida si se corrige el contrato.
