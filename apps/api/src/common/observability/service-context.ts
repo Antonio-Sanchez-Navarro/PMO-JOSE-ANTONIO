@@ -13,7 +13,7 @@
 export const SERVICE_NAME = process.env.K_SERVICE ?? 'pmo-api';
 
 export const SERVICE_VERSION =
-  process.env.K_REVISION ?? process.env.SERVICE_VERSION ?? '0.1.0';
+  process.env.SERVICE_VERSION ?? process.env.K_REVISION ?? '0.1.0';
 
 export const SERVICE_CONTEXT = {
   service: SERVICE_NAME,

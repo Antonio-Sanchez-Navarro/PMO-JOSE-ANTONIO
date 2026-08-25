@@ -46,8 +46,13 @@ export const PRECIOS: Record<string, PrecioModelo> = {
       porQue: 'acaba el precio de lanzamiento de Sonnet 5',
     },
   },
+  'claude-fable-5': { entrada: 10, salida: 50, revisadoEl: '2026-08-25' },
+  'claude-mythos-5': { entrada: 10, salida: 50, revisadoEl: '2026-08-25' },
   'claude-opus-5': { entrada: 5, salida: 25, revisadoEl: '2026-08-25' },
   'claude-opus-4-8': { entrada: 5, salida: 25, revisadoEl: '2026-08-25' },
+  'claude-opus-4-7': { entrada: 5, salida: 25, revisadoEl: '2026-08-25' },
+  'claude-opus-4-6': { entrada: 5, salida: 25, revisadoEl: '2026-08-25' },
+  'claude-sonnet-4-6': { entrada: 3, salida: 15, revisadoEl: '2026-08-25' },
   'claude-haiku-4-5': { entrada: 1, salida: 5, revisadoEl: '2026-08-25' },
 };
 
@@ -60,8 +65,8 @@ export const PRECIOS: Record<string, PrecioModelo> = {
  * pase es recuperable; que se quede corta es cómo se llega a cero sin aviso.
  */
 export const PRECIO_DESCONOCIDO: PrecioModelo = {
-  entrada: 5,
-  salida: 25,
+  entrada: 10,
+  salida: 50,
   revisadoEl: '2026-08-25',
 };
 
@@ -69,7 +74,7 @@ export const PRECIO_DESCONOCIDO: PrecioModelo = {
 export function precioDe(model: string, cuando: Date = new Date()): PrecioModelo {
   const base = PRECIOS[model] ?? PRECIO_DESCONOCIDO;
 
-  if (base.cambia && cuando >= new Date(base.cambia.el)) {
+  if (base.cambia && cuando >= new Date(`${base.cambia.el}T00:00:00-05:00`)) {
     return {
       entrada: base.cambia.entrada,
       salida: base.cambia.salida,
@@ -80,27 +85,28 @@ export function precioDe(model: string, cuando: Date = new Date()): PrecioModelo
   return base;
 }
 
-/** ¿Hay una subida de precio pendiente en los próximos `dias`? */
+/** ¿Hay subidas de precio pendientes en los próximos `dias`? */
 export function subidaCercana(
   cuando: Date = new Date(),
   dias = 14,
-): { model: string; el: string; porQue: string; subida: number } | null {
+): { model: string; el: string; porQue: string; subida: number }[] {
   const limite = new Date(cuando.getTime() + dias * 24 * 3_600_000);
+  const subidas = [];
 
   for (const [model, precio] of Object.entries(PRECIOS)) {
     if (!precio.cambia) continue;
-    const el = new Date(precio.cambia.el);
+    const el = new Date(`${precio.cambia.el}T00:00:00-05:00`);
     if (el < cuando || el > limite) continue;
 
-    return {
+    subidas.push({
       model,
       el: precio.cambia.el,
       porQue: precio.cambia.porQue,
       // Cuánto sube la entrada, que es la parte que domina en la clasificación:
       // los correos son largos y las respuestas cortas.
       subida: Math.round((precio.cambia.entrada / precio.entrada - 1) * 100),
-    };
+    });
   }
 
-  return null;
+  return subidas;
 }

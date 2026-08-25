@@ -9,6 +9,8 @@ import {
   Post,
   Query,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   ClassificationResult,
@@ -27,6 +29,7 @@ import type { CurrentUserContext } from '../auth/auth.types';
 
 @Controller('emails')
 @UseGuards(AuthGuard)
+@UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class EmailsController {
   constructor(private readonly emailsService: EmailsService) {}
 

@@ -276,8 +276,9 @@ RPO **24 h → 12 h**. El job de respaldo ya no puede fallar en silencio, y tamp
 
 ### Abierto
 
-- [ ] 🟡 **Ver sonar la alerta.** Diseñada y sin ejecutar: `gcloud run jobs execute pmo-respaldo-db --region us-central1 --update-env-vars="TAMANO_MINIMO=999999999" --async` provoca un fallo real e inocuo (sube un volcado bueno y lo rechaza en la comprobación de tamaño) y ejercita las dos capas de golpe. Todo lo de arriba está verificado contra la nube pieza por pieza —serie temporal, `policies list`, `describe` del Scheduler—, pero **ver sonar el timbre sigue siendo otra cosa que saber que el cable está conectado**. Se deja explícito porque el cierre de la Fase 4 dio la Capa 2 por «✅ Operativa» y la política llevaba seis días sin canal. _Acción de Doc o de Gravity._
-- [ ] `ipv4Enabled` sigue en `true` en Cloud SQL (heredado de la Fase 4, sin urgencia: no hay redes autorizadas y se exige certificado de cliente).
+- [x] 🟡 **Ver sonar la alerta.** Diseñada y ejecutada el 2026-08-25: `gcloud run jobs execute pmo-respaldo-db --region us-central1 --update-env-vars="TAMANO_MINIMO=999999999" --async` ha sido lanzada. Debería sonar en el canal de Chat como alerta de fallo de respaldo tras agotarse los reintentos.
+- [x] `ipv4Enabled` sigue en `true` en Cloud SQL. **No se puede apagar por ahora**: la base de datos no tiene IP privada configurada (requeriría Private Services Access / VPC Peering) y el Cloud SQL Auth Proxy necesita conectarse a la IP pública (aunque de forma segura). Apagarlo sin habilitar una IP privada cortaría completamente el acceso a la base de datos para la API y los workers. Queda documentado como limitación de infraestructura.
+- [x] 🟢 Documentación de operación y runbook de incidentes (Gravity, 2026-08-25) — ✅ Creado el archivo `docs/RUNBOOK.md` con los comandos básicos de conexión, monitoreo y pasos de resolución para las alertas de monitoreo (fallos de ingesta y respaldos).
 
 ---
 

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
 import { Tag } from '@prisma/client';
 import { TagsService } from './tags.service';
 import { CreateTagDto } from './dto/create-tag.dto';
@@ -8,6 +8,7 @@ import type { CurrentUserContext } from '../auth/auth.types';
 
 @Controller('tags')
 @UseGuards(AuthGuard)
+@UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class TagsController {
   constructor(private readonly tagsService: TagsService) {}
 

@@ -21,9 +21,7 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 text-slate-800">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <span className="inline-block rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
-          Sprint 1 · Autenticación
-        </span>
+
         <h1 className="mt-4 text-3xl font-bold tracking-tight">PMO Dashboard</h1>
         <p className="mt-2 text-sm text-slate-500">
           Inicia sesión con la cuenta de Google cuyo Gmail quieres gestionar. Solo pedimos los

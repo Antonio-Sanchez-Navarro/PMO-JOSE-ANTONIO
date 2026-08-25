@@ -1,11 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { EsZonaHorariaValida } from '../../../common/time-zone';
 
 /** Query de `GET /time/entries`. Todos los filtros son opcionales. */
 export class QueryTimeDto {
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   taskId?: string;
 
   /** Desde (ISO). Se compara contra `startedAt`. */

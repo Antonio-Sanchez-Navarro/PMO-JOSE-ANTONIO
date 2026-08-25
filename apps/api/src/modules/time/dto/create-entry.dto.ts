@@ -10,6 +10,7 @@ import { IsDateString, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class
 export class CreateEntryDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(64)
   taskId!: string;
 
   @IsDateString()

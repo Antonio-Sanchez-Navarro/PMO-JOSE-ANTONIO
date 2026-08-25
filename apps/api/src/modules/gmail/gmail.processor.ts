@@ -45,7 +45,10 @@ export class GmailProcessor extends WorkerHost {
     }
 
     this.logger.log(`Activando watch de Gmail para el usuario ${userId}`);
-    await this.gmailService.watchInbox(userId);
+    const result = await this.gmailService.watchInbox(userId);
+    if (!result.ok) {
+      throw new Error(`Falló watchInbox para el usuario ${userId}: ${result.motivo}`);
+    }
   }
 
   private async handleSyncHistory(job: Job<GmailJob>): Promise<unknown> {

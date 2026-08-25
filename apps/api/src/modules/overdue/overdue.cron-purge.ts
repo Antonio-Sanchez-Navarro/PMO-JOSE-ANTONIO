@@ -2,6 +2,10 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { OVERDUE_QUEUE, OVERDUE_SCHEDULER_ID } from './overdue.constants';
+import {
+  describirError,
+  stackDe,
+} from '../../common/observability/describir-error';
 
 /**
  * Borra de Redis el cron repetible que este módulo programaba.
@@ -71,8 +75,8 @@ export class OverdueCronPurge implements OnModuleInit {
       // puede pasar es que un fallo aquí tumbe el arranque, porque entonces un
       // Redis caído dejaría la API entera fuera por una tarea de limpieza.
       this.logger.error(
-        'No se pudo purgar el cron BullMQ de vencidas (¿Redis caído?). Puede quedar un barrido duplicado.',
-        error,
+        `No se pudo purgar el cron BullMQ de vencidas (¿Redis caído?). Puede quedar un barrido duplicado: ${describirError(error)}`,
+        stackDe(error),
       );
     }
   }

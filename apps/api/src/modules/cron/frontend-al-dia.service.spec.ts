@@ -37,9 +37,24 @@ describe('FrontendAlDiaService · pregunta si producción está al día', () => 
         return { ok: v.ok, status: v.ok ? 200 : 503, json: async () => v.body };
       }
 
-      if (u.includes('/commits?')) {
+      if (u.includes('/commits')) {
         if (r.commits === null) return { ok: false, status: 500, json: async () => [] };
         const c = r.commits ?? { sha: REFERENCIA, fecha: HACE_MUCHO };
+
+        if (!u.includes('?')) {
+          // Detalle de un commit individual
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sha: c.sha,
+              commit: { committer: { date: c.fecha } },
+              files: [{ filename: 'apps/web/App.tsx' }],
+            }),
+          };
+        }
+
+        // Lista de commits
         return {
           ok: true,
           status: 200,
@@ -170,5 +185,27 @@ describe('FrontendAlDiaService · pregunta si producción está al día', () => 
     // Cuarto argumento: la ventana de silencio. Con una igual o menor que la
     // cadencia no frenaria nada, que es la leccion del barrido.
     expect(avisar.mock.calls[0][3]).toBeGreaterThan(3_600);
+  });
+
+  describe('invariante: sincronización con vercel-ignore.sh', () => {
+    it('las rutas vigiladas coinciden exactamente con las que disparan el build', () => {
+      // ⚠️ Si la sonda mira rutas distintas a las que Vercel usa para
+      // reconstruir, gritará de falsos positivos o callará verdaderos atrasos.
+      // Aquí se fija que ambas listas sean la misma.
+      const fs = require('fs');
+      const path = require('path');
+      
+      const { RUTAS_DEL_FRONTEND } = require('./frontend-al-dia.service');
+      const ignorePath = path.resolve(__dirname, '../../../../../scripts/vercel-ignore.sh');
+      const script = fs.readFileSync(ignorePath, 'utf8');
+
+      for (const ruta of RUTAS_DEL_FRONTEND) {
+        expect(script).toContain(`':(top)${ruta}'`);
+      }
+      
+      // Asegurar que el propio script y la regla de Markdown también están en el archivo
+      expect(script).toContain(`':(top)scripts/vercel-ignore.sh'`);
+      expect(script).toContain(`':(exclude)**/*.md'`);
+    });
   });
 });

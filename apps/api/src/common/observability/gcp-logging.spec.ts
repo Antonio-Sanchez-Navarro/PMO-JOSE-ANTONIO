@@ -96,7 +96,7 @@ describe('Formato de Cloud Logging', () => {
       );
 
       expect(campos[GCP_TRACE_KEY]).toBe(`projects/${PROYECTO}/traces/abc123`);
-      expect(campos[GCP_SPAN_KEY]).toBe('456');
+      expect(campos[GCP_SPAN_KEY]).toBe('00000000000001c8');
       expect(campos[GCP_TRACE_SAMPLED_KEY]).toBe(true);
     });
 

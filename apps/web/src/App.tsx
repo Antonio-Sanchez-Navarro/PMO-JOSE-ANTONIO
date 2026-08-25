@@ -57,10 +57,19 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   const { isCopilotOpen, setIsCopilotOpen } = useCopilot();
 
   useEffect(() => {
-    // Vía el proxy de Vite: /api -> http://localhost:3000
-    apiFetch<Health>("/health")
-      .then(setHealth)
-      .catch((e: unknown) => setError(String(e)));
+    const check = () => {
+      // Vía el proxy de Vite: /api -> http://localhost:3000
+      apiFetch<Health>("/health/ready")
+        .then((data) => {
+          setHealth(data);
+          setError(null);
+        })
+        .catch((e: unknown) => setError(String(e)));
+    };
+
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -133,10 +142,10 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             </dl>
           </Card>
 
-          <Card title="Estado del backend (/health)">
+          <Card title="Estado del backend (/health/ready)">
             {health ? (
               <div className="flex items-center gap-3 text-sm">
-                <span className="h-3 w-3 shrink-0 rounded-full bg-green-500" />
+                <span className={`h-3 w-3 shrink-0 rounded-full ${health.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`} />
                 <span className="font-medium">{health.status.toUpperCase()}</span>
                 <span className="text-slate-400">·</span>
                 <span className="text-slate-500">

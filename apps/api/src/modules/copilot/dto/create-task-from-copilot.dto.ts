@@ -1,10 +1,11 @@
+import { Transform } from 'class-transformer';
 import {
   IsDateString,
   IsEnum,
-  IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
+  MinLength,
 } from 'class-validator';
 import { TaskPriority } from '@prisma/client';
 
@@ -20,8 +21,9 @@ import { TaskPriority } from '@prisma/client';
  * devuelve el objeto editado sin traducir nada.
  */
 export class CreateTaskFromCopilotDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  @IsNotEmpty()
+  @MinLength(1)
   @MaxLength(300)
   title!: string;
 

@@ -189,7 +189,7 @@ export class CopilotService {
       const task = await this.tasks.create(
         userId,
         {
-          title: dto.title,
+          title: dto.title.trim(),
           description: dto.description,
           priority: dto.priority,
           dueDate: dto.dueDate ?? undefined,

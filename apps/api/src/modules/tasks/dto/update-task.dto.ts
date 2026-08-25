@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsDateString, IsString } from 'class-validator';
+import { IsEnum, IsOptional, IsDateString, IsString, MaxLength } from 'class-validator';
 import { TaskStatus } from '@prisma/client';
 
 export class UpdateTaskDto {
@@ -12,5 +12,6 @@ export class UpdateTaskDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   description?: string;
 }

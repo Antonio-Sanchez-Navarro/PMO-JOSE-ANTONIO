@@ -20,7 +20,7 @@ const REPO = 'Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO';
  * despliegues que Vercel se salta a propósito — y una sonda que avisa de lo
  * normal se deja de mirar en una semana.
  */
-const RUTAS_DEL_FRONTEND = ['apps/web', 'packages/shared'];
+export const RUTAS_DEL_FRONTEND = ['apps/web', 'packages/shared', 'vercel.json'];
 
 /**
  * Cuánto se le concede al frontend para ponerse al día antes de dar la alarma.
@@ -234,17 +234,40 @@ export class FrontendAlDiaService {
     for (const ruta of RUTAS_DEL_FRONTEND) {
       try {
         const res = await fetch(
-          `https://api.github.com/repos/${REPO}/commits?sha=master&path=${ruta}&per_page=1`,
+          `https://api.github.com/repos/${REPO}/commits?sha=master&path=${ruta}&per_page=5`,
           { headers: { accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(TIMEOUT_MS) },
         );
         if (!res.ok) continue;
 
-        const [commit] = (await res.json()) as {
-          sha?: string;
-          commit?: { committer?: { date?: string } };
-        }[];
-        const fecha = Date.parse(commit?.commit?.committer?.date ?? '');
-        if (commit?.sha && !Number.isNaN(fecha)) candidatos.push({ sha: commit.sha, fecha });
+        const lista = (await res.json()) as { sha: string }[];
+
+        for (const item of lista) {
+          if (!item.sha) continue;
+
+          const detalleRes = await fetch(`https://api.github.com/repos/${REPO}/commits/${item.sha}`, {
+            headers: { accept: 'application/vnd.github+json' },
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+          });
+          if (!detalleRes.ok) continue;
+
+          const detalle = (await detalleRes.json()) as {
+            commit?: { committer?: { date?: string } };
+            files?: { filename?: string }[];
+          };
+
+          const soloMd = detalle.files?.every((f) => {
+            if (!f.filename?.startsWith(ruta)) return true; // Lo ignoramos para esta ruta
+            return f.filename.endsWith('.md');
+          });
+
+          if (!soloMd) {
+            const fecha = Date.parse(detalle.commit?.committer?.date ?? '');
+            if (!Number.isNaN(fecha)) {
+              candidatos.push({ sha: item.sha, fecha });
+              break;
+            }
+          }
+        }
       } catch (err) {
         this.logger.warn(`No se pudo consultar los commits de ${ruta}: ${describirError(err)}`);
       }

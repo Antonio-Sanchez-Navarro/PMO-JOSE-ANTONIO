@@ -84,7 +84,7 @@ export function traceFieldsFrom(
       return {
         [GCP_TRACE_KEY]: `projects/${projectId}/traces/${traceId}`,
         [GCP_SPAN_KEY]: spanId,
-        [GCP_TRACE_SAMPLED_KEY]: flags === '01',
+        [GCP_TRACE_SAMPLED_KEY]: (parseInt(flags, 16) & 1) === 1,
       };
     }
   }
@@ -95,9 +95,20 @@ export function traceFieldsFrom(
     const [ids, options] = cloudTrace.split(';');
     const [traceId, spanId] = ids.split('/');
     if (traceId) {
+      let spanHex: string | undefined;
+      if (spanId) {
+        try {
+          // X-Cloud-Trace-Context usa un decimal de 64 bits. Cloud Logging lo
+          // espera en hexadecimal. `BigInt` evita la pérdida de precisión.
+          spanHex = BigInt(spanId).toString(16).padStart(16, '0');
+        } catch {
+          // Si no es un número válido, se ignora en vez de romper la petición.
+        }
+      }
+
       return {
         [GCP_TRACE_KEY]: `projects/${projectId}/traces/${traceId}`,
-        ...(spanId ? { [GCP_SPAN_KEY]: spanId } : {}),
+        ...(spanHex ? { [GCP_SPAN_KEY]: spanHex } : {}),
         [GCP_TRACE_SAMPLED_KEY]: options === 'o=1',
       };
     }

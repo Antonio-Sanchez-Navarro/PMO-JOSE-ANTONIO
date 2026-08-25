@@ -59,7 +59,7 @@ export function DashboardPage() {
           title="Work in Progress (WIP)"
           value={wip}
           subtitle="Tareas activas actualmente"
-          trend="neutral"
+          trend={wip > 10 ? 'bad' : wip > 0 ? 'good' : 'neutral'}
         />
         <MetricCard
           title="Tareas Atrasadas"
@@ -71,13 +71,13 @@ export function DashboardPage() {
           title="Completadas (Ventana)"
           value={throughput.completedInWindow}
           subtitle={`Promedio: ${throughput.avgPerDay.toFixed(1)}/día`}
-          trend="good"
+          trend={throughput.completedInWindow > 0 ? 'good' : 'neutral'}
         />
         <MetricCard
           title="Bandeja Pendiente"
           value={inbox.pending}
-          subtitle={`Total: ${inbox.byStatus.PENDING || 0} sin leer`}
-          trend="neutral"
+          subtitle={`Total: ${inbox.byStatus.PENDING || 0} sin despachar`}
+          trend={inbox.pending > 10 ? 'bad' : inbox.pending > 0 ? 'neutral' : 'good'}
         />
       </div>
 
@@ -88,7 +88,7 @@ export function DashboardPage() {
             <h3 className="text-base font-semibold text-slate-900">Throughput (Tareas Completadas)</h3>
             <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
               <span>⚠️</span>
-              Nota: Las tareas completadas antes del último despliegue no tienen registro de fecha y no aparecerán aquí.
+              Nota: Las tareas completadas antes de que se empezara a registrar la fecha (completedAt) no aparecerán aquí.
             </p>
           </div>
           <div className="h-72 w-full">

@@ -247,22 +247,35 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
 
 describe('precios · el dato que caduca', () => {
   it('Sonnet 5 sube un 50% el 31 de agosto', () => {
-    const antes = precioDe('claude-sonnet-5', new Date('2026-08-30'));
-    const despues = precioDe('claude-sonnet-5', new Date('2026-08-31'));
+    // Se usan horas explícitas después del UTC para asegurar que pasan
+    // el umbral local.
+    const antes = precioDe('claude-sonnet-5', new Date('2026-08-30T12:00:00Z'));
+    const despues = precioDe('claude-sonnet-5', new Date('2026-08-31T12:00:00Z'));
 
     expect(antes.entrada).toBe(2);
     expect(despues.entrada).toBe(3);
     expect(despues.salida / antes.salida).toBeCloseTo(1.5, 5);
   });
 
-  it('la subida se anuncia antes de que ocurra', () => {
-    const aviso = subidaCercana(new Date('2026-08-25'), 14);
+  it('la fecha de subida se interpreta en la zona local, no en UTC', () => {
+    // 2026-08-31T04:59Z es 23:59 del 30 de agosto en America/Cancun.
+    // Si se usara UTC, esto ya aplicaría la subida, encareciendo horas antes.
+    const vispera = precioDe('claude-sonnet-5', new Date('2026-08-31T04:59:00Z'));
+    const diaD = precioDe('claude-sonnet-5', new Date('2026-08-31T05:00:00Z'));
 
-    expect(aviso?.model).toBe('claude-sonnet-5');
-    expect(aviso?.subida).toBe(50);
+    expect(vispera.entrada).toBe(2);
+    expect(diaD.entrada).toBe(3);
+  });
+
+  it('la subida se anuncia antes de que ocurra', () => {
+    const avisos = subidaCercana(new Date('2026-08-25T12:00:00Z'), 14);
+
+    expect(avisos).toHaveLength(1);
+    expect(avisos[0].model).toBe('claude-sonnet-5');
+    expect(avisos[0].subida).toBe(50);
   });
 
   it('y deja de anunciarse cuando ya pasó', () => {
-    expect(subidaCercana(new Date('2026-09-15'), 14)).toBeNull();
+    expect(subidaCercana(new Date('2026-09-15T12:00:00Z'), 14)).toHaveLength(0);
   });
 });

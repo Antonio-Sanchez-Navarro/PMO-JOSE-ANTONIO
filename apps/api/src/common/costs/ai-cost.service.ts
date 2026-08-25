@@ -125,7 +125,8 @@ export class AiCostService {
 
   /** Lo consumido en el mes en curso, con el ritmo y lo que queda. */
   async estimar(ahora: Date = new Date()): Promise<EstimacionCoste> {
-    const desdeMes = new Date(Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth(), 1));
+    const desdeMes = this.diaLocal(ahora);
+    desdeMes.setUTCDate(1);
 
     const filas = await this.prisma.aiUsage.findMany({
       where: { dia: { gte: desdeMes } },
@@ -188,9 +189,9 @@ export class AiCostService {
     );
 
     const umbral = UMBRALES.filter((u) => e.consumido >= u).pop();
-    const subida = subidaCercana(ahora);
+    const subidas = subidaCercana(ahora);
 
-    if (umbral === undefined && !subida) return e;
+    if (umbral === undefined && subidas.length === 0) return e;
 
     const partes: string[] = [];
 
@@ -204,11 +205,13 @@ export class AiCostService {
       );
     }
 
-    if (subida) {
-      partes.push(
-        `Y ojo: el ${subida.el} ${subida.model} sube un ${subida.subida}% porque ${subida.porQue}. ` +
-          'El gasto de ese dia en adelante no se parecera al de ahora.',
-      );
+    if (subidas.length > 0) {
+      for (const subida of subidas) {
+        partes.push(
+          `Y ojo: el ${subida.el} ${subida.model} sube un ${subida.subida}% porque ${subida.porQue}. ` +
+            'El gasto de ese dia en adelante no se parecera al de ahora.',
+        );
+      }
     }
 
     partes.push(`Precios comprobados el ${e.preciosRevisadosEl}. Es una estimacion, no la factura.`);
