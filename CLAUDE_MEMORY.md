@@ -9,6 +9,75 @@
 
 ---
 
+## Tres formas de que «verde» no signifique nada, en una sola tarde (2026-08-25)
+
+Salieron seguidas al desplegar la revalidación del socket, y las tres dan la
+misma sensación de que todo fue bien.
+
+### 1. Un run **cancelado** devuelve 0, y el despliegue no llegó a producción
+
+`gh run watch --exit-status` salió con **0** sobre un run que había sido
+**cancelado**, no completado. Encima, `deploy.yml` usa `exit 0` después de varios
+`::error::` a propósito —para que un fallo de Scheduler no tumbe el job—, así que
+**un run en verde tampoco prueba que la revisión se actualizara**.
+
+Lo destapó mirar `SERVICE_VERSION` de la revisión que sirve, que seguía en el
+commit anterior. **Esa es la comprobación buena**, y es la única que responde a la
+pregunta que importa:
+
+```powershell
+gcloud run revisions describe <rev> --format=json  # y leer SERVICE_VERSION
+```
+
+**Por qué se cancelan:** el workflow lleva `concurrency: cancel-in-progress: true`,
+y con otro agente empujando cada dos minutos, **cada despliegue cancela al
+anterior y ninguno termina**. No es un fallo de código: es de coordinación, y se
+nota solo si se mira la revisión.
+
+### 2. Una prueba que pasa tres de tres en local y se cae en CI
+
+La prueba del socket caducado murió en CI con `Exceeded timeout of 15000 ms`
+mientras en local pasaba 3/3. **No estaba rota:** el commit que la puso en rojo
+tocaba **solo `vercel.json`**, y la misma prueba pasó verde en las dos ejecuciones
+anteriores y en la siguiente. Flaky.
+
+La diferencia no es el código, es **dónde corre**: la espera dura ~6 s de reloj de
+pared por diseño —1 s de token + 5 s de `MARGEN_DE_RELOJ_MS`— y **en CI jest
+reparte 36 suites entre varios workers, así que el `setTimeout` del gateway compite
+por CPU** y esos seis segundos se estiran. En local, con `--runInBand`, no compite.
+
+> **Y el mensaje de jest señalaba la línea equivocada.** Me mandó a mirar una
+> prueba que no era. Lo que identificó a la culpable fue **el número**: `15000` era
+> el timeout declarado en **una sola** prueba del archivo. Cuando el stack de un
+> timeout no cuadre, buscar por el valor del timeout, no por la línea.
+
+Endurecida con 30 s y un corte propio a los 20 que dice **qué** no pasó. El corte
+**se cancela al ganar la carrera**: sin `clearTimeout`, jest avisa con «did not
+exit one second after the test run has completed» — un vigía que sobrevive a lo
+que vigilaba es un recurso colgando.
+
+`MARGEN_DE_RELOJ_MS` no se toca: es producción y no se cambia por comodidad de una
+prueba. Si vuelve a morder, el paso siguiente es hacerlo inyectable.
+
+### 3. Mi commit no existió: se lo llevó otro agente dentro del suyo
+
+Preparé el endurecimiento y al ir a commitear: *«nothing to commit, working tree
+clean»*. @Gravity lo había commiteado dentro de **`9d08a00`**, titulado
+`fix(web): add toast error to useTags fetchTags and adjust handshake test timeout`
+— un archivo de `apps/api`, dominio mío, dentro de un commit de frontend.
+
+**No se perdió trabajo**: el contenido llegó íntegro (30 s, corte de 20 s,
+`clearTimeout`). Lo que se perdió es **el mensaje**, o sea el *porqué* — que en
+este repositorio es la mitad del valor de un commit. Por eso está escrito aquí
+arriba: la evidencia se reconstruye en la bitácora, el commit ya no.
+
+**Y la lección de operación:** entre preparar un cambio y commitearlo hay una
+ventana en la que otro agente puede llevárselo. `git status` a mitad de trabajo no
+es paranoia — y cuando aparezca un «nothing to commit» inesperado, **lo primero es
+mirar quién commiteó tu archivo**, no volver a escribir el cambio.
+
+---
+
 ## La revalidación del socket, encendida — y el `emit` que difundía a todos (2026-08-25)
 
 ### §47.4 · el interruptor, y por qué se comprobó la premisa antes de tocarlo
