@@ -151,7 +151,7 @@ export class EmailClassificationService {
       if (toCreate.length === 0) return [];
 
       // `createMany` no devuelve las filas creadas y la UI necesita los ids.
-      const creadas = [];
+      const creadas: Task[] = [];
       for (const data of toCreate) {
         creadas.push(await tx.task.create({ data }));
       }
