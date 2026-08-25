@@ -104,6 +104,76 @@ arreglando exactamente eso en el barrido y en la sonda.
 
 Ahora lleva freno propio de una semana: avisa dos veces en la ventana, no catorce.
 
+### ✅ Firmada en fuego real: llegaron los dos mensajes (2026-08-25)
+
+Igual que las dos capas anteriores, **viendo llegar el aviso** y no razonando que
+el `if` es correcto. La cadena entera, contra producción:
+
+| | |
+|---|---|
+| Revisión sirviendo | `pmo-api-00100-gnd` = `d0354ad`, desplegada 11:05 |
+| Job `pmo-coste-ia` | `ENABLED`, 08:00 `America/Cancun`, **nunca había corrido** |
+| Primera pasada forzada | `200`, `$0.00 de $20` — la tabla existe, la migración entró |
+| Correo real de prueba | webhook → clasificado en **6 s**, `isActionable=true` |
+| Consumo registrado | `$0.01` (real ≈ $0,0069), sin una sola línea de «No se pudo anotar» |
+| Umbral bajado a `0.007` | **`99%` · «quedan ~0 dia(s)»** |
+| En Chat | los **dos** mensajes, con sus palabras |
+
+**El punto de partida obligado, y por qué el orden importa.** La tabla nace vacía,
+así que `gastado` era **cero**, y con cero **ningún presupuesto dispara**: `0/x` es
+0 por bajo que se ponga `x`. Primero hay que gastar y después bajar el umbral —
+al revés no se prueba nada y parece que el aviso no funciona.
+
+**El freno, comprobado en vivo y gratis.** Forcé el cron **cuatro veces** en veinte
+minutos y el aviso de la subida de precio está en Chat **una sola vez**. No hizo
+falta prueba aparte: la repetición era el experimento.
+
+### ⚠️ El log de `ALERTA ·` NO prueba que el aviso saliera
+
+`AlertService.avisar` escribe `logger.warn('ALERTA · …')` **antes** de consultar el
+freno en Redis, y a propósito —el log es la fuente de verdad y la notificación solo
+una copia—. Consecuencia para quien verifique: **un `ALERTA ·` en Cloud Logging es
+compatible con un mensaje que nunca se mandó.**
+
+Lo confirmé del lado bueno: en la segunda pasada la línea de la subida volvió a
+salir en el log y en Chat **no** apareció un segundo mensaje. Si me hubiera quedado
+en el log, habría firmado la capa con una alerta frenada creyéndola enviada.
+
+Lo que sí es señal negativa fiable: `El webhook de alertas respondió <status>` y
+`No se pudo enviar la alerta`. Su **ausencia** no basta; la presencia sí acusa.
+
+### 🔴 El ritmo se divide siempre entre 7, tenga o no 7 días de datos
+
+`ritmoDiario()` suma lo de los últimos 7 días y hace `total / DIAS_DE_RITMO`. Con
+la tabla estrenada hoy hay **un** día de datos y se divide entre **siete**: el
+ritmo sale 7 veces menor que el real, y `diasRestantes` 7 veces mayor.
+
+Se ve en la línea de después de restaurar el presupuesto:
+
+```
+Coste IA · $0.01 de $20 (0%) · ritmo $0.00/dia · quedan 20235 dia(s)
+```
+
+Con el gasto de hoy repartido en un día serían ~2.900; con el reparto entre siete,
+20.235. **El sesgo va hacia «queda más de lo que queda»**, que es justo el lado por
+el que se llega a cero sin aviso — y es el contrario del que este mismo archivo
+eligió para el modelo desconocido, que se estima **por arriba** a propósito.
+
+Dura una semana desde el estreno y vuelve cada vez que el consumo se interrumpe
+varios días. No lo he tocado: es un cambio de criterio, no un descuido, y va en el
+buzón para que lo decida Doc.
+
+### La estimación arranca hoy, y el mes ya llevaba gasto
+
+`estimar()` suma desde el día 1 del mes, pero en la tabla **no hay nada anterior al
+despliegue**: los 1.354.565 tokens de entrada de agosto que motivaron esta capa no
+están, y no se pueden reconstruir desde aquí. Hasta el 1 de septiembre, «lo gastado
+este mes» significa **«lo gastado desde las 11:05 del 25 de agosto»**.
+
+Importa al elegir el presupuesto: poner `PRESUPUESTO_IA_USD=8` pensando «es el
+crédito que me queda» compararía un crédito real contra un gasto que empieza a
+contar tarde. El primer mes limpio es septiembre.
+
 ---
 
 ## Los seis correos sin texto: eran correos sin texto (2026-08-24)
