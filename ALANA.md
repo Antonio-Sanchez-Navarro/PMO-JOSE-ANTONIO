@@ -6282,3 +6282,188 @@ Cloud Scheduler, no el del sistema entero**.
 ⚠️ **Con la salvedad de siempre** ([[pmo-medir-redis-upstash]]): el contador de
 la consola **redondea a miles**, así que los ritmos derivados de restar dos
 lecturas arrastran ese error. La tendencia es sólida; el segundo decimal, no.
+
+---
+
+## 47. Verificación en frío y segunda pasada (2026-08-25)
+
+Encargo de Doc, `TRABAJAR`, en dos partes. **Suite: 686 pruebas en verde, 1
+dormida, 35 suites** — y la dormida es exactamente la que aparece abajo.
+
+---
+
+## Parte 1 — Lo entregado: ¿arregla o tapa?
+
+### 47.1 ✅ El `version.json` arregla de verdad
+
+Comprobado **en producción**, no en el repositorio:
+
+```
+cache-control : no-cache, no-store, must-revalidate
+x-vercel-cache: MISS          age: 0
+commit        : 7c0d79782f6a99bc9164d1fc813df93d2ffda2cf
+construido    : 2026-08-25T16:48:08Z
+```
+
+- **Sin caché**, declarado en `vercel.json` y confirmado en la respuesta viva.
+- **Coincide con lo desplegado**: `7c0d797` es descendiente de `d141f71`, que es
+  el último commit que toca `apps/web` o `packages/shared`. **Nada pendiente.**
+- **Clones superficiales resueltos**: el `ignoreCommand` hace
+  `git cat-file -e "$VERCEL_GIT_PREVIOUS_SHA^{commit}"` y, si falla o la variable
+  viene vacía, **`exit 1` → construye**. Falla hacia el lado seguro, que es el
+  correcto: ante la duda, desplegar.
+
+### 47.2 🟠 Pero la configuración que publica la sonda **no dispara su propio despliegue**
+
+El `ignoreCommand` solo mira `':(top)apps/web'` y `':(top)packages/shared'`.
+**`vercel.json` no está en esa lista.** Así que un commit que solo cambie
+`vercel.json` —las cabeceras, la regla de ignorado— produce un diff vacío, sale
+con 0, y Vercel **cancela**. El cambio de configuración se queda inerte hasta que
+alguien empuje, por otro motivo, algo del frontend.
+
+No es hipotético: **de los cinco commits que han tocado `vercel.json`, tres no
+tocaban el frontend** — `f4afa28` (el propio arreglo de clones superficiales),
+`adad87d` y `ccbd498`.
+
+Y lo que lo hace desagradable es que **se oculta a sí mismo**: arreglas las
+cabeceras, no se despliega, las cabeceras siguen viejas — y la herramienta con la
+que ibas a comprobarlo, `version.json`, sigue enseñando el build anterior. La
+conclusión natural es «el arreglo no funcionó», que es la equivocada.
+
+Hoy no ha mordido porque las cabeceras viajaron junto a cambios de frontend.
+
+### 47.3 ✅ El socket: el cliente está entero, y el diagnóstico del servidor es mejor que el mío
+
+Las **tres condiciones** que el propio docblock del gateway exigía para
+reencender, cumplidas:
+
+| Condición | Dónde |
+|---|---|
+| Escuchar `SESSION_EVENTS.rechazada` y refrescar | `useSocket.ts:102-118` — `apiFetch('/auth/refresh')` y reconecta; si falla, al login |
+| `connect_error` que distinga caducada de inválida | `:120-136` — mismas dos ramas |
+| Tope de reintentos | `:95` — `reconnectionAttempts: 5` |
+
+El contrato vive en `packages/shared` (`CODIGO_SESION`, `SESSION_EVENTS`,
+`SesionRechazadaEvento`), que era la pieza que faltaba para que @Gravity
+programara contra un nombre y no contra un mensaje.
+
+Del lado del servidor: el rechazo se hace **en middleware** con `next(err)`
+llevando `err.data.codigo`, y `session.service` mapea `TokenExpiredError` →
+`caducada` y todo lo demás → `invalida` —incluido un token de refresco usado como
+de acceso, que es `invalida` con razón: refrescar no lo arregla—.
+
+**Y el docblock explica la causa raíz mejor de lo que la expliqué yo.** En §43.1
+escribí «el cliente no escucha `connect_error`». La verdad era más honda: **ese
+evento no llegaba a dispararse nunca**, porque el código viejo *aceptaba* la
+conexión y después llamaba a `disconnect()` — y eso, desde el cliente, no es un
+rechazo: es una caída de red, ante la cual socket.io reconecta indefinidamente y
+**con razón**. No había nada que escuchar. Mi hallazgo era correcto en el efecto y
+flojo en el porqué.
+
+**Y las 21 llamadas con `fetch` crudo son cero:** `tasks.api` 9, `time.api` 9,
+`tags.api` 3, `copilot.api` 4 — las 25 por `apiFetch`.
+
+### 47.4 🟠 Pero el interruptor del servidor sigue apagado, y ya no hace falta
+
+`tasks.gateway.ts:116` → **`REVALIDACION_ACTIVA = false`**, y
+`tasks.gateway.handshake.spec.ts:159` → **`it.skip`**. Es la única prueba dormida
+de las 687.
+
+El archivo dice, literalmente, qué tenía que pasar para encenderlo:
+
+> *«el día que `apps/web` escuche `SESSION_EVENTS.rechazada`, se pone
+> `REVALIDACION_ACTIVA = true`, se cambia este `it.skip` por `it` y se borra la
+> prueba de arriba»*
+
+**Ese día llegó** — es §47.3, entregado hoy. Y mientras el interruptor siga
+apagado sigue abierto lo que el propio docblock declara sin suavizar: **un socket
+abierto sobrevive a su token, y si el usuario cierra sesión el socket sigue
+oyendo** hasta que se caiga por otro motivo.
+
+Ojo con la distinción, porque es la que decide la urgencia: **el rechazo en el
+handshake ya funciona en los dos lados** —conectar con cookie caducada o inválida
+está cubierto—. Lo que falta es la **revalidación periódica**, o sea el socket que
+ya está dentro cuando su token vence. Con un usuario es una molestia; el propio
+docblock dice que **con dos es una fuga de datos entre personas**.
+
+### 47.5 ✅ Y de paso, el resto de la cola verificada
+
+| Hallazgo | Estado |
+|---|---|
+| **§43.2** `fetchMessages` perdía correos en silencio | ✅ Ahora devuelve `{ correos, fallidos }` y los cuenta |
+| **§43.3** `receivedAt` de la cabecera del remitente | ✅ `fechaDeRecepcion` cubre los **tres** casos: sin cabecera, ilegible y **futura** → cae a `internalDate`. Y deja escrito por qué la cabecera sigue siendo primera opción (no mover la fecha de los 247 ya guardados), «para que sea una decisión y no un descuido» |
+| **§45.1** inyección de cabeceras por el asunto | ✅ **En dos capas**: `unaSolaLinea()` dentro de `encodeHeader` y un `@Matches` en el DTO que rechaza los caracteres de control con mensaje propio |
+| **§44.2** zona horaria | ✅ `ZONA_POR_DEFECTO = 'America/Cancun'` |
+| **§45.2** deriva de +5 h en los tramos | ✅ |
+| **§45.3** `URGENT` en el formulario | ✅ enum y desplegable |
+| **§43.5** `emit` difunde a todos si falta `userId` | ❌ **Sigue igual** (`:407-411`) |
+
+---
+
+## Parte 2 — Segunda pasada: dos hallazgos, los dos en una junta
+
+### 47.6 🔴 El `cc` del borrador se pierde entre la propuesta y el envío
+
+El backend lo tiene resuelto de punta a punta:
+
+- `parseDraftEmail` (`tools.ts:325`) normaliza `cc` **siempre**, vacío si no hay,
+  y el docblock dice por qué: *«para que la interfaz no tenga que distinguir "sin
+  copia" de "campo ausente"»*.
+- `SendEmailDto` lo acepta con `@IsEmail({}, { each: true })`.
+- `buildRawMessage` emite la cabecera `Cc:` cuando llega.
+
+**Y en `apps/web/src/features/copilot/` la palabra `cc` no aparece ni una vez.**
+`CopilotDrawer` arma la tarjeta con `{ id, to, subject, body }` y
+`DraftEmailCard` envía `{ to, subject, body }`.
+
+Consecuencia, de punta a punta: le pides *«responde a Ana con copia a Luis»* → el
+modelo propone `to: [ana]`, `cc: [luis]` → **la tarjeta enseña solo a Ana** → das
+a enviar → **Luis no recibe nada**, y nada lo dice. Tú crees que la copia salió
+porque la pediste.
+
+Es la firma exacta de esta casa: **un campo que el backend normaliza
+expresamente para facilitarle la vida al frontend, y que el frontend no lee.**
+
+### 47.7 🟠 El error de etiqueta duplicada muere en la consola
+
+La cadena está construida entera para explicar el fallo… y se tira en el último
+paso:
+
+1. `Tag` tiene `@@unique([userId, name])`.
+2. `tags.service.create` captura el `UNIQUE_VIOLATION` y lanza
+   `ConflictException('Ya tienes una etiqueta llamada "X".')` — específico, en
+   español, con el nombre dentro.
+3. `useTags.createTag` **no lo captura**: lo propaga bien.
+4. `TagManagerModal.handleCreate` hace `console.error('No se pudo crear la
+   etiqueta:', error)` **y nada más**.
+
+Sin `toast`, sin estado de error, y **sin limpiar el campo** —`setName('')` solo
+corre en el camino bueno—. El usuario pulsa «crear», el botón deja de girar, y
+**no pasa nada**. Repetirá, y volverá a no pasar nada.
+
+Lo que lo convierte en hallazgo y no en opinión: **todos los demás modales del
+proyecto usan `toast.error`** —`TimeEntriesModal`, `TimeReportModal`,
+`AiValidationModal`, `InboxPage`—. Éste es el único que no.
+
+Y `useTags.fetchTags` tiene la misma forma: si la carga de etiquetas falla, se
+registra en consola y el desplegable sale **vacío en silencio**, indistinguible de
+«no tienes etiquetas».
+
+### 47.8 🔵 Menor
+
+`TimeReportModal` recarga con `useEffect([isOpen, groupBy])` **sin contador de
+generación**: cambiar de agrupación dos veces seguidas puede dejar en pantalla el
+informe de la anterior. Es la misma carrera que ya se arregló en `KanbanBoard`
+(§37.9) y en `useInbox` (§37.11) — el patrón existe en la casa y aquí no se
+aplicó. Bajo impacto: es un modal y el reloj no se usa.
+
+### 47.9 Lo que enseña
+
+Los dos hallazgos de la segunda pasada están **en una junta**, como los seis
+graves de las tres pasadas anteriores. Y el del `cc` añade un matiz nuevo: no es
+que faltara el contrato ni que estuviera mal documentado — **es que el backend
+hizo trabajo extra explícitamente para el frontend, lo dejó escrito, y el
+frontend no se enteró.**
+
+Un contrato que una de las dos partes no ha leído no es un contrato: es una
+suposición con buena letra.
