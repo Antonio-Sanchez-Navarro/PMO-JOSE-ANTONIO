@@ -120,6 +120,74 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
     expect(e.diasRestantes).toBeNull();
   });
 
+  describe('el ritmo se reparte entre los dias observados, no entre 7 fijo', () => {
+    // Regresion con fecha: el 2026-08-25, recien creada la tabla, produccion
+    // dijo «ritmo $0.00/dia · quedan 20235 dia(s)» con UN dia de datos, porque
+    // dividia entre siete. El sesgo empujaba hacia «queda mas de lo que queda»,
+    // que es el lado por el que se llega a cero sin aviso.
+
+    it('un solo dia de historia no se divide entre siete', async () => {
+      const { service } = crear([
+        { dia: '2026-08-25', model: 'claude-sonnet-5', entrada: 2_000_000, salida: 0 },
+      ]);
+
+      const e = await service.estimar(AHORA);
+
+      // $4 gastados hoy. Con el suelo de 2 dias -el dia en curso esta a
+      // medias-, el ritmo es $2/dia. Con el /7 de antes habrian sido $0,57.
+      expect(e.gastado).toBeCloseTo(4, 5);
+      expect(e.ritmoDiario).toBeCloseTo(2, 5);
+      expect(e.ritmoDiario).not.toBeCloseTo(4 / 7, 5);
+    });
+
+    it('con la ventana entera cubierta se sigue dividiendo entre siete', async () => {
+      // El arreglo no puede cambiar el caso normal, que es el de todos los dias
+      // a partir de la primera semana.
+      const dias = ['19', '20', '21', '22', '23', '24', '25'].map((d) => ({
+        dia: `2026-08-${d}`,
+        model: 'claude-sonnet-5',
+        entrada: 1_000_000,
+        salida: 0,
+      }));
+
+      const e = await crear(dias).service.estimar(AHORA);
+
+      // $2 por dia durante siete dias = $14, repartidos entre 7 = $2/dia.
+      expect(e.gastado).toBeCloseTo(14, 5);
+      expect(e.ritmoDiario).toBeCloseTo(2, 5);
+    });
+
+    it('un hueco sin consumo cuenta como dia, porque es un cero real', async () => {
+      // Tres dias cubiertos y solo dos con fila: el 24 no hubo correos. Ese
+      // cero es informacion y tiene que pesar en la media; descontarlo inflaria
+      // el ritmo y adelantaria el aviso sin motivo.
+      const { service } = crear([
+        { dia: '2026-08-23', model: 'claude-sonnet-5', entrada: 1_500_000, salida: 0 },
+        { dia: '2026-08-25', model: 'claude-sonnet-5', entrada: 1_500_000, salida: 0 },
+      ]);
+
+      const e = await service.estimar(AHORA);
+
+      // $6 entre los 3 dias cubiertos (23, 24 y 25), no entre los 2 con datos.
+      expect(e.gastado).toBeCloseTo(6, 5);
+      expect(e.ritmoDiario).toBeCloseTo(2, 5);
+      expect(e.ritmoDiario).not.toBeCloseTo(3, 5);
+    });
+
+    it('el plazo que sale del ritmo nuevo es el que se puede atender', async () => {
+      const { service } = crear(
+        [{ dia: '2026-08-25', model: 'claude-sonnet-5', entrada: 1_000_000, salida: 0 }],
+        '10',
+      );
+
+      const e = await service.estimar(AHORA);
+
+      // $2 gastados de $10, ritmo $1/dia -> quedan 8 dias. Con el /7 de antes
+      // habrian salido 56, y 56 dias de margen no se atienden.
+      expect(e.diasRestantes).toBe(8);
+    });
+  });
+
   it('por debajo del umbral no avisa DEL CONSUMO', async () => {
     // Escribir esta prueba destapo un fallo de diseno propio: el aviso de la
     // subida de precio saltaba por su cuenta, y con el cron diario habria

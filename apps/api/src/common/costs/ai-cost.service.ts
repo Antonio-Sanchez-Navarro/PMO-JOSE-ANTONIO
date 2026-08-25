@@ -19,6 +19,15 @@ const PRESUPUESTO_POR_DEFECTO = 20;
  */
 const DIAS_DE_RITMO = 7;
 
+/**
+ * Suelo del divisor del ritmo.
+ *
+ * Dos y no uno: con un único día de historia, ese día está **a medias** —el cron
+ * corre por la mañana— y puede ser además una tanda atípica. Ver
+ * {@link AiCostService.divisorDeRitmo}, donde está escrito lo que cuesta.
+ */
+const MINIMO_DE_DIAS = 2;
+
 /** A partir de qué consumo se avisa. */
 const UMBRALES = [0.75, 0.9];
 
@@ -219,7 +228,31 @@ export class AiCostService {
     return e;
   }
 
-  /** Gasto medio diario de los últimos días, para proyectar. */
+  /**
+   * Gasto medio diario, para proyectar.
+   *
+   * ⚠️ **Se divide entre los días que la observación cubre de verdad, no entre
+   * {@link DIAS_DE_RITMO} fijo.** El día que se estrenó la tabla había **un**
+   * día de datos y se dividía entre **siete**: el ritmo salía siete veces menor
+   * que el real y los días restantes siete veces mayores. Medido en producción
+   * el 2026-08-25, con la tabla recién creada:
+   *
+   *     Coste IA · $0.01 de $20 (0%) · ritmo $0.00/dia · quedan 20235 dia(s)
+   *
+   * Con el gasto de ese día repartido en un día eran ~2.900. **El sesgo empujaba
+   * hacia «queda más de lo que queda»**, que es el lado por el que se llega a
+   * cero sin aviso — y el contrario del que este mismo módulo eligió para el
+   * modelo desconocido, que se estima por arriba a propósito.
+   *
+   * No es solo del estreno: vuelve cada vez que el consumo se interrumpe varios
+   * días, porque entonces la ventana tiene menos historia de la que aparenta.
+   *
+   * **Se cuentan los días transcurridos desde el primer dato, no los días que
+   * tienen fila.** Un sábado sin correos es un cero **real** y tiene que pesar
+   * en la media; descontarlo inflaría el ritmo y adelantaría el aviso sin
+   * motivo. Lo que no es real es contar como observados los seis días
+   * anteriores a que existiera la tabla.
+   */
   private async ritmoDiario(ahora: Date): Promise<number> {
     const desde = new Date(ahora.getTime() - DIAS_DE_RITMO * 24 * 3_600_000);
 
@@ -228,15 +261,44 @@ export class AiCostService {
       select: { dia: true, model: true, inputTokens: true, outputTokens: true },
     });
 
+    if (filas.length === 0) return 0;
+
     let total = 0;
+    let primerDia = filas[0].dia.getTime();
+
     for (const fila of filas) {
       const precio = precioDe(fila.model, fila.dia);
       total +=
         (fila.inputTokens / 1_000_000) * precio.entrada +
         (fila.outputTokens / 1_000_000) * precio.salida;
+
+      primerDia = Math.min(primerDia, fila.dia.getTime());
     }
 
-    return total / DIAS_DE_RITMO;
+    const cubiertos = Math.round((this.diaLocal(ahora).getTime() - primerDia) / 86_400_000) + 1;
+
+    return total / this.divisorDeRitmo(cubiertos);
+  }
+
+  /**
+   * Entre cuántos días se reparte el gasto observado.
+   *
+   * Acotado por los dos lados, y cada tope evita un error distinto:
+   *
+   * - **Por arriba, {@link DIAS_DE_RITMO}**: nunca se reparte entre más días de
+   *   los que mira la ventana, aunque la tabla tenga meses.
+   * - **Por abajo, {@link MINIMO_DE_DIAS}**: con un solo día de historia, ese
+   *   día **está a medias** —el cron corre por la mañana— y además puede ser una
+   *   tanda atípica. Repartirlo entre dos amortigua el arranque.
+   *
+   * ⚠️ **El mínimo tiene un precio y conviene tenerlo escrito**: el primer día,
+   * el ritmo sale la mitad del real y el aviso llega más tarde de lo que debería.
+   * Se acepta porque dura un día y porque un aviso falso el día del estreno es
+   * la forma más rápida de que alguien silencie el canal — pero es una decisión,
+   * no una propiedad, y va en la dirección incómoda.
+   */
+  private divisorDeRitmo(diasCubiertos: number): number {
+    return Math.min(DIAS_DE_RITMO, Math.max(MINIMO_DE_DIAS, diasCubiertos));
   }
 
   private presupuesto(): number {
