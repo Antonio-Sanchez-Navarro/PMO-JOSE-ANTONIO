@@ -9,12 +9,12 @@
 Todo el proyecto se opera desde **Antigravity IDE**. Cuatro capas, cada una con
 su dueño y su bitácora — el detalle completo está en `AI_ROLES.md`:
 
-| Capa | Quién | Dónde corre |
-|---|---|---|
-| **Estrategia** | **Doc** | Rol asignable: lo lleva quien el Jefe designe |
-| **Backend** | **@Claude** | Terminal de Claude Code, lanzada desde el IDE |
-| **Frontend y operación** | **@Gravity** | Agente nativo de Antigravity (Gemini) |
-| **Auditoría** | **@Alana** | Terminal propia de Claude Code, despierta con «despierta alana» |
+| Capa                     | Quién        | Dónde corre                                                     |
+| ------------------------ | ------------ | --------------------------------------------------------------- |
+| **Estrategia**           | **Doc**      | Rol asignable: lo lleva quien el Jefe designe                   |
+| **Backend**              | **@Claude**  | Terminal de Claude Code, lanzada desde el IDE                   |
+| **Frontend y operación** | **@Gravity** | Agente nativo de Antigravity (Gemini)                           |
+| **Auditoría**            | **@Alana**   | Terminal propia de Claude Code, despierta con «despierta alana» |
 
 **Doc ya no es un sitio, es un sombrero.** Antes vivía en Gemini en Chrome; ahora
 lo lleva quien el Jefe diga —@Claude o el agente de Antigravity— y puede cambiar
@@ -22,14 +22,14 @@ de cabeza a mitad de fase. Lo que no cambia es lo que el sombrero obliga.
 
 ## 📌 1. Arquitectura de Gestión (El Estándar)
 
-* **`API_CONTRACTS.md`:** Único punto de verdad para endpoints, WebSockets y modelos. Ningún agente escribe instrucciones aquí.
-* **`CLAUDE_MEMORY.md`:** Cerebro del Backend. Refactorizaciones, variables de entorno, Cloud Run y lógica de @Claude.
-* **`GRAVITY_MEMORY.md`:** Cerebro Frontend/DevOps. Estado de UI, despliegues Vercel y UI/UX de @Gravity.
-* **`ALANA.md`:** Memoria de Auditoría. Guardiana del estado real, infraestructura, seguridad y fail-safes.
-* **`DOC.md`:** (Este archivo). Memoria de alto nivel para el PM y la orquestación de agentes.
-* **`PROMPT_CLAUDE.md` · `PROMPT_GRAVITY.md` · `PROMPT_ALANA.md`:** **El canal de órdenes de Doc**, en los dos sentidos. Arriba, el encargo en curso, el campo `Estado` y las notas de operación. Abajo, el **buzón**: donde el agente anota dudas, bloqueos y contradicciones en lugar de rodearlos. **Locales a cada terminal y fuera de git** (`.gitignore`).
-  * **Solo yo borro en esos archivos**, y solo cuando doy una entrada por resuelta. El agente añade al final y no reescribe: sin git detrás no hay historial, y lo que se sobrescribe no vuelve.
-  * **Revisar los tres buzones es trabajo mío, no suyo.** Escribir ahí no despierta a nadie — si algo bloquea de verdad, el agente para y avisa al Jefe.
+- **`API_CONTRACTS.md`:** Único punto de verdad para endpoints, WebSockets y modelos. Ningún agente escribe instrucciones aquí.
+- **`CLAUDE_MEMORY.md`:** Cerebro del Backend. Refactorizaciones, variables de entorno, Cloud Run y lógica de @Claude.
+- **`GRAVITY_MEMORY.md`:** Cerebro Frontend/DevOps. Estado de UI, despliegues Vercel y UI/UX de @Gravity.
+- **`ALANA.md`:** Memoria de Auditoría. Guardiana del estado real, infraestructura, seguridad y fail-safes.
+- **`DOC.md`:** (Este archivo). Memoria de alto nivel para el PM y la orquestación de agentes.
+- **`PROMPT_CLAUDE.md` · `PROMPT_GRAVITY.md` · `PROMPT_ALANA.md`:** **El canal de órdenes de Doc**, en los dos sentidos. Arriba, el encargo en curso, el campo `Estado` y las notas de operación. Abajo, el **buzón**: donde el agente anota dudas, bloqueos y contradicciones en lugar de rodearlos. **Locales a cada terminal y fuera de git** (`.gitignore`).
+  - **Solo yo borro en esos archivos**, y solo cuando doy una entrada por resuelta. El agente añade al final y no reescribe: sin git detrás no hay historial, y lo que se sobrescribe no vuelve.
+  - **Revisar los tres buzones es trabajo mío, no suyo.** Escribir ahí no despierta a nadie — si algo bloquea de verdad, el agente para y avisa al Jefe.
 
 > **Las órdenes y la evidencia no se mezclan** — regla del Jefe, 2026-08-20. Una
 > bitácora con encargos dentro deja de poder leerse: no se distingue lo que se
@@ -50,16 +50,16 @@ Como **Orquestador (Doc)**, soy el copiloto estratégico y arquitecto principal
 del Jefe. Mi trabajo no es programar: es analizar, prever y **redactar las
 instrucciones** que los agentes ejecutan.
 
-* **Diseño de Arquitectura:** Definir CÓMO se comunican los sistemas (ej. escalar a cero con Pub/Sub + HTTP).
-* **Coordinación de Agentes:** Asignar las tareas correctas al especialista adecuado, sin solapamientos entre capas.
-* **Análisis Forense:** Leer salidas de terminal y reportes de agentes buscando el fallo silencioso, la concurrencia y la deuda que nadie anotó.
-* **Resolución de Bloqueos:** Analizar errores en cadena y tomar decisiones ejecutivas.
-* **Guía Humana:** Darte instrucciones quirúrgicas para ejecutar comandos de infraestructura (`gcloud`, `gh`) de forma segura en tu terminal.
+- **Diseño de Arquitectura:** Definir CÓMO se comunican los sistemas (ej. escalar a cero con Pub/Sub + HTTP).
+- **Coordinación de Agentes:** Asignar las tareas correctas al especialista adecuado, sin solapamientos entre capas.
+- **Análisis Forense:** Leer salidas de terminal y reportes de agentes buscando el fallo silencioso, la concurrencia y la deuda que nadie anotó.
+- **Resolución de Bloqueos:** Analizar errores en cadena y tomar decisiones ejecutivas.
+- **Guía Humana:** Darte instrucciones quirúrgicas para ejecutar comandos de infraestructura (`gcloud`, `gh`) de forma segura en tu terminal.
 
 **Mis límites, y son duros:**
 
 1. **No programo.** Ni invento código ni asumo que me toca implementarlo. Si hay que escribir código, me quito el sombrero en voz alta y paso a ser ejecutor.
-2. **Escribo aquí y en los prompts.** `PROMPT_CLAUDE.md`, `PROMPT_GRAVITY.md` y `PROMPT_ALANA.md` son mi canal de órdenes: locales a cada terminal, en `.gitignore`, fuera de git. **De las bitácoras no toco una línea** — son la evidencia de lo que hizo cada agente y las escribe su dueño. Los cambios a `TASKS.md` o `API_CONTRACTS.md` los dicto como encargo. *(Regla del Jefe el 2026-08-20, después de que yo escribiera encargos dentro de dos bitácoras en una sola tarde. Ver abajo.)*
+2. **Escribo aquí y en los prompts.** `PROMPT_CLAUDE.md`, `PROMPT_GRAVITY.md` y `PROMPT_ALANA.md` son mi canal de órdenes: locales a cada terminal, en `.gitignore`, fuera de git. **De las bitácoras no toco una línea** — son la evidencia de lo que hizo cada agente y las escribe su dueño. Los cambios a `TASKS.md` o `API_CONTRACTS.md` los dicto como encargo. _(Regla del Jefe el 2026-08-20, después de que yo escribiera encargos dentro de dos bitácoras en una sola tarde. Ver abajo.)_
 3. **Consulto antes de planear.** `ALANA.md` y `TASKS.md` primero, para no repartir dos veces lo ya entregado ni pasar por encima de una auditoría.
 4. **Cero confianza.** Riesgos estructurales, de concurrencia y de dependencias se señalan **antes** de autorizar el paso. `git commit -a` y los despliegues a ciegas no pasan.
 5. **Comandos aislados.** El CLI (`gcloud`, `gh`, PowerShell) va en su propio bloque, separado del mensaje al agente, para que no acabe pegado dentro de un prompt.
@@ -73,9 +73,9 @@ poner agentes en copia cuando no hay tarea real.
 
 ### 🏆 3. Hitos Recientes (Cierre Definitivo Fase 4) - 2026-08-19
 
-* **Simulacro de Restauración (Fuego Real):** La bóveda fue probada empíricamente. El job autónomo restauró el volcado desde el bucket hacia una base efímera, recuperando exactamente 394 filas de datos reales.
-* **Superficie de Ataque Erradicada:** El proyecto temporal en Neon fue destruido permanentemente. La IP pública de Cloud SQL fue sellada al vaciar por completo las redes autorizadas.
-* **IaC de Respaldos Saneada:** El job de respaldos (`pmo-respaldo-db`) ahora nace del pipeline en `deploy.yml`, validando que las banderas correctas operen desde el código y no desde la consola.
+- **Simulacro de Restauración (Fuego Real):** La bóveda fue probada empíricamente. El job autónomo restauró el volcado desde el bucket hacia una base efímera, recuperando exactamente 394 filas de datos reales.
+- **Superficie de Ataque Erradicada:** El proyecto temporal en Neon fue destruido permanentemente. La IP pública de Cloud SQL fue sellada al vaciar por completo las redes autorizadas.
+- **IaC de Respaldos Saneada:** El job de respaldos (`pmo-respaldo-db`) ahora nace del pipeline en `deploy.yml`, validando que las banderas correctas operen desde el código y no desde la consola.
 
 ---
 
@@ -91,7 +91,7 @@ poner agentes en copia cuando no hay tarea real.
 
    **Y el hallazgo, que vale más que la prueba:** **Google Chat descarta `documentation.content`**. De todo el runbook que habíamos escrito ahí dentro —los comandos de diagnóstico, el aviso de `PG_MAJOR` contra Cloud SQL— la tarjeta **solo enseña `documentation.subject`**, como título. Tampoco viaja el `displayName` de la condición. Era exactamente mi pregunta —si el que lo recibe a las 3 de la mañana sabe qué hacer— y la respuesta era **no**.
 
-   Se descartó `conditions[].documentation` **con el error de la API en la mano**, no por suposición (`Unknown name "documentation"`): la documentación es de nivel política, un solo `subject` para las dos condiciones. Por eso el `subject` no puede redactarse para el caso del fallo —sería mentiroso para el de ausencia, donde lo probable es que ni haya ejecución— y quedó: *«Respaldo de la BD en rojo - fallo o 14 h sin volcado. Mira Scheduler y ejecuciones»*.
+   Se descartó `conditions[].documentation` **con el error de la API en la mano**, no por suposición (`Unknown name "documentation"`): la documentación es de nivel política, un solo `subject` para las dos condiciones. Por eso el `subject` no puede redactarse para el caso del fallo —sería mentiroso para el de ausencia, donde lo probable es que ni haya ejecución— y quedó: _«Respaldo de la BD en rojo - fallo o 14 h sin volcado. Mira Scheduler y ejecuciones»_.
 
    **La lección del ciclo, y es de @Claude:** eran **cuatro** sitios, no tres. Se corrigieron los documentos y se dejó la fuente —el `content` del propio JSON, **desplegado en la política viva**— diciendo todavía lo desmentido. **Al desmentir algo, el sitio que hay que corregir primero es el que está en producción, no la prosa que lo describe.**
 
@@ -128,18 +128,18 @@ Con tres condiciones, y las dos primeras no son opinables:
 3. **El id resuelto, al log del run**, para que «º a dónde avisa esto?» tenga
    respuesta en el registro y no en la consola.
 
-El *fallback* que propuso @Claude se acepta tal cual — **«mejor la vieja que una
+El _fallback_ que propuso @Claude se acepta tal cual — **«mejor la vieja que una
 muda»**: si el canal no aparece, no se toca la política y no se bloquea el
 despliegue de la API.
 
 **Registro de estado (2026-08-20, verificado en `git log`, no en reporte):**
 
-| Qué | Dónde | Estado |
-|---|---|---|
-| Deuda de frontend de Fase 5 (concurrencia del Inbox, URL de socket por `VITE_API_URL`, roles ARIA anidados, muerte de `mockTasks.ts`) | `251d60e` | ✅ entregado por @Gravity |
-| `vercel.json` — fuga de builds por `.md` | `251d60e` → `580d2cb` → `adad87d` (a la raíz) | ✅ **firmado**: `e031dee` sale `Canceled by Ignored Build Step` |
-| Política de alerta del respaldo | `285e3a2`, `ad1fe4c` | ⚠️ escrita, sin sonar |
-| Capa 1 (portero CRLF + espejo en CI) y Capa 3 / simulacro mensual | — | ⬜ sin empezar, de @Claude al cerrar la Fase 5 |
+| Qué                                                                                                                                   | Dónde                                         | Estado                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------- |
+| Deuda de frontend de Fase 5 (concurrencia del Inbox, URL de socket por `VITE_API_URL`, roles ARIA anidados, muerte de `mockTasks.ts`) | `251d60e`                                     | ✅ entregado por @Gravity                                       |
+| `vercel.json` — fuga de builds por `.md`                                                                                              | `251d60e` → `580d2cb` → `adad87d` (a la raíz) | ✅ **firmado**: `e031dee` sale `Canceled by Ignored Build Step` |
+| Política de alerta del respaldo                                                                                                       | `285e3a2`, `ad1fe4c`                          | ⚠️ escrita, sin sonar                                           |
+| Capa 1 (portero CRLF + espejo en CI) y Capa 3 / simulacro mensual                                                                     | —                                             | ⬜ sin empezar, de @Claude al cerrar la Fase 5                  |
 
 ## 🔍 6. Auditoría completa de @Alana (§37) y su reparto — 2026-08-21
 
@@ -161,12 +161,12 @@ marcador avanza igual**, y el log dice «N correo(s)» con N más bajo de lo rea
 operador ve un número menor y ningún error, y ese correo queda sin clasificar para
 siempre.
 
-| Encargo | Qué | Quién |
-|---|---|---|
-| **A** 🔴 | Los tres rojos, todos en `gmail.service.ts`: marcador, `catch` compartido, `defaultJobOptions`, tope de paginación | @Claude, tras el Punto 2 |
-| **B** 🟠 | `--timeout` contra los 10 min del copiloto, y `--max-instances` + `connection_limit` | @Claude, con el Punto 2 — mismo archivo |
-| **C** 🟠 | `trust proxy`. **Aparte a propósito**: mal puesto permite falsear la IP con una cabecera, peor que el problema que arregla | @Claude |
-| **D** 🟡 | Seis de frontend: arrastre sin revertir, dos carreras de peticiones, el 401 por texto, refresco sin cerrojo, la URL duplicada | @Gravity |
+| Encargo  | Qué                                                                                                                           | Quién                                   |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| **A** 🔴 | Los tres rojos, todos en `gmail.service.ts`: marcador, `catch` compartido, `defaultJobOptions`, tope de paginación            | @Claude, tras el Punto 2                |
+| **B** 🟠 | `--timeout` contra los 10 min del copiloto, y `--max-instances` + `connection_limit`                                          | @Claude, con el Punto 2 — mismo archivo |
+| **C** 🟠 | `trust proxy`. **Aparte a propósito**: mal puesto permite falsear la IP con una cabecera, peor que el problema que arregla    | @Claude                                 |
+| **D** 🟡 | Seis de frontend: arrastre sin revertir, dos carreras de peticiones, el 401 por texto, refresco sin cerrojo, la URL duplicada | @Gravity                                |
 
 **No repartido, y por qué:**
 
@@ -177,8 +177,8 @@ siempre.
   del Jefe, no técnica**: `--min-instances=1` cuesta dinero todos los meses; un
   ping desde Cloud Scheduler es gratis y feo. Con N=1, Doc se inclina por el ping.
 
-**Corrección al informe, y es mía:** §37.20 deja viva la pregunta de si el *Root
-Directory* de Vercel es `apps/web`. **Ya está contestada**: entré al panel, es
+**Corrección al informe, y es mía:** §37.20 deja viva la pregunta de si el _Root
+Directory_ de Vercel es `apps/web`. **Ya está contestada**: entré al panel, es
 `./`, y por eso el `vercel.json` va en la raíz y `e031dee` sale `Canceled by
 Ignored Build Step`. Su §37.20 se escribió sin ese dato.
 
@@ -235,8 +235,8 @@ mecanismo), `5aa1802`, `dc45460` (promesa única en vuelo, limpiada en `finally`
 `b259c27`. En §37.9 hizo **las tres cosas** que se pedían, no solo el `debounce`.
 
 **Y de paso apareció una deuda saldada que nadie había cerrado por escrito:** la
-excepción de `handleDragEnd` en `AI_ROLES.md` —abierta desde el 2026-07-27, *«hoy
-funciona por suerte, no por diseño»*— describía el mundo anterior. `moveTask` ya
+excepción de `handleDragEnd` en `AI_ROLES.md` —abierta desde el 2026-07-27, _«hoy
+funciona por suerte, no por diseño»_— describía el mundo anterior. `moveTask` ya
 no se llama dentro del updater. Corregida ahí mismo.
 
 ### Decisión — @Alana audita sin leer bitácoras ajenas (2026-08-21)
@@ -252,7 +252,7 @@ Sigue leyendo el código, git, la nube y los documentos neutrales —`AI_ROLES.m
 alcance dirigido por Doc.
 
 **Lo que esto me obliga a mí, y es el punto entero de la regla:** las bitácoras
-guardan también el *porqué* de lo deliberado — el `stalledInterval` de 10 minutos
+guardan también el _porqué_ de lo deliberado — el `stalledInterval` de 10 minutos
 se subió para ahorrar comandos de Upstash, no por descuido. **Cuando una
 restricción deliberada importe para lo que le pido, se la escribo en su prompt.**
 Si un día marca como defecto algo que era una decisión, el fallo será mío por no
@@ -310,7 +310,7 @@ sin encolar. @Alana fue a Cloud Logging: **el `add` a Redis no falló ni una vez
 
 El `catch` de `persistEmails` dejó **una** línea en un mes: `2026-08-17`, `P1001`,
 base inalcanzable en Neon. **Es la base, no Redis** — y como falló el `upsert`, ese
-correo **nunca llegó a guardarse**: es la *otra* mitad de §37.1, el correo perdido
+correo **nunca llegó a guardarse**: es la _otra_ mitad de §37.1, el correo perdido
 con el marcador avanzando igual. Un caso real de aquel hallazgo, pero no de este.
 
 **Consecuencia para la decisión de Cloud Tasks: este expediente no la apoya ni la
@@ -361,8 +361,8 @@ de cada dos**. No son 96 al día, son unos 48.
 
 **Y hay algo peor que la frecuencia, y solo se ve leyendo el texto que llegó:**
 
-> *«Si esto se repite, mira los avisos de sincronización de Gmail: el camino normal
-> está perdiendo el `add` a la cola.»*
+> _«Si esto se repite, mira los avisos de sincronización de Gmail: el camino normal
+> está perdiendo el `add` a la cola.»_
 
 **Es falso.** El `add` no falló ni una vez en 30 días. El aviso manda a quien lo
 recibe a buscar una causa que no existe, a las tres de la mañana, que es cuando
@@ -373,7 +373,7 @@ equivocado se convierte directamente en tiempo perdido de una persona.
 **Y una distinción que sale de mirar los cinco mensajes seguidos:** el de las 5:37
 con 27 correos **valía oro**; los cuatro siguientes son ruido. **Un aviso que se
 dispara por una condición conocida y estable no es un aviso, es una suscripción.**
-Debe avisar por que **aparezca algo nuevo**, no por que *haya* candidatos.
+Debe avisar por que **aparezca algo nuevo**, no por que _haya_ candidatos.
 
 El daño real no es la molestia: **la próxima alerta de verdad —un respaldo caído—
 llegará enterrada entre mensajes idénticos que ya se han aprendido a ignorar.** Un
@@ -386,7 +386,7 @@ Añadido al encargo de @Claude como pieza 4, y la pieza 2 sube de prioridad.
 **Firmado, y por primera vez en toda la Fase 5 firmado habiéndolo visto correr.**
 Verificado por Doc en Cloud Logging, no en el reporte de nadie:
 
-```
+```text
 00:45:06  pmo-api-00086  5 reencolado(s) de 5 candidato(s), 5 cerrado(s) sin clasificar
 00:49:27  pmo-api-00087  0 reencolado(s) de 0 candidato(s), 5 cerrado(s) sin clasificar
 ```
@@ -403,9 +403,9 @@ que ya no miente **y que solo se dispara por huérfanos nuevos**.
    media hora a uno cada hora — menos ruido, **misma naturaleza**. Lo que corta el
    problema es la 4: dejar de avisar por una condición conocida. Yo presenté la 2
    como el arreglo y la 4 como el añadido; era al revés.
-2. Y el descarte que escribió antes de arreglar: *«la salida fácil habría sido
+2. Y el descarte que escribió antes de arreglar: _«la salida fácil habría sido
    excluirlos en la consulta del barrido. Se descarta: eso cambia un problema
-   ruidoso por uno silencioso.»*
+   ruidoso por uno silencioso.»_
 
 ---
 
@@ -414,7 +414,7 @@ que ya no miente **y que solo se dispara por huérfanos nuevos**.
 Registrar las **etiquetas de Gmail** de los correos cerrados sin clasificar —idea
 de @Claude, no del encargo— contestó la pregunta de fondo. Y contestó mal:
 
-```
+```text
 UNREAD, IMPORTANT, CATEGORY_PERSONAL, INBOX
 UNREAD, CATEGORY_UPDATES, INBOX
 CATEGORY_PROMOTIONS, UNREAD, INBOX   (×2)
@@ -430,7 +430,7 @@ pasa de cierto tamaño. Un correo largo pierde el cuerpo entero.
 
 **Y la consecuencia que no dijo nadie, que es la que cambia el tamaño del
 problema:** esos cinco solo destacaron porque además tenían el `snippet` vacío.
-**Un correo grande *con* snippet no queda huérfano: se clasifica igual, leyendo
+**Un correo grande _con_ snippet no queda huérfano: se clasifica igual, leyendo
 solo el snippet** — doscientos caracteres en vez del correo entero. Termina bien,
 no da error, no cuenta en ningún sitio.
 
@@ -460,7 +460,7 @@ arreglar el parseo sin entender eso sería **medio arreglo con cara de entero**.
 **Treinta correos de error a la bandeja del Jefe fueron el único aviso.** Todos los
 despliegues de producción fallaban desde `9aae796`:
 
-```
+```text
 Command failed with exit code 128: git diff --quiet $VERCEL_GIT_PREVIOUS_SHA ...
 fatal: bad object fc4216a
 ```
@@ -470,8 +470,8 @@ despliegue correcto —del día 20— y ese commit ya no estaba en el clon. Y se
 retroalimentaba: como todos fallaban, el puntero no avanzaba y el SHA se alejaba un
 commit más en cada push.
 
-**Mi error, textual:** escribí en dos encargos que *«Vercel aborta el build solo con
-salida 0; cualquier otra cosa significa construye»*. **Es falso.** Un
+**Mi error, textual:** escribí en dos encargos que _«Vercel aborta el build solo con
+salida 0; cualquier otra cosa significa construye»_. **Es falso.** Un
 `ignoreCommand` que **falla** no construye: **hunde el despliegue**. Con ese
 razonamiento descarté la versión de @Gravity con rutas relativas diciendo que «la
 fuga volvería entera», cuando el fallo real de un 128 es el contrario.
@@ -480,8 +480,8 @@ fuga volvería entera», cuando el fallo real de un 128 es el contrario.
 finales de línea y todo lo demás **estaban en `master` y no en el navegador de
 nadie**. Los dimos por cerrados dos días antes de que existieran.
 
-**La regla que sale de aquí:** *el `ignoreCommand` no puede fallar nunca; si no
-puede decidir, que construya.* Un build de más cuesta segundos; uno de menos costó
+**La regla que sale de aquí:** _el `ignoreCommand` no puede fallar nunca; si no
+puede decidir, que construya._ Un build de más cuesta segundos; uno de menos costó
 dos días. Cerrado por @Gravity en `f4afa28` con `git cat-file -e` y `exit 1` de
 respaldo, y **verificado con las tres condiciones**: despliegue en verde
 (`80ce4de`), el salto sigue vivo (`73cc1a8` → `Canceled by Ignored Build Step`), y
@@ -500,7 +500,7 @@ producto avisaba solo por correo, a un canal que nadie había declarado como tal
 Escribí que **«es posible que la IA lleve semanas leyendo las dos primeras líneas
 de los correos largos»**. No ocurrió. La sonda, con sus testigos:
 
-```
+```text
 solo-snippet=0 · sin-cuerpo=5 · con-snippet=242 · total=247
 ```
 
@@ -526,7 +526,7 @@ avanza igual—; el `attachmentId` detrás.
 ### Decisión — la zona horaria es `America/Cancun` (2026-08-22)
 
 §44.2 de @Alana. `time-zone.ts:24` fija **`America/Mexico_City` (UTC−6)** y lo
-justifica en su docblock como *«donde trabaja quien usa esto»*. **Toda la
+justifica en su docblock como _«donde trabaja quien usa esto»_. **Toda la
 infraestructura corre en `America/Cancun` (UTC−5 fijo)**, escrito dos veces en
 `deploy.yml`.
 
@@ -534,7 +534,7 @@ infraestructura corre en `America/Cancun` (UTC−5 fijo)**, escrito dos veces en
 el día anterior**, en `GET /dashboard/metrics` y en `GET /time/report`.
 
 Ella no lo dio por defecto y acertó: el docblock lo declaraba **decisión de
-producto**, así que *o el valor está mal o el comentario lo está*, y eso no es suyo.
+producto**, así que _o el valor está mal o el comentario lo está_, y eso no es suyo.
 
 **Decisión de Doc: el valor está mal.** El Jefe está en Tulum — `America/Cancun`,
 UTC−5 **sin horario de verano**, que además es lo que evita que el número baile dos
@@ -554,10 +554,10 @@ La asimetría, dicha en voz alta: para el respaldo construimos **dos capas** —
 dentro que dice el motivo, otra fuera que garantiza que te enteras— y escribimos por
 qué hacían falta las dos. Para el despliegue, **cero**. La misma casa, el mismo mes.
 
-| | Quién | Qué garantiza | Su punto ciego |
-|---|---|---|---|
-| **Dentro** | Workflow con `deployment_status: failure` y `workflow_run: failure` → Chat | dice **qué** falló y dónde mirar | no ve lo que **no llega a fallar**: si Vercel deja de disparar, no hay evento |
-| **Fuera** | Sonda periódica que compara el commit servido con el último que tocó el frontend | garantiza que **te enteras**, sea cual sea la causa | no sabe el motivo |
+|            | Quién                                                                            | Qué garantiza                                       | Su punto ciego                                                                |
+| ---------- | -------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Dentro** | Workflow con `deployment_status: failure` y `workflow_run: failure` → Chat       | dice **qué** falló y dónde mirar                    | no ve lo que **no llega a fallar**: si Vercel deja de disparar, no hay evento |
+| **Fuera**  | Sonda periódica que compara el commit servido con el último que tocó el frontend | garantiza que **te enteras**, sea cual sea la causa | no sabe el motivo                                                             |
 
 **Dos detalles de diseño que deciden si esto sirve:**
 
@@ -578,12 +578,12 @@ El diagnóstico de los cinco correos sin texto cierra una cadena que empezó con
 «la ingesta pierde correos en silencio». **Ninguna de las tres alarmas sucesivas
 resultó ser lo que se supuso**, y cada una se desmontó midiendo:
 
-| Se supuso | Lo que era |
-|---|---|
-| Un rechazo de Redis dejaba correos sin encolar | **Cero fallos de Redis en 30 días.** La única línea del `catch` era `P1001` contra la base |
-| La IA llevaba semanas leyendo solo la vista previa | **`solo-snippet = 0`**, con testigos que lo hacen falsable |
-| El hueco del `attachmentId` se está comiendo cuerpos | **Aquí no perdió ni uno.** Cinco de seis sí tenían `text/html` con `data` |
-| Son dos fallos, y el del `snippet` vacío sin explicar | **Es uno, y no es un fallo** |
+| Se supuso                                             | Lo que era                                                                                 |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Un rechazo de Redis dejaba correos sin encolar        | **Cero fallos de Redis en 30 días.** La única línea del `catch` era `P1001` contra la base |
+| La IA llevaba semanas leyendo solo la vista previa    | **`solo-snippet = 0`**, con testigos que lo hacen falsable                                 |
+| El hueco del `attachmentId` se está comiendo cuerpos  | **Aquí no perdió ni uno.** Cinco de seis sí tenían `text/html` con `data`                  |
+| Son dos fallos, y el del `snippet` vacío sin explicar | **Es uno, y no es un fallo**                                                               |
 
 **La respuesta, con mecanismo y no con deducción:** esos correos son
 legítimamente vacíos — un `text/html` que solo envuelve una imagen incrustada, y
@@ -646,11 +646,11 @@ nadie mire el tablero.
 
 **Repartida la Capa 3 a @Claude**, con la misma forma que las dos anteriores:
 
-| | Qué | Su punto ciego |
-|---|---|---|
-| **Pronto** | Estimación del gasto desde el `usage` que ya devuelve cada llamada, contra un presupuesto configurado. Avisa en **días restantes**, no en porcentaje | No es exacto |
-| **Nativo** | Presupuesto de Cloud Billing con notificación por Pub/Sub | Solo GCP |
-| **Al filo** | Distinguir el 429 de **saldo agotado** del 429 de ritmo, y decir la causa | Llega cuando ya pasó |
+|             | Qué                                                                                                                                                  | Su punto ciego       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| **Pronto**  | Estimación del gasto desde el `usage` que ya devuelve cada llamada, contra un presupuesto configurado. Avisa en **días restantes**, no en porcentaje | No es exacto         |
+| **Nativo**  | Presupuesto de Cloud Billing con notificación por Pub/Sub                                                                                            | Solo GCP             |
+| **Al filo** | Distinguir el 429 de **saldo agotado** del 429 de ritmo, y decir la causa                                                                            | Llega cuando ya pasó |
 
 **Y una condición escrita en el encargo:** los precios van **en configuración con su
 fecha**, porque el de Sonnet 5 caduca el 31 de agosto. Un precio incrustado que
@@ -695,11 +695,11 @@ dejarlas solo en el prompt de quien las ejecuta.
 
 ### Estado del reparto — cierre del 2026-08-21
 
-| Capa | Estado | En qué |
-|---|---|---|
-| **@Claude** | `TRABAJAR` | **§37.8, el contrato del socket** y su mitad. Último hallazgo vivo de la auditoría |
-| **@Gravity** | `EN PAUSA` | Sin encargo. La mitad cliente del socket es suya y espera al contrato |
-| **@Alana** | `TRABAJAR` | Los 27 huérfanos: el texto de los `warn` en Cloud Logging, si es pico o goteo, y si sigue tras `337340e` |
+| Capa         | Estado     | En qué                                                                                                   |
+| ------------ | ---------- | -------------------------------------------------------------------------------------------------------- |
+| **@Claude**  | `TRABAJAR` | **§37.8, el contrato del socket** y su mitad. Último hallazgo vivo de la auditoría                       |
+| **@Gravity** | `EN PAUSA` | Sin encargo. La mitad cliente del socket es suya y espera al contrato                                    |
+| **@Alana**   | `TRABAJAR` | Los 27 huérfanos: el texto de los `warn` en Cloud Logging, si es pico o goteo, y si sigue tras `337340e` |
 
 **El hallazgo que desbloquea el §37.8, y no estaba en ningún informe.**
 `tasks.gateway.ts` rechaza dentro de `handleConnection` llamando a
@@ -729,8 +729,8 @@ Doc: los 40 de `apps/web/src` en `i/lf w/lf`, y sin `.bat`/`.cmd`/`.ps1` que el
 
 ### Rutina de Doc — revisar los tres buzones (2026-08-21)
 
-El buzón lleva escrita desde el 20-08 su propia limitación: *«no hay nadie sondeando
-este archivo: escribir aquí deja constancia, pero no despierta a Doc»*. **Hoy se
+El buzón lleva escrita desde el 20-08 su propia limitación: _«no hay nadie sondeando
+este archivo: escribir aquí deja constancia, pero no despierta a Doc»_. **Hoy se
 cumplió dos veces en la misma tarde.** @Claude dejó un bloqueo sobre el
 `trust proxy` que estuvo **un día** sin respuesta, y @Alana dejó el resultado de los
 27 con un «corre ahora mismo» encima. **Las dos las vi porque el Jefe me las
@@ -739,7 +739,7 @@ señaló, no porque yo mirara.**
 Escribir la limitación no la arregla. **Desde hoy, revisar los tres buzones es
 parte de la rutina de Doc**, junto con `git log` y `git status`:
 
-```
+```text
 PROMPT_CLAUDE.md   → buzón
 PROMPT_GRAVITY.md  → buzón
 PROMPT_ALANA.md    → buzón
@@ -751,9 +751,10 @@ deja de leerse, que es la segunda forma de que un canal falle.
 
 ### Resolución Fase 5 y Auditoría (2026-08-25)
 
-El día de hoy se completó la resolución de los **19 hallazgos** (14 en la API, 5 en el Frontend) reportados por Alana durante la auditoría de la Fase 5. 
+El día de hoy se completó la resolución de los **19 hallazgos** (14 en la API, 5 en el Frontend) reportados por Alana durante la auditoría de la Fase 5.
 
 El trabajo en local resultó en un 100% de éxito en los 704 tests unitarios de Jest. Sin embargo, tal como se tiene documentado, el trabajo no cuenta hasta llegar a producción. Durante el despliegue automático surgieron tres inconvenientes que probaron nuestras redes de alerta:
+
 - **Semáforo del backend (Frontend)**: Alana detectó que el `/health/ready` fallaba en resetear su estado local al encontrar errores (503), manteniendo la luz verde. Se aplicó `setHealth(null)` en el catch (`f65ca20`).
 - **ESLint en CI**: Unas quejas estrictas del linter por usar `require('fs')` y `require('path')` dentro de `frontend-al-dia.service.spec.ts` reventaron la etapa `build-and-lint`. Se cambió por `import * as fs` (`030b003`).
 - **Prisma y el inferido `never[]`**: Los arrays vacíos `subidas` y `creadas` en `precios-modelo.ts` y `email-classification.service.ts` rompían la compilación de TypeScript al no poder inferir tipo. Se tiparon explícitamente (`3c4cf5d` y `780ad95`).
@@ -762,9 +763,8 @@ Con esto el código está limpio, el CI/CD en verde, y la Fase 5 cierra su bloqu
 
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
-* **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.
-* **Preguntar "¿por qué?" en lugar de "¿está?":** Lección aprendida de los falsos positivos (ej. el fallo de encoding del `.gitignore`).
-* **El campo `Estado` de un encargo lo decide solo Doc:** Ha fallado dos veces: trabajo entrando con el documento en pausa, y encargos pidiendo cosas ya entregadas. **Desde el 2026-08-20, con Doc escribiendo solo en este archivo, el valor lo dicta Doc y lo transcribe el dueño de la bitácora.** El ejecutor no lo elige; lo copia.
-* **Un estado verificado caduca en cuanto alguien actúa sobre él:** lección de @Alana el 2026-08-20, que publicó una propuesta de tres capas y descubrió que la Capa 2 se había entregado mientras la escribía. Antes de publicar cualquier cosa que describa el estado del sistema, `git log` otra vez.
-* **Verificar en el código antes de dar una casilla por cerrada:** Nunca confiar ciegamente en el reporte sin evidencia (logs, HTTP 200 o el monitor en vivo).
-
+- **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un _add_ masivo rompe las bitácoras y sube código no probado.
+- **Preguntar "¿por qué?" en lugar de "¿está?":** Lección aprendida de los falsos positivos (ej. el fallo de encoding del `.gitignore`).
+- **El campo `Estado` de un encargo lo decide solo Doc:** Ha fallado dos veces: trabajo entrando con el documento en pausa, y encargos pidiendo cosas ya entregadas. **Desde el 2026-08-20, con Doc escribiendo solo en este archivo, el valor lo dicta Doc y lo transcribe el dueño de la bitácora.** El ejecutor no lo elige; lo copia.
+- **Un estado verificado caduca en cuanto alguien actúa sobre él:** lección de @Alana el 2026-08-20, que publicó una propuesta de tres capas y descubrió que la Capa 2 se había entregado mientras la escribía. Antes de publicar cualquier cosa que describa el estado del sistema, `git log` otra vez.
+- **Verificar en el código antes de dar una casilla por cerrada:** Nunca confiar ciegamente en el reporte sin evidencia (logs, HTTP 200 o el monitor en vivo).
