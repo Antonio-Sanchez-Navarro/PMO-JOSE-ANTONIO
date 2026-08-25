@@ -955,7 +955,7 @@ jobs:
           echo "Disparador ${TRABAJO} ${ESTADO}: 03:30 y 15:30 America/Cancun."
 
 
-      # La estimación de coste de IA, una vez al día (Capa 3)
+      # La estimación de coste de IA, cada hora (Capa 3)
       #
       # **Vigila lo que se consume, no lo que se hace.** Las tres pasadas de
       # código dieron veintisiete hallazgos y ninguno era una cuenta atrás — y de
@@ -963,11 +963,22 @@ jobs:
       # crédito es hoy la más probable: quedaban ~$8 en Anthropic y no los miraba
       # nadie.
       #
-      # ⚠️ **Diaria, y la cadencia va atada al freno del aviso** (23 h, en
-      # `ai-cost.service.ts`). El gasto es un fenómeno lento: preguntarlo cada
-      # hora no adelantaría el aviso, solo gastaría instancia. Y si alguien
-      # acelera este cron sin subir el freno, cada pasada caería en el borde y
-      # dejaría de frenar — que es exactamente lo que le pasó al barrido.
+      # ⚠️ **Era diaria a las 08:00, y eso dejaba hasta 24 h ciegas.** El
+      # razonamiento de entonces —«el gasto es lento, preguntarlo cada hora no
+      # adelantaría el aviso»— confundía la velocidad del **fenómeno** con la del
+      # **aviso**. El gasto sube despacio, cierto; pero **el umbral se cruza en un
+      # instante**, y si se cruza a las 09:00 nadie se entera hasta las 08:00 del
+      # día siguiente. De los seis disparadores es el único con una cuenta atrás
+      # corriendo por debajo, y por eso era el hueco más ancho (@Alana,
+      # 2026-08-25). Cada hora lo acota a 60 minutos.
+      #
+      # ⚠️ **Acelerar la cadencia NO obliga a subir el freno del aviso** (23 h,
+      # en `ai-cost.service.ts`), y conviene saber por qué, porque la lección del
+      # barrido parece decir lo contrario: lo que rompe un freno es ser **igual o
+      # menor** que la cadencia, no ser mayor. Con 23 h contra una cita horaria,
+      # 22 pasadas de cada 23 salen silenciadas y sigue siendo **un mensaje al
+      # día** — lo que baja no es el número de avisos, es el tiempo hasta el
+      # primero.
       #
       # ⚠️ Igual que los demás: **solo `create` o `update`, nunca `delete` ni
       # `pause`.**
@@ -1000,12 +1011,13 @@ jobs:
             exit 0
           fi
 
-          # 08:00 de Tulum: temprano, para que el aviso llegue al empezar el dia
-          # y no a media tarde con el gasto ya hecho.
+          # En punto, cada hora. El coste de una pasada de mas es un arranque en
+          # frio de Cloud Run —centimos al mes—; el de una pasada de menos es
+          # hasta 23 h operando sin saber que se acabo el credito.
           gcloud scheduler jobs "${ACCION}" http "${TRABAJO}" \
             --project="${PROJECT_ID}" \
             --location="${REGION}" \
-            --schedule="0 8 * * *" \
+            --schedule="0 * * * *" \
             --time-zone="America/Cancun" \
             --uri="${URL}/cron/coste-ia" \
             --http-method=POST \
@@ -1019,7 +1031,7 @@ jobs:
             echo "::error::La estimacion ${TRABAJO} esta en estado ${ESTADO}, no ENABLED. Mientras siga asi, nadie mira cuanto credito queda. Reanudala con: gcloud scheduler jobs resume ${TRABAJO} --location ${REGION}"
             exit 0
           fi
-          echo "Estimacion ${TRABAJO} ${ESTADO}: cada dia a las 08:00 America/Cancun"
+          echo "Estimacion ${TRABAJO} ${ESTADO}: cada hora, en punto (America/Cancun)"
 
       # La sonda del frontend, cada 30 minutos (Capa 2 del despliegue)
       #

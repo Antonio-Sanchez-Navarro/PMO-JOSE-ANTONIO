@@ -20,13 +20,18 @@ const PRESUPUESTO_POR_DEFECTO = 20;
 const DIAS_DE_RITMO = 7;
 
 /**
- * Suelo del divisor del ritmo.
+ * Suelo del divisor del ritmo, en días.
  *
- * Dos y no uno: con un único día de historia, ese día está **a medias** —el cron
- * corre por la mañana— y puede ser además una tanda atípica. Ver
- * {@link AiCostService.divisorDeRitmo}, donde está escrito lo que cuesta.
+ * ⚠️ **Uno, y antes era dos.** El dos compensaba a ojo que «el día en curso está
+ * a medias porque el cron corre por la mañana». Eso ya no hace falta compensarlo:
+ * desde el 2026-08-25 el divisor **mide** lo que lleva transcurrido el día en
+ * curso en vez de suponerlo, así que un suelo de dos días solo serviría para
+ * partir el ritmo por la mitad durante la primera jornada.
+ *
+ * Lo único que le queda por evitar al suelo es la división entre casi cero a las
+ * 00:05 — ver {@link AiCostService.divisorDeRitmo}.
  */
-const MINIMO_DE_DIAS = 2;
+const MINIMO_DE_DIAS = 1;
 
 /** A partir de qué consumo se avisa. */
 const UMBRALES = [0.75, 0.9];
@@ -34,10 +39,25 @@ const UMBRALES = [0.75, 0.9];
 /**
  * Silencio entre avisos de coste.
  *
- * ⚠️ **Va atado a la cadencia del cron**, que es diaria. Un día entero: el gasto
- * es un fenómeno lento y avisar más a menudo del mismo umbral no adelanta nada.
- * Si alguien acelera el cron, este número sube con él — la lección del barrido,
- * que tenía un freno igual a su cadencia y por eso no frenaba nada.
+ * ⚠️ **Ya NO va atado a la cadencia del cron, y el matiz importa.** El cron pasó
+ * de diario a **horario** el 2026-08-25 —una cita diaria dejaba hasta 24 h entre
+ * cruzar el umbral y enterarse— y este número no se tocó. No es un descuido: lo
+ * que rompe un freno es ser **igual o menor** que la cadencia, que es lo que le
+ * pasó al barrido con su freno de 24 h contra una cita de 24 h, donde cada pasada
+ * caía justo en el borde de la anterior. 23 h contra una cita horaria están
+ * veintitrés veces al otro lado.
+ *
+ * Lo que el freno fija es **cuántos avisos salen**, no cuánto se tarda en el
+ * primero. Sigue siendo uno al día por umbral; lo que baja de 24 h a 1 h es la
+ * espera hasta ese primero, que era todo el problema.
+ *
+ * ⚠️ **Donde la cadencia sí amplifica es en el fallo abierto de
+ * `AlertService`**: si Redis no responde, el freno no se puede consultar y el
+ * aviso se manda igualmente —a propósito, porque un mensaje de más es menos
+ * grave que un silencio—. Con la cita diaria eso era un mensaje repetido al
+ * día; con la horaria son veinticuatro. Se acepta porque un Redis caído se
+ * lleva por delante las colas y ya está gritando por otros sitios, pero queda
+ * escrito.
  */
 const FRENO_S = 23 * 3_600;
 
@@ -255,9 +275,20 @@ export class AiCostService {
    * en la media; descontarlo inflaría el ritmo y adelantaría el aviso sin
    * motivo. Lo que no es real es contar como observados los seis días
    * anteriores a que existiera la tabla.
+   *
+   * Y el día **en curso** cuenta por las horas que lleva, no como un día entero:
+   * lo dice {@link AiCostService.divisorDeRitmo}, y es lo que hace que este
+   * número no dé un salto a cada medianoche ahora que el cron corre cada hora.
    */
   private async ritmoDiario(ahora: Date): Promise<number> {
-    const desde = new Date(ahora.getTime() - DIAS_DE_RITMO * 24 * 3_600_000);
+    // ⚠️ **La ventana se corta por días locales, no restando 168 h al instante
+    // de ahora.** Restando horas, el día más viejo entraba o salía de la ventana
+    // según la hora a la que corriera el cron; con la cita diaria fija eso daba
+    // siempre el mismo resultado, pero desde que corre **cada hora** la ventana
+    // cambiaría de tamaño veinticuatro veces al día y el ritmo daría saltos que
+    // no están en el gasto. Así son siempre hoy y los seis días anteriores.
+    const desde = this.diaLocal(ahora);
+    desde.setUTCDate(desde.getUTCDate() - (DIAS_DE_RITMO - 1));
 
     const filas = await this.prisma.aiUsage.findMany({
       where: { dia: { gte: desde } },
@@ -278,7 +309,9 @@ export class AiCostService {
       primerDia = Math.min(primerDia, fila.dia.getTime());
     }
 
-    const cubiertos = Math.round((this.diaLocal(ahora).getTime() - primerDia) / 86_400_000) + 1;
+    // Fraccionario y sin `+ 1`: se cuenta hasta **este momento**, no hasta el
+    // final de hoy. Ver {@link AiCostService.divisorDeRitmo}.
+    const cubiertos = (this.instanteLocal(ahora) - primerDia) / 86_400_000;
 
     return total / this.divisorDeRitmo(cubiertos);
   }
@@ -286,19 +319,34 @@ export class AiCostService {
   /**
    * Entre cuántos días se reparte el gasto observado.
    *
+   * ⚠️ **`diasCubiertos` es fraccionario a propósito, y ese es el arreglo del
+   * 2026-08-25.** Cuenta desde las 00:00 locales del primer día con datos hasta
+   * **este instante**, no hasta el final de hoy: a la 01:00 del segundo día han
+   * transcurrido 1,04 días, no 2. Contar el día en curso como entero repartía el
+   * gasto entre más días de los vividos y **bajaba el ritmo**, que es la misma
+   * dirección del `/7` fijo que esto ya corrigió: hacia «queda más de lo que
+   * queda», por donde se llega a cero sin aviso.
+   *
+   * Con la cita de las 08:00 ese sesgo valía un tercio de día y era tolerable.
+   * Desde que el cron corre **cada hora** aparecería entero cada madrugada: a las
+   * 00:30, el día en curso —vacío— pesaría tanto como cualquier día completo.
+   * Acelerar la cadencia es lo que convirtió un redondeo aceptable en una
+   * mentira horaria.
+   *
    * Acotado por los dos lados, y cada tope evita un error distinto:
    *
    * - **Por arriba, {@link DIAS_DE_RITMO}**: nunca se reparte entre más días de
    *   los que mira la ventana, aunque la tabla tenga meses.
-   * - **Por abajo, {@link MINIMO_DE_DIAS}**: con un solo día de historia, ese
-   *   día **está a medias** —el cron corre por la mañana— y además puede ser una
-   *   tanda atípica. Repartirlo entre dos amortigua el arranque.
+   * - **Por abajo, {@link MINIMO_DE_DIAS}**: a las 00:05 del primer día han
+   *   transcurrido 0,003 días, y dividir por eso convierte tres céntimos en un
+   *   ritmo de diez dólares diarios. El suelo dice «como mucho, todo esto cabe
+   *   en un día», que es la lectura conservadora y no inventa una alarma.
    *
-   * ⚠️ **El mínimo tiene un precio y conviene tenerlo escrito**: el primer día,
-   * el ritmo sale la mitad del real y el aviso llega más tarde de lo que debería.
-   * Se acepta porque dura un día y porque un aviso falso el día del estreno es
-   * la forma más rápida de que alguien silencie el canal — pero es una decisión,
-   * no una propiedad, y va en la dirección incómoda.
+   * ⚠️ **El suelo tiene un precio y conviene tenerlo escrito**: mientras solo
+   * haya unas horas de historia, el ritmo sale por debajo del real y el aviso
+   * llegaría tarde. Dura lo que tarda en cumplirse el primer día y solo muerde
+   * cuando aún no hay casi nada que medir — pero es una decisión, no una
+   * propiedad, y va en la dirección incómoda.
    */
   private divisorDeRitmo(diasCubiertos: number): number {
     return Math.min(DIAS_DE_RITMO, Math.max(MINIMO_DE_DIAS, diasCubiertos));
@@ -325,5 +373,39 @@ export class AiCostService {
     }).format(ahora);
 
     return new Date(`${local}T00:00:00.000Z`);
+  }
+
+  /**
+   * Ahora mismo, en la zona del producto y en la misma escala que
+   * {@link AiCostService.diaLocal}.
+   *
+   * **Existe para que el día en curso se pueda medir en vez de suponerse.**
+   * `diaLocal` da las 00:00 locales de hoy; esto da esas 00:00 más lo que va del
+   * día, así que restarle un `dia` de la tabla da **días con decimales** en vez
+   * de un salto de uno en uno.
+   *
+   * Ojo con mezclar escalas: las filas de `aiUsage` guardan el día local
+   * disfrazado de medianoche UTC, así que restarles un `Date` real se equivoca
+   * en las cinco horas del huso. Por eso esto se construye sobre `diaLocal` y no
+   * sobre `ahora.getTime()`.
+   */
+  private instanteLocal(ahora: Date): number {
+    const partes = new Intl.DateTimeFormat('en-GB', {
+      timeZone: ZONA_POR_DEFECTO,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      // `h23` y no `hour12: false`: sin esto, la medianoche sale como «24» en
+      // varios locales y el día en curso empezaría valiendo un día entero.
+      hourCycle: 'h23',
+    }).formatToParts(ahora);
+
+    const valor = (tipo: string): number =>
+      Number(partes.find((p) => p.type === tipo)?.value ?? 0);
+
+    return (
+      this.diaLocal(ahora).getTime() +
+      ((valor('hour') * 60 + valor('minute')) * 60 + valor('second')) * 1_000
+    );
   }
 }

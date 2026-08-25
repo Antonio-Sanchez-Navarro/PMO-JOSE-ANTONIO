@@ -114,8 +114,16 @@ export class CronController {
    * las dos formas de que esto se pare un martes por la mañana, quedarse sin
    * crédito es hoy la más probable.
    *
-   * Diaria y no más frecuente: el gasto es un fenómeno lento y preguntarlo cada
-   * hora no adelantaría el aviso, solo gastaría instancia.
+   * ⚠️ **Cada hora, y hasta el 2026-08-25 era diaria a las 08:00.** El
+   * razonamiento viejo —«el gasto es un fenómeno lento, preguntarlo cada hora no
+   * adelantaría el aviso»— confundía la velocidad del fenómeno con la del aviso.
+   * El gasto sube despacio, pero **el umbral se cruza en un instante**: cruzarlo
+   * a las 09:00 costaba 23 horas de silencio con la cuenta atrás corriendo. Era
+   * el hueco más ancho de los seis disparadores.
+   *
+   * Veinticuatro pasadas al día no son veinticuatro avisos: el freno de 23 h de
+   * `AiCostService` deja pasar uno por umbral y calla el resto. Lo que baja no
+   * es el número de mensajes, es la espera hasta el primero.
    */
   @Post('coste-ia')
   @HttpCode(200)

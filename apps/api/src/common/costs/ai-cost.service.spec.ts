@@ -14,7 +14,11 @@ import { precioDe, subidaCercana } from './precios-modelo';
  * que se escribió y silenciosamente falso después.
  */
 describe('AiCostService · cuánto queda al ritmo actual', () => {
+  // Las 07:00 de America/Cancun (UTC-5). La hora local importa desde que el
+  // divisor del ritmo cuenta el dia en curso por lo que lleva transcurrido:
+  // 7/24 de dia, no un dia entero.
   const AHORA = new Date('2026-08-25T12:00:00Z');
+  const FRACCION_DEL_DIA = 7 / 24;
 
   function crear(filas: { dia: string; model: string; entrada: number; salida: number }[], presupuesto = '20') {
     const avisar = jest.fn().mockResolvedValue(undefined);
@@ -133,16 +137,44 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
 
       const e = await service.estimar(AHORA);
 
-      // $4 gastados hoy. Con el suelo de 2 dias -el dia en curso esta a
-      // medias-, el ritmo es $2/dia. Con el /7 de antes habrian sido $0,57.
+      // $4 gastados hoy y solo 7/24 de dia transcurridos: por debajo del suelo
+      // de un dia, asi que se reparte entre 1. Con el /7 de antes habrian sido
+      // $0,57; con el suelo de 2 que hubo en medio, $2.
       expect(e.gastado).toBeCloseTo(4, 5);
-      expect(e.ritmoDiario).toBeCloseTo(2, 5);
+      expect(e.ritmoDiario).toBeCloseTo(4, 5);
       expect(e.ritmoDiario).not.toBeCloseTo(4 / 7, 5);
     });
 
-    it('con la ventana entera cubierta se sigue dividiendo entre siete', async () => {
-      // El arreglo no puede cambiar el caso normal, que es el de todos los dias
-      // a partir de la primera semana.
+    it('el dia en curso pesa por las horas que lleva, no como un dia entero', async () => {
+      // Regresion del 2026-08-25, al pasar el cron de diario a horario: el
+      // divisor contaba hoy como un dia completo, asi que a las 00:30 un dia
+      // aun vacio pesaba tanto como cualquier dia vivido y el ritmo salia por
+      // debajo del real -«queda mas de lo que queda»-, que es por donde se
+      // llega a cero sin aviso. Con la cita de las 08:00 el sesgo valia un
+      // tercio de dia; con una cita horaria aparece entero cada madrugada.
+      const dias = ['23', '24', '25'].map((d) => ({
+        dia: `2026-08-${d}`,
+        model: 'claude-sonnet-5',
+        entrada: 1_000_000,
+        salida: 0,
+      }));
+
+      // Las 00:30 y las 18:30 del mismo dia local, en America/Cancun.
+      const alba = await crear(dias).service.estimar(new Date('2026-08-25T05:30:00Z'));
+      const tarde = await crear(dias).service.estimar(new Date('2026-08-25T23:30:00Z'));
+
+      // Los mismos $6 repartidos entre 2,02 dias y entre 2,77.
+      expect(alba.ritmoDiario).toBeCloseTo(6 / (2 + 0.5 / 24), 5);
+      expect(tarde.ritmoDiario).toBeCloseTo(6 / (2 + 18.5 / 24), 5);
+      // Contando hoy como entero, las dos habrian dado $2 clavados: el ritmo no
+      // se habria movido en dieciocho horas, y de madrugada habria salido un
+      // 33% por debajo del real.
+      expect(alba.ritmoDiario).toBeGreaterThan(tarde.ritmoDiario);
+      expect(tarde.ritmoDiario).toBeGreaterThan(2);
+    });
+
+    it('con la ventana entera cubierta se reparte entre lo vivido, no entre 7', async () => {
+      // El caso normal, el de todos los dias a partir de la primera semana.
       const dias = ['19', '20', '21', '22', '23', '24', '25'].map((d) => ({
         dia: `2026-08-${d}`,
         model: 'claude-sonnet-5',
@@ -152,9 +184,39 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
 
       const e = await crear(dias).service.estimar(AHORA);
 
-      // $2 por dia durante siete dias = $14, repartidos entre 7 = $2/dia.
+      // $2 por dia durante siete dias = $14. Del 19 a ahora han pasado 6 dias
+      // completos y 7/24 del septimo, asi que el divisor es 6,29 y no 7.
       expect(e.gastado).toBeCloseTo(14, 5);
-      expect(e.ritmoDiario).toBeCloseTo(2, 5);
+      expect(e.ritmoDiario).toBeCloseTo(14 / (6 + FRACCION_DEL_DIA), 5);
+      // Nunca por debajo del reparto entre la ventana entera: el tope de
+      // arriba sigue siendo DIAS_DE_RITMO.
+      expect(e.ritmoDiario).toBeGreaterThan(14 / 7);
+    });
+
+    it('la ventana se corta por dias locales, no restando 168 horas', async () => {
+      // Con la cita diaria fija daba igual; con una horaria, restar horas al
+      // instante actual metia y sacaba el dia mas viejo veinticuatro veces al
+      // dia y el ritmo saltaba sin que el gasto se moviera. El dia 19 -el
+      // septimo hacia atras- tiene que seguir dentro tanto a las 07:00 como a
+      // las 22:00, porque es el mismo dia local en los dos casos.
+      const dias = ['19', '25'].map((d) => ({
+        dia: `2026-08-${d}`,
+        model: 'claude-sonnet-5',
+        entrada: 1_000_000,
+        salida: 0,
+      }));
+
+      const manana = await crear(dias).service.estimar(new Date('2026-08-25T12:00:00Z'));
+      const noche = await crear(dias).service.estimar(new Date('2026-08-26T03:00:00Z'));
+
+      // 2026-08-26T03:00Z son las 22:00 del dia 25 en Cancun: sigue siendo el
+      // mismo dia local, asi que la ventana es la misma y el gasto tambien.
+      expect(manana.gastado).toBeCloseTo(4, 5);
+      expect(noche.gastado).toBeCloseTo(4, 5);
+      // El ritmo solo baja porque ha transcurrido mas dia, no porque se haya
+      // caido una fila de la ventana.
+      expect(noche.ritmoDiario).toBeLessThan(manana.ritmoDiario);
+      expect(noche.ritmoDiario).toBeCloseTo(4 / (6 + 22 / 24), 5);
     });
 
     it('un hueco sin consumo cuenta como dia, porque es un cero real', async () => {
@@ -168,9 +230,10 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
 
       const e = await service.estimar(AHORA);
 
-      // $6 entre los 3 dias cubiertos (23, 24 y 25), no entre los 2 con datos.
+      // $6 entre lo cubierto -el 23, el 24 y las 7 horas que lleva el 25-, no
+      // entre los 2 dias que tienen fila, que darian $3/dia.
       expect(e.gastado).toBeCloseTo(6, 5);
-      expect(e.ritmoDiario).toBeCloseTo(2, 5);
+      expect(e.ritmoDiario).toBeCloseTo(6 / (2 + FRACCION_DEL_DIA), 5);
       expect(e.ritmoDiario).not.toBeCloseTo(3, 5);
     });
 
@@ -182,9 +245,9 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
 
       const e = await service.estimar(AHORA);
 
-      // $2 gastados de $10, ritmo $1/dia -> quedan 8 dias. Con el /7 de antes
-      // habrian salido 56, y 56 dias de margen no se atienden.
-      expect(e.diasRestantes).toBe(8);
+      // $2 gastados de $10 y $2/dia de ritmo -> quedan 4 dias. Con el /7 de
+      // antes habrian salido 28, y 28 dias de margen no se atienden.
+      expect(e.diasRestantes).toBe(4);
     });
   });
 
@@ -215,16 +278,35 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
     expect(subida?.[3]).toBeGreaterThanOrEqual(7 * 24 * 3_600);
   });
 
-  it('el freno es mas largo que la cadencia diaria del cron', async () => {
+  it('el freno aguanta la cadencia HORARIA del cron', async () => {
+    // El cron paso de diario a cada hora el 2026-08-25 para cerrar las 24 h
+    // ciegas. Con un freno igual o menor que la cadencia, cada pasada caeria en
+    // el borde de la anterior y no frenaria nada -la leccion del barrido-, asi
+    // que aqui se fija que siga muy por encima de una hora: 24 pasadas al dia
+    // tienen que seguir siendo un mensaje al dia por umbral.
     const { service, avisar } = crear([
       { dia: '2026-08-24', model: 'claude-sonnet-5', entrada: 8_000_000, salida: 0 },
     ]);
 
     await service.comprobar(AHORA);
 
-    // Con un freno igual o menor que la cadencia, cada pasada caeria en el
-    // borde y no frenaria nada. Es la leccion del barrido.
-    expect(avisar.mock.calls[0][3]).toBeGreaterThan(12 * 3_600);
+    const ventana = Number(avisar.mock.calls[0][3]);
+    expect(ventana).toBeGreaterThanOrEqual(23 * 3_600);
+    expect(ventana).toBeGreaterThan(20 * 3_600);
+  });
+
+  it('la clave del freno separa los umbrales, para que el 90% no lo calle el 75%', async () => {
+    // Si compartieran clave, cruzar el 90% dentro de las 23 h del aviso del 75%
+    // no diria nada. Con la cadencia horaria eso serian 23 pasadas callando el
+    // aviso que mas importa.
+    const { service, avisar } = crear([
+      { dia: '2026-08-24', model: 'claude-sonnet-5', entrada: 9_500_000, salida: 0 },
+    ]);
+
+    await service.comprobar(AHORA);
+
+    const clave = String(avisar.mock.calls.find((c) => String(c[0]).includes('presupuesto'))?.[2]);
+    expect(clave).toBe('coste-ia-0.9');
   });
 
   it('registrar nunca lanza, aunque la base falle', async () => {
