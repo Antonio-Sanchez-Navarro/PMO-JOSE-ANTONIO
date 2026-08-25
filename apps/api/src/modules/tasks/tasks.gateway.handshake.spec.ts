@@ -128,35 +128,17 @@ describe('TasksGateway · el contrato del handshake, de punta a punta', () => {
     expect(resultado.codigo).toBe('SESION_INVALIDA');
   });
 
-  it('con la revalidación apagada, un token caducado NO cierra el socket', async () => {
-    // Es el comportamiento vigente desde el 2026-08-22 y **está elegido, no
-    // heredado**: cerrar el socket contra un cliente que no escucha el cierre
-    // producía una reconexión cada ~5 s por pestaña, unas 17.000 al día, cada
-    // una despertando Cloud Run. La mitad servidor sola convertía un fallo
-    // ocasional en uno garantizado.
-    //
-    // Esta prueba existe para que apagarlo sea una decisión visible: si alguien
-    // enciende `REVALIDACION_ACTIVA` sin la mitad del cliente, esto salta.
-    const token = await firmar({ expiresIn: 1 });
-    const cliente = conectar(`${SESSION_COOKIE}=${token}`);
-
-    await desenlace(cliente);
-
-    const cerroSolo = await new Promise<boolean>((resolve) => {
-      cliente.on(SESSION_EVENTS.rechazada, () => resolve(true));
-      setTimeout(() => resolve(false), 3_000);
-    });
-
-    expect(cerroSolo).toBe(false);
-    expect(cliente.connected).toBe(true);
-  }, 10_000);
-
-  // ⏸️ Dormida a propósito, no rota. Es la guarda de la revalidación periódica:
-  // el día que `apps/web` escuche `SESSION_EVENTS.rechazada`, se pone
-  // `REVALIDACION_ACTIVA = true`, se cambia este `it.skip` por `it` y se borra
-  // la prueba de arriba. Se queda escrita para que reencender sea cambiar dos
-  // líneas y no reconstruir la prueba que demostraba que funcionaba.
-  it.skip('el socket no sobrevive a su propio token: avisa y cierra al caducar', async () => {
+  // ⏰ **Despertada el 2026-08-25**, al encender `REVALIDACION_ACTIVA`.
+  //
+  // Aquí vivía su contraria —«con la revalidación apagada, un token caducado NO
+  // cierra el socket»—, que fijaba el comportamiento del 08-22 para que apagarlo
+  // fuera una decisión visible. Ya no describe el mundo, así que se retira: dos
+  // pruebas que se contradicen no son más cobertura, son una que miente.
+  //
+  // Se retira **aquí y no en otro sitio** porque es donde estaba escrito que
+  // había que retirarla. Lo dejó dicho quien la escribió, y el encargo de hoy no
+  // lo mencionaba: al encender sin borrarla, la suite se pone roja.
+  it('el socket no sobrevive a su propio token: avisa y cierra al caducar', async () => {
     // Antes se validaba una sola vez en el handshake y el socket vivía
     // indefinidamente: uno abierto toda la noche seguía recibiendo eventos con
     // una sesión caducada hacía horas.

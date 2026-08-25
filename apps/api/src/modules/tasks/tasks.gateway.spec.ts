@@ -243,3 +243,58 @@ describe('TasksGateway — supresión del eco', () => {
     });
   });
 });
+
+describe('§43.5 · un payload sin dueño no se difunde a todos', () => {
+  let gateway: TasksGateway;
+  let emit: jest.Mock;
+  let to: jest.Mock;
+
+  beforeEach(() => {
+    gateway = new TasksGateway({ verifyAccess: jest.fn() } as unknown as SessionService);
+    emit = jest.fn();
+    to = jest.fn().mockReturnValue({ emit });
+    gateway.server = { emit, to } as never;
+  });
+
+  const sinDuenno = { id: 't1', status: 'TODO', title: 'x' } as unknown as Task;
+
+  it('no llama a server.emit, que iba a TODOS los clientes', () => {
+    // El comportamiento anterior era `this.server.emit(...)`: el evento de un
+    // usuario aterrizaba en la pantalla de cualquiera. Se defendía como «lo
+    // visible en vez de lo silencioso», y el objetivo era bueno; el medio pagaba
+    // esa visibilidad con los datos de alguien.
+    gateway.emitTaskUpdated(sinDuenno);
+
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('tampoco lo manda a una sala inventada', () => {
+    // La otra forma de equivocarse: encaminar a la sala `undefined`, que es un
+    // nombre válido para socket.io y no falla, solo no llega. Ni eso.
+    gateway.emitTaskUpdated(sinDuenno);
+
+    expect(to).not.toHaveBeenCalled();
+  });
+
+  it('deja rastro con nivel error, para que no sea un fallo mudo', () => {
+    // Es la mitad que hay que conservar del razonamiento viejo: no difundir no
+    // puede significar callarse. `error` y no `warn` porque Error Reporting lee
+    // las excepciones de Cloud Logging y un `warn` se pierde entre el ruido.
+    const registro = jest
+      .spyOn(gateway['logger'], 'error')
+      .mockImplementation(() => undefined);
+
+    gateway.emitTaskUpdated(sinDuenno);
+
+    expect(registro).toHaveBeenCalledTimes(1);
+    expect(registro.mock.calls[0][0]).toContain('sin userId');
+  });
+
+  it('con dueño sigue emitiendo a su sala, que es el caso de siempre', () => {
+    // La guarda no puede cobrarse el camino bueno.
+    gateway.emitTaskUpdated(tarea);
+
+    expect(to).toHaveBeenCalledWith('u1');
+    expect(emit).toHaveBeenCalledWith(TASK_EVENTS.updated, tarea);
+  });
+});

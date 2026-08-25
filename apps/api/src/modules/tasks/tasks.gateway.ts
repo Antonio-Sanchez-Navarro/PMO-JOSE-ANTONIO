@@ -79,41 +79,48 @@ export { SESSION_EVENTS, type SesionRechazadaEvento } from '@pmo/shared';
 const REVALIDACION_POR_DEFECTO_MS = 5 * 60_000;
 
 /**
- * ⚠️ **APAGADO desde el 2026-08-22, y no es una limpieza: es una retirada.**
+ * ✅ **ENCENDIDO el 2026-08-25**, después de estar apagado desde el 08-22.
  *
- * La revalidación periódica hacía lo que tenía que hacer —cerrar el socket
- * cuando su token caducaba— pero **la otra mitad no existe todavía**: el cliente
- * no escucha `SESSION_EVENTS.rechazada`, no tiene manejador de `connect_error`, y
- * socket.io reintenta indefinidamente por defecto.
+ * ── Por qué estuvo apagado, que es lo que no hay que repetir ────────────────
  *
- * El resultado medido: **una reconexión cada ~5 s por pestaña abierta**, del orden
- * de 17.000 al día, **cada una despertando Cloud Run**. Antes el socket se rompía
- * con un corte de red; con esto encendido se rompía **siempre, cada cuarto de
- * hora**. La mitad servidor sola no es media solución: **convierte un fallo
- * ocasional en uno garantizado**.
+ * La revalidación hacía lo suyo —cerrar el socket cuando su token caducaba— pero
+ * **la otra mitad no existía**: el cliente no escuchaba `SESSION_EVENTS.rechazada`,
+ * no tenía manejador de `connect_error`, y socket.io reintenta indefinidamente por
+ * defecto. Medido: **una reconexión cada ~5 s por pestaña**, del orden de 17.000
+ * al día, cada una despertando Cloud Run. Antes el socket se rompía con un corte
+ * de red; con esto encendido se rompía **siempre, cada cuarto de hora**.
  *
- * ── Qué tiene que existir para volver a encenderlo ──────────────────────────
+ * > **La mitad servidor sola no es media solución: convierte un fallo ocasional en
+ * > uno garantizado.**
  *
- * En `apps/web`, el cliente del socket:
- *   1. escuchando `SESSION_EVENTS.rechazada` y refrescando la sesión al recibirlo;
- *   2. con manejador de `connect_error` que distinga `SESION_CADUCADA` (refresca y
- *      reconecta) de `SESION_INVALIDA` (para y al login);
- *   3. con tope de reintentos, para que un rechazo permanente no reintente eterno.
+ * ── Por qué se puede encender ahora ─────────────────────────────────────────
  *
- * Con esas tres, se pone esto a `true` y ya está. **Se vuelve a encender cambiando
- * una constante, no rehaciendo el trabajo** — por eso el código se queda.
+ * Las tres condiciones que se pusieron por escrito, **comprobadas una a una en
+ * `apps/web/src/features/kanban/hooks/useSocket.ts` antes de tocar esta línea** —
+ * no dadas por buenas porque alguien dijera que estaban:
  *
- * ── Qué reabre tenerlo apagado, dicho sin suavizar ──────────────────────────
+ *   1. escucha `SESSION_EVENTS.rechazada` y llama a `/auth/refresh` antes de
+ *      reconectar (línea 102);
+ *   2. `connect_error` distingue `SESION_CADUCADA` —refresca y reconecta— de
+ *      `SESION_INVALIDA` —para y al login— (línea 120);
+ *   3. `reconnectionAttempts: 5`, así que un rechazo permanente no reintenta
+ *      eterno (línea 95).
  *
- * **Un socket abierto sobrevive a su token**, y **si el usuario cierra sesión el
- * socket sigue oyendo** hasta que se caiga por otro motivo. Ese es exactamente el
- * agujero que la revalidación tapaba.
+ * La tercera es la que apagaba el fuego del 08-22: sin tope, un rechazo que no se
+ * arregla solo reintenta para siempre. Con las tres, el ciclo se cierra —el
+ * cliente trae cookie nueva— en vez de repetirse.
  *
- * Se acepta **temporalmente y con un solo usuario**. **Con dos, no**: con dos
- * cuentas, un socket que sobrevive a su sesión es una fuga de datos entre
- * personas, no una molestia. Decisión de Doc, con esas palabras.
+ * ── Qué se recupera al encenderlo ───────────────────────────────────────────
+ *
+ * Que **un socket deje de sobrevivir a su token**, y que **cerrar sesión calle al
+ * socket** en vez de dejarlo oyendo hasta que se caiga por otro motivo. Con un
+ * solo usuario era una molestia; con dos habría sido una fuga de datos entre
+ * personas.
+ *
+ * Si volviera el diluvio de reconexiones, esto se pone a `false` y se recupera el
+ * comportamiento anterior sin tocar nada más — por eso la constante se queda.
  */
-const REVALIDACION_ACTIVA = false;
+const REVALIDACION_ACTIVA = true;
 
 /**
  * Margen que se añade al `exp` antes de revisar.
@@ -249,9 +256,9 @@ export class TasksGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
    * la cookie nueva, que para entonces el navegador ya habrá refrescado.
    */
   private programarCaducidad(client: Socket) {
-    // Ver `REVALIDACION_ACTIVA`: apagada mientras el cliente no sepa escuchar el
-    // cierre. Cerrar sockets sanos contra un cliente sordo es peor que no
-    // cerrarlos.
+    // Ver `REVALIDACION_ACTIVA`. Encendida desde el 2026-08-25: el interruptor se
+    // queda porque cerrar sockets sanos contra un cliente sordo es peor que no
+    // cerrarlos, y volver a ese estado tiene que costar una línea.
     if (!REVALIDACION_ACTIVA) return;
 
     const expiraEn = client.data.expiraEn as number | undefined;
@@ -392,9 +399,26 @@ export class TasksGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
 
   /**
    * Encamina el evento a la sala del dueño. Todos los payloads llevan `userId`
-   * justo para esto; si alguno llegara sin él se difunde a todos, que es lo
-   * visible en vez de lo silencioso: un evento que no llega a nadie sería un
-   * fallo mudo, y así se nota y se corrige.
+   * justo para esto.
+   *
+   * ⚠️ **Sin `userId` no se difunde a nadie** (§43.5, 2026-08-25). Antes se
+   * emitía a **todos los clientes del servidor**, con este razonamiento escrito
+   * aquí: *«es lo visible en vez de lo silencioso; un evento que no llega a nadie
+   * sería un fallo mudo»*.
+   *
+   * El objetivo era bueno y el medio, no: **mandarle a todo el mundo el evento de
+   * otro para que se note el fallo paga la visibilidad con los datos de alguien**.
+   * Hoy hay un solo usuario y no se nota; el día que haya dos, el fallo mudo se
+   * habría convertido en una fuga entre personas — y nadie lo habría revisado,
+   * porque ya estaba «resuelto».
+   *
+   * La visibilidad se conserva entera **subiendo el log a `error`**: Error
+   * Reporting lee las excepciones de Cloud Logging, así que un `error` sale a la
+   * superficie solo, mientras que el `warn` de antes se perdía entre el ruido. Se
+   * gana además precisión: dice qué evento fue.
+   *
+   * Es la misma elección que el `indeterminado` de la sonda del frontend — no
+   * poder encaminar **no es** encaminar bien, y se dice en vez de disimularlo.
    *
    * Emitir nunca debe tumbar la petición HTTP que lo provocó: la tarea ya está
    * escrita en la base de datos y el peor caso de un fallo aquí es que la UI
@@ -405,8 +429,14 @@ export class TasksGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
     try {
       const userId = (payload as { userId?: string })?.userId;
       if (!userId) {
-        this.logger.warn(`${event} sin userId: se difunde a todos los clientes`);
-        this.server?.emit(event, payload);
+        // No se difunde: sin dueño no hay a quién mandárselo, y «a todos» no es
+        // una respuesta a esa pregunta. El coste es que esa UI tarde en
+        // enterarse hasta la siguiente recarga; el de difundir era enseñarle a
+        // cada cliente algo que no es suyo.
+        this.logger.error(
+          `${event} sin userId: no se emite. Un payload sin dueño no se puede encaminar, ` +
+            'y difundirlo a todos los clientes seria una fuga. Falta el userId en quien lo emite.',
+        );
         return;
       }
 
