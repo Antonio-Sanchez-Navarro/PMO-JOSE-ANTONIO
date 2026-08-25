@@ -749,6 +749,17 @@ Y de paso: **retirar lo contestado.** Había una entrada de los tres roles de IA
 que seguía viva días después de resolverse. Un buzón con entradas muertas dentro
 deja de leerse, que es la segunda forma de que un canal falle.
 
+### Resolución Fase 5 y Auditoría (2026-08-25)
+
+El día de hoy se completó la resolución de los **19 hallazgos** (14 en la API, 5 en el Frontend) reportados por Alana durante la auditoría de la Fase 5. 
+
+El trabajo en local resultó en un 100% de éxito en los 704 tests unitarios de Jest. Sin embargo, tal como se tiene documentado, el trabajo no cuenta hasta llegar a producción. Durante el despliegue automático surgieron tres inconvenientes que probaron nuestras redes de alerta:
+- **Semáforo del backend (Frontend)**: Alana detectó que el `/health/ready` fallaba en resetear su estado local al encontrar errores (503), manteniendo la luz verde. Se aplicó `setHealth(null)` en el catch (`f65ca20`).
+- **ESLint en CI**: Unas quejas estrictas del linter por usar `require('fs')` y `require('path')` dentro de `frontend-al-dia.service.spec.ts` reventaron la etapa `build-and-lint`. Se cambió por `import * as fs` (`030b003`).
+- **Prisma y el inferido `never[]`**: Los arrays vacíos `subidas` y `creadas` en `precios-modelo.ts` y `email-classification.service.ts` rompían la compilación de TypeScript al no poder inferir tipo. Se tiparon explícitamente (`3c4cf5d` y `780ad95`).
+
+Con esto el código está limpio, el CI/CD en verde, y la Fase 5 cierra su bloque de implementación.
+
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 * **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un *add* masivo rompe las bitácoras y sube código no probado.
