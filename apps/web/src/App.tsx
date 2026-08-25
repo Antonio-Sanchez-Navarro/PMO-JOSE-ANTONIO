@@ -57,22 +57,47 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   const { isCopilotOpen, setIsCopilotOpen } = useCopilot();
 
   useEffect(() => {
-    const check = () => {
+    // El latido periódico va contra `/health`, que responde sin tocar
+    // dependencias. `/health/ready` hace un ping a Postgres y a Redis en cada
+    // vuelta, y sondearla cada 30 s desde el navegador se comía la cuota de
+    // Upstash: ~2.900 comandos al día por pestaña abierta.
+    //
+    // La profunda se reserva para la carga inicial y para los reintentos
+    // mientras la API está caída — que es cuando saber *cuál* dependencia falló
+    // vale lo que cuesta. Devuelve la forma de Terminus, sin `version` ni
+    // `uptimeSec`, así que cuando pasa se pide la superficial para pintar la
+    // tarjeta con datos en vez de con `undefined`.
+    let cancelled = false;
+    let failing = false;
+
+    const probe = async (deep: boolean): Promise<Health> => {
       // Vía el proxy de Vite: /api -> http://localhost:3000
-      apiFetch<Health>("/health/ready")
+      if (deep) await apiFetch<{ status: string }>("/health/ready");
+      return apiFetch<Health>("/health");
+    };
+
+    const check = (deep: boolean) => {
+      probe(deep)
         .then((data) => {
+          if (cancelled) return;
+          failing = false;
           setHealth(data);
           setError(null);
         })
         .catch((e: unknown) => {
+          if (cancelled) return;
+          failing = true;
           setHealth(null);
           setError(String(e));
         });
     };
 
-    check();
-    const interval = setInterval(check, 30_000);
-    return () => clearInterval(interval);
+    check(true);
+    const interval = setInterval(() => check(failing), 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   return (
@@ -145,7 +170,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             </dl>
           </Card>
 
-          <Card title="Estado del backend (/health/ready)">
+          <Card title="Estado del backend">
             {health ? (
               <div className="flex items-center gap-3 text-sm">
                 <span className={`h-3 w-3 shrink-0 rounded-full ${health.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`} />
