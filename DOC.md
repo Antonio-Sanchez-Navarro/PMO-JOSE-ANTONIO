@@ -764,6 +764,9 @@ El trabajo en local resultó en un 100% de éxito en los 704 tests unitarios de 
 
 Con esto el código y la documentación están inmaculados, el CI/CD en verde, y la Fase 5 cierra su bloque de implementación preparándose para las pruebas en vivo.
 
+### ⚠️ Aviso sobre cuota de Upstash (Sondeo de 30s)
+Alana verificó el entorno y alertó (en `PROMPT_ALANA.md`) que el arreglo del semáforo en `App.tsx` usa un `setInterval` que sondea `/health/ready` cada 30 segundos. Esto consume cuota del límite mensual de comandos en Redis (Upstash) por cada pestaña del navegador abierta, sumando unos ~2.9k comandos/día adicionales. Dejamos constancia porque consume un recurso que hemos estado racionando. Lo tendremos en la mira si se dispara el límite.
+
 ## 🚨 5. Reglas de coordinación que ya costaron un disgusto
 
 - **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un _add_ masivo rompe las bitácoras y sube código no probado.
