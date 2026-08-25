@@ -6467,3 +6467,147 @@ frontend no se enteró.**
 
 Un contrato que una de las dos partes no ha leído no es un contrato: es una
 suposición con buena letra.
+
+---
+
+## 48. Verificación de la Segunda Pasada: el código está bien, el frontend no está desplegado (2026-08-25)
+
+Encargo de Doc. **Los doce arreglos están en el código y son correctos.** Y once
+despliegues seguidos han fallado, así que **ninguno de los de frontend está en el
+navegador de nadie**.
+
+---
+
+### 48.1 🔴 El frontend lleva 11 despliegues fallidos y ~35 minutos congelado
+
+Producción, ahora mismo:
+
+```
+version.json → commit 7c0d797  ·  construido 2026-08-25T16:48:08Z
+```
+
+Ese es el build de **hace una hora**. Desde entonces, en el panel de Vercel:
+**once despliegues consecutivos en `Error`**, de `2a0e915` a `b37fd0d`. El último
+`Ready` es `7c0d797`, y es el que tiene la insignia de Producción.
+
+Y hay **siete commits que tocan el frontend** sin desplegar — entre ellos
+`7a3cd68`, que es el que trae **los cuatro arreglos de §47** que se me pidió
+verificar.
+
+**La causa, literal, del panel de Vercel:**
+
+> **Build Failed** — *The `vercel.json` schema validation failed with the
+> following message: `ignoreCommand` should NOT be longer than 256 characters*
+
+Medido:
+
+| | |
+|---|---|
+| `ignoreCommand` actual | **270 caracteres** |
+| Límite de Vercel | **256** |
+| Exceso | **14** |
+| Quitando `' vercel.json'` del pathspec | **256 exactos** |
+
+O sea: **el comando anterior estaba justo en el techo**, y añadir `'vercel.json'`
+—catorce caracteres— lo pasó de largo. Falla en la **validación del esquema**,
+antes de construir nada: por eso la duración es `—` y no hay log de build.
+
+**Y aquí está lo que más me importa decir: el arreglo de §47.2 es lo que rompió
+todos los despliegues.** Mi hallazgo era que `vercel.json` no disparaba su propio
+despliegue. Ahora los dispara — y todos mueren en la puerta. **El hallazgo era
+correcto y su arreglo, tal como cabía, no cabía.**
+
+### 48.2 🟠 Por qué cuatro intentos seguidos no lo cazaron
+
+Entre `7a3cd68` y ahora hay **cinco commits dedicados a esto**:
+
+```
+d2bb589  chore(web): bump version to 0.1.1 to trigger deployment
+0426073  fix(ci): restore vercel.json single key invariant …
+e4c26d1  fix(ci): normalize ignoreCommand exit codes to strictly 0 or 1
+7063e6b  fix(ci): clean ignoreCommand with vercel.json in pathspec
+37727b9  fix(ci): use vercel.json path in ignoreCommand
+```
+
+Los cinco tocan **el contenido** del comando —el disparo, los códigos de salida,
+la forma del pathspec, la invariante de la clave—. Ninguno toca **su longitud**,
+que es lo único que importaba. Los cinco siguen por encima de 256 y fallan
+idénticamente.
+
+_Es una inferencia mía a partir de los títulos, y la marco como tal: parece que
+se diagnosticó **«no se dispara»** cuando lo que pasaba era **«se dispara y no
+valida»**. Son dos síntomas que desde fuera se parecen mucho — en los dos casos
+el sitio no cambia._
+
+### 48.3 🔵 La Capa 1 hizo su trabajo, y aun así no acortó el diagnóstico
+
+**Los avisos salieron.** El workflow «Avisar si falla Vercel o el CI» tiene seis
+ejecuciones en verde por `deployment_status` a las 17:45, 17:50, 17:51, 17:56 y
+17:59 — una por despliegue fallido. La Capa 1 funciona: se enteró de los once y
+lo dijo.
+
+Lo que el aviso **no lleva es la causa**. Su formato es título, commit y enlace:
+
+```
+🔴 *Despliegue fallido: …*
+Commit: …
+Log: …
+```
+
+Con el enlace basta para llegar, pero **no dice qué falló**. Y en este caso la
+causa cabía en catorce palabras. No es un defecto del diseño —el aviso se hizo
+para que nadie tuviera que ir a buscar el sitio, y eso lo cumple— pero es la
+diferencia entre seis avisos que llevan a la puerta y seis avisos que resuelven
+el problema.
+
+⚠️ **Y una ejecución del vigilante falló**: la de las 17:56:35, sobre `9d08a00`.
+De los once fallos, **uno no se comunicó**. No he mirado por qué; queda anotado.
+
+### 48.4 ✅ Los doce arreglos, verificados en el código
+
+Todos correctos. Que no estén desplegados es otro problema, y es el de arriba.
+
+| Hallazgo | Estado | Dónde |
+|---|---|---|
+| **§47.6** el `cc` del borrador | ✅ **Completo por las tres patas**: `CopilotDrawer:167` lo arma, `DraftEmailCard:102-113` lo pinta y lo deja editar, `:32` lo envía | frontend |
+| **§47.7** el error de etiqueta | ✅ `toast.error(err.message ...)` y limpieza del campo | frontend |
+| **§47.2** `vercel.json` en su pathspec | ✅ …y es lo que rompió el despliegue (§48.1) | infra |
+| **§47.8** carrera en `TimeReportModal` | ✅ `generationRef` | frontend |
+| **§45.2** deriva de +5 h | ✅ | frontend |
+| **§45.3** `URGENT` en el formulario | ✅ | frontend |
+| **§47.4** interruptor del socket | ✅ `REVALIDACION_ACTIVA = true` **y** el `it.skip` reencendido a `it` | backend |
+| **§43.5** `emit` sin `userId` | ✅ **Falla cerrado**: ya no difunde, registra un `error` y explica el precio | backend |
+| **§45.1** inyección `\r\n` en el asunto | ✅ En dos capas | backend |
+| `aiConfidence` pintaba un `0` | ✅ `typeof … === 'number'` | frontend |
+| `TriageEmail` muerto | ✅ Ya no existe | frontend |
+| `Start`/`Stop` en inglés | ✅ `▶ Iniciar` / `⏹ Detener` | frontend |
+
+**Y el ritmo diario está mejor de lo que pedía el encargo.** Se pidió «dividir
+entre los días con datos observados, no siempre entre 7». `ritmoDiario` hace algo
+distinto y más correcto: divide entre **los días transcurridos desde el primer
+dato**, no entre los días que tienen fila, con el motivo escrito —*«un sábado sin
+correos es un cero real y tiene que pesar en la media; descontarlo inflaría el
+ritmo y adelantaría el aviso sin motivo»*—. Y `divisorDeRitmo` lo acota por
+arriba y por abajo (`Math.min(7, Math.max(MINIMO, cubiertos))`), así que ni una
+ventana corta ni una larga lo distorsionan. **Eso no es cumplir el encargo: es
+haberlo pensado mejor.**
+
+Backend en producción: revisión `pmo-api-00107-gz4`, `SERVICE_VERSION = 9d08a00`
+— **al día**. Suite: **verde**.
+
+### 48.5 Lo que enseña
+
+Hoy hay dos verdades a la vez y conviene no mezclarlas: **el código está bien y
+el producto no lo tiene.** Doce arreglos correctos, uno de ellos bloqueando la
+entrega de los otros seis.
+
+Y la forma es la de esta casa otra vez, con una vuelta de tuerca: **el hallazgo
+era bueno, el arreglo era el correcto, y aun así rompió** — porque nadie sabía
+que había un techo de 256 caracteres a catorce de distancia. No fue un descuido
+de nadie; era un límite invisible **hasta que se tocó**.
+
+Lo que sí se puede aprender: el comando estaba **exactamente** en 256 antes de
+esto. Un ajuste que deja un recurso al borde de su límite no está terminado,
+está **apoyado**. Y lo siguiente que se le añada lo tirará igual, así que la
+solución no es recortar catorce caracteres: es sacar el comando del `vercel.json`
+y dejarlo donde pueda crecer.
