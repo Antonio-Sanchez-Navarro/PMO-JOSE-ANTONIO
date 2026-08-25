@@ -126,6 +126,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
             toolName?: string;
             payload?: {
               to?: string | string[];
+              cc?: string | string[];
               subject?: string;
               body?: string;
               title?: string;
@@ -163,6 +164,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({ isOpen, onClose })
                     draftEmail: {
                       id: Date.now().toString(),
                       to: Array.isArray(payload.to) ? payload.to.join(', ') : (payload.to || ''),
+                      cc: Array.isArray(payload.cc) ? payload.cc.join(', ') : (payload.cc || ''),
                       subject: payload.subject || '',
                       body: payload.body || ''
                     }

@@ -4,6 +4,7 @@ import { apiFetch } from '../../../lib/api';
 export interface DraftEmailData {
   id: string;
   to: string;
+  cc?: string;
   subject: string;
   body: string;
 }
@@ -28,6 +29,7 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: emailData.to.split(',').map(e => e.trim()).filter(Boolean),
+          cc: emailData.cc ? emailData.cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
           subject: emailData.subject,
           body: emailData.body
         })
@@ -96,6 +98,22 @@ export const DraftEmailCard: React.FC<DraftEmailCardProps> = ({ draft }) => {
             <div className="text-gray-800 font-medium">{emailData.to}</div>
           )}
         </div>
+
+        {(isEditing || emailData.cc) && (
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-gray-500 uppercase">Cc</label>
+            {isEditing ? (
+              <input 
+                className="border border-gray-300 rounded px-2 py-1 text-xs w-full focus:outline-none focus:border-blue-500" 
+                placeholder="Opcional, separados por coma"
+                value={emailData.cc || ''}
+                onChange={(e) => setEmailData({...emailData, cc: e.target.value})}
+              />
+            ) : (
+              <div className="text-gray-800 font-medium">{emailData.cc}</div>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold text-gray-500 uppercase">Asunto</label>

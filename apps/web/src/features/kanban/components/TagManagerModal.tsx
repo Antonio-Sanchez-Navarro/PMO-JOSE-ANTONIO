@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useTags } from '../hooks/useTags';
+import { toast } from 'sonner';
 
 interface TagManagerModalProps {
   isOpen: boolean;
@@ -27,14 +28,17 @@ export const TagManagerModal: React.FC<TagManagerModalProps> = ({ isOpen, onClos
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    const cleanName = name.trim();
+    if (!cleanName) return;
     
     setIsSubmitting(true);
     try {
-      await createTag(name.trim(), color);
+      await createTag(cleanName, color);
       setName('');
     } catch (error) {
-      console.error('No se pudo crear la etiqueta:', error);
+      const err = error as Error;
+      toast.error(err.message || 'Error al crear la etiqueta');
+      setName('');
     } finally {
       setIsSubmitting(false);
     }

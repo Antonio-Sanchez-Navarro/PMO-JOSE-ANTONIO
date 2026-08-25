@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { getTimeReport, TimeReportResult } from '../api/time.api';
 import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
@@ -12,6 +12,7 @@ export const TimeReportModal: React.FC<TimeReportModalProps> = ({ isOpen, onClos
   const [groupBy, setGroupBy] = useState<'task' | 'day' | 'week'>('day');
   const [reportData, setReportData] = useState<TimeReportResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const generationRef = useRef(0);
 
   useEffect(() => {
     if (isOpen) {
@@ -20,14 +21,19 @@ export const TimeReportModal: React.FC<TimeReportModalProps> = ({ isOpen, onClos
   }, [isOpen, groupBy]);
 
   const loadReport = async () => {
+    const currentGen = ++generationRef.current;
     setIsLoading(true);
     try {
       const data = await getTimeReport({ groupBy });
+      if (currentGen !== generationRef.current) return;
       setReportData(data);
     } catch {
+      if (currentGen !== generationRef.current) return;
       toast.error('Error al cargar el reporte');
     } finally {
-      setIsLoading(false);
+      if (currentGen === generationRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
