@@ -9,6 +9,103 @@
 
 ---
 
+## Capa 3: vigilar lo que se consume, no lo que se hace (2026-08-25)
+
+Las tres pasadas de código dieron 27 hallazgos y **ninguno era una cuenta atrás**.
+Quedaban ~$8 de crédito en Anthropic y no los miraba nadie.
+
+### Las dos comprobaciones previas, y una dijo que no
+
+| | |
+|---|---|
+| ¿Se puede habilitar `cloudbilling`? | **Sí** — estaban apagadas `cloudbilling` **y** `billingbudgets`; ya lo están |
+| ¿Puede el pipeline crear presupuestos? | **No.** En la cuenta `015493-A5F85A-D7B488` el único miembro es el usuario del Jefe |
+
+Así que **no se escribe el paso**: haría 403 el día que hiciera falta. Y aunque se
+pudiera conceder, dar a una cuenta de CI derechos sobre la **cuenta de
+facturación** es un salto de alcance mucho mayor que los roles de proyecto — para
+crear un objeto una sola vez. Se crea a mano y se documenta.
+
+### 🔴 A.3: el saldo agotado NO es un 429
+
+Comprobado en la referencia de la API, no supuesto. Es **`billing_error` con
+403**, y **no es reintentable**. Eso desmonta la cadena que suponíamos:
+
+| Lo que creíamos | Lo que pasa |
+|---|---|
+| 429 → `convieneEsperar` → `frenarLaCola` pausa el worker | 403 no lo reconoce nadie → el job se relanza, agota sus tres intentos y cae en la DLQ |
+
+**El worker no se pausa.** Es peor de diagnosticar: cada correo falla por
+separado y la DLQ se llena de síntomas. El fondo del hallazgo se sostiene entero
+— la DLQ diría «un job falló» y nadie diría la causa.
+
+Ahora se detecta por `type`, se avisa con las palabras «se acabó el crédito de
+Anthropic» y **no se relanza**: reintentar no rellena la cuenta.
+
+### Verificado contra la API real
+
+Un `billing_error` de verdad no se puede provocar sin vaciar la cuenta, así que se
+comprobó lo que sí se podía y era lo que estaba en duda — **que el error real
+traiga los campos donde el código los lee**:
+
+```
+constructor : AuthenticationError
+status      : 401
+type        : "authentication_error"
+esSaldoAgotado(error) -> false
+```
+
+`.type` existe y lleva el tipo de la API. La discriminación funciona sobre un
+error **real**, no sobre un doble.
+
+⚠️ **Y apareció algo que no buscaba: la `ANTHROPIC_API_KEY` del `.env` local está
+inválida** (`401 API key is invalid`). Producción usa la de Secret Manager y esa
+sí funciona — se ve clasificando en los logs—, pero **en local nadie puede llamar
+a Anthropic**. Por eso no se pudo confirmar contra una respuesta real que
+`usage.input_tokens` venga donde A.1 lo lee; queda pendiente y **se dice en vez de
+darlo por hecho**.
+
+### A.1: el aviso dice días, no porcentaje
+
+«Quedan ~11 días al ritmo de los últimos 7» se actúa; «has consumido el 90 %» se
+archiva.
+
+Tabla `AiUsage` por día y modelo —no por llamada: hace falta el ritmo, no la
+auditoría— y los precios **en configuración con su fecha**, que el aviso repite.
+Un precio sin fecha es la familia del `maxScale` del comentario: correcto el día
+que se escribió y silenciosamente falso después.
+
+Dos decisiones sobre **de qué lado equivocarse**:
+
+- Cada día se cuenta **al precio que regía ese día**. Sumar el pasado al precio
+  nuevo inflaría el gasto y adelantaría el aviso sin motivo.
+- Un modelo que no está en la tabla se estima **por arriba**. Contarlo como gratis
+  haría que el gasto pareciera menor **justo cuando alguien ha cambiado algo**:
+  pasarse es recuperable, quedarse corto es cómo se llega a cero sin aviso.
+
+**Sonnet 5 sube un 50 % el 31-08** y `CLAUDE_MODEL_CLASSIFY` es `sonnet-5`, así
+que lo que sube es la clasificación — el gasto continuo. La subida se aplica sola
+al llegar el día.
+
+### 🔴 Y un fallo de diseño propio, que encontró una prueba
+
+La prueba del umbral fallaba porque **el aviso de la subida de precio saltaba por
+su cuenta**. Con el cron diario habría mandado el mismo mensaje **catorce días
+seguidos**.
+
+Una subida programada es **el hecho más estable que existe**: eso no es una
+alerta, es una suscripción. Lo escribí yo, después de pasarme la sesión
+arreglando exactamente eso en el barrido y en la sonda.
+
+> **La lección no es «poner freno», es que la pregunta correcta no es «esto
+> avisa?» sino «¿cada cuánto avisaría si la condición dura?».** Y que sin
+> escribir la prueba, esto llega a producción con el mismo fallo que llevamos un
+> mes cerrando.
+
+Ahora lleva freno propio de una semana: avisa dos veces en la ventana, no catorce.
+
+---
+
 ## Los seis correos sin texto: eran correos sin texto (2026-08-24)
 
 **Cerrado midiendo, no razonando**, y la respuesta no era la que ninguno de los
