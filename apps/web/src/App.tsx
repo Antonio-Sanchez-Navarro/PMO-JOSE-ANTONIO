@@ -57,43 +57,46 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   const { isCopilotOpen, setIsCopilotOpen } = useCopilot();
 
   useEffect(() => {
-    // El latido periódico va contra `/health`, que responde sin tocar
-    // dependencias. `/health/ready` hace un ping a Postgres y a Redis en cada
-    // vuelta, y sondearla cada 30 s desde el navegador se comía la cuota de
-    // Upstash: ~2.900 comandos al día por pestaña abierta.
+    // El semáforo pregunta **siempre** por `/health/ready`, que es la única de
+    // las tres sondas que mira Postgres y Redis. `/health` contesta 200 con la
+    // base caída —es exactamente su trabajo, y el controlador lo dice—, así que
+    // un latido que solo la consultara pintaría verde durante una caída real.
+    // Un indicador que no puede ponerse en rojo no es un indicador.
     //
-    // La profunda se reserva para la carga inicial y para los reintentos
-    // mientras la API está caída — que es cuando saber *cuál* dependencia falló
-    // vale lo que cuesta. Devuelve la forma de Terminus, sin `version` ni
-    // `uptimeSec`, así que cuando pasa se pide la superficial para pintar la
-    // tarjeta con datos en vez de con `undefined`.
+    // Lo que se ajusta es la frecuencia, no la profundidad: cada 5 min en vez
+    // de cada 30 s. Son ~288 comandos de Upstash al día por pestaña abierta en
+    // vez de ~2.900, que era la fuga que nos sacaba del plan gratuito. El
+    // precio es que una caída puede tardar hasta 5 min en verse en la tarjeta.
+    //
+    // `/health/ready` devuelve la forma de Terminus (`status`, `info`, `error`,
+    // `details`), **sin `version` ni `uptimeSec`**. Cuando pasa se pide
+    // `/health` detrás solo para pintar esos dos campos: no toca dependencias,
+    // así que no cuesta cuota.
+    const POLL_MS = 300_000;
     let cancelled = false;
-    let failing = false;
 
-    const probe = async (deep: boolean): Promise<Health> => {
+    const probe = async (): Promise<Health> => {
       // Vía el proxy de Vite: /api -> http://localhost:3000
-      if (deep) await apiFetch<{ status: string }>("/health/ready");
+      await apiFetch<{ status: string }>("/health/ready");
       return apiFetch<Health>("/health");
     };
 
-    const check = (deep: boolean) => {
-      probe(deep)
+    const check = () => {
+      probe()
         .then((data) => {
           if (cancelled) return;
-          failing = false;
           setHealth(data);
           setError(null);
         })
         .catch((e: unknown) => {
           if (cancelled) return;
-          failing = true;
           setHealth(null);
           setError(String(e));
         });
     };
 
-    check(true);
-    const interval = setInterval(() => check(failing), 30_000);
+    check();
+    const interval = setInterval(check, POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -170,7 +173,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             </dl>
           </Card>
 
-          <Card title="Estado del backend">
+          <Card title="Estado del backend (/health/ready)">
             {health ? (
               <div className="flex items-center gap-3 text-sm">
                 <span className={`h-3 w-3 shrink-0 rounded-full ${health.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`} />
