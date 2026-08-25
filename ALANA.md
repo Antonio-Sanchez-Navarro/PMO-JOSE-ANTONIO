@@ -6611,3 +6611,314 @@ esto. Un ajuste que deja un recurso al borde de su límite no está terminado,
 está **apoyado**. Y lo siguiente que se le añada lo tirará igual, así que la
 solución no es recortar catorce caracteres: es sacar el comando del `vercel.json`
 y dejarlo donde pueda crecer.
+
+---
+
+## 49. Análisis completo, sin memoria previa (2026-08-25)
+
+Encargo del Jefe: leer **todo** el código con ojos limpios —sin consultar
+bitácoras ni mis propios informes— y listar cuanto perciba, incluido el lenguaje
+y la programación sin sentido.
+
+**Alcance real, sin adornos.** El árbol son **28.544 líneas**: 112 archivos de
+backend (13.841), 36 de pruebas (9.493), 39 de frontend (4.945), `packages/shared`
+(265) y la infraestructura. He leído **entera** toda la lógica —servicios, guards,
+estrategias, procesadores, DTO, componentes con estado— y he recorrido por
+inspección los módulos de Nest, los ficheros de índice y los componentes que solo
+pintan. **De las 36 suites de pruebas he leído tres**; no las cubro aquí.
+
+Diecinueve hallazgos. Ninguno es una catástrofe: **el código es
+sistemáticamente bueno**, y eso me obliga a decir dónde exactamente falla en vez
+de repartir impresiones.
+
+---
+
+## A. Backend
+
+### 49.1 🟠 El error se pierde justo donde se pregunta por él
+
+`overdue.cron-purge.ts:71`
+
+```ts
+this.logger.error(
+  'No se pudo purgar el cron BullMQ de vencidas (¿Redis caído?). Puede quedar un barrido duplicado.',
+  error,          // ← el objeto, en la ranura del stack
+);
+```
+
+Es **exactamente** la trampa que `describir-error.ts` existe para evitar, y que su
+docblock describe así: *«la segunda ranura es el stack y espera una cadena; al
+pasarle un objeto, el formateador de pino lo descarta»*. Ese archivo dice que ya
+costó dos días de ingesta rota y que se repitió en nueve sitios.
+
+**Este es el décimo, y está escrito después de la lección.** El mensaje pregunta
+«¿Redis caído?» y tira a la basura lo único que respondería. La forma correcta la
+usa el resto del proyecto: `` `…: ${describirError(err)}` `` con `stackDe(err)`.
+
+### 49.2 🟠 Si el `watch` de Gmail falla al iniciar sesión, nadie se entera
+
+`gmail.processor.ts:47-52`
+
+```ts
+this.logger.log(`Activando watch de Gmail para el usuario ${userId}`);
+await this.gmailService.watchInbox(userId);   // ← se ignora lo que devuelve
+```
+
+`watchInbox` devuelve `{ ok, motivo }`, y su docblock explica por qué: *«desde que
+`/cron/gmail-watch` recorre a todos los usuarios hace falta saber **cuántos**
+quedaron observados de verdad, porque un “renovados: 0 de 1” es la diferencia
+entre la ingesta viva y apagada»*.
+
+Aquí se descarta. Consecuencias encadenadas:
+
+- El job **termina en éxito** aunque Gmail rechace el `watch`.
+- Los `attempts: 3` con backoff que `auth.controller.ts:114` configura **no se
+  usan nunca**, porque para reintentar hace falta que el job falle.
+- No hay aviso, y el `ok:false` que `renovarWatchDeTodos` sí sabe reportar no
+  llega a este camino.
+
+O sea: alguien inicia sesión, su buzón **no queda observado**, y el sistema lo da
+por hecho. Se cura solo al día siguiente a las 02:30 con el cron de renovación —
+pero el primer inicio de sesión es justo cuando importa.
+
+### 49.3 🟠 Cinco horas al mes en las que el gasto de IA parece cero
+
+`ai-cost.service.ts` mezcla dos husos en la misma cuenta:
+
+| Qué | Cómo se calcula |
+|---|---|
+| El día de cada fila (`registrar`) | `diaLocal()` → **America/Cancun** |
+| El inicio del mes (`estimar`) | `Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth(), 1)` → **UTC** |
+
+El 31 de agosto a las 20:00 de Cancún ya es 1 de septiembre en UTC, así que
+`desdeMes` salta a septiembre mientras las filas de ese día siguen etiquetadas
+`2026-08-31`. El filtro `dia >= desdeMes` **las deja todas fuera**.
+
+Resultado: entre las **19:00 y las 24:00 hora local del último día de cada mes**,
+`gastado` sale ≈ 0, `consumido` ≈ 0 y **ningún umbral puede saltar**. El log diría
+«$0.00 de $20 (0%)» en el momento en que el total del mes es el más alto.
+
+⚠️ **Hoy es latente**: el cron corre a las **08:00 America/Cancun**, fuera de esa
+ventana. Muerde el día que alguien mueva la hora o llame a `/cron/coste-ia` a
+mano por la tarde de un fin de mes.
+
+### 49.4 🟠 El precio de guardia se queda corto justo donde se prometió que no
+
+`precios-modelo.ts` razona su fallback así: *«se estima por arriba a propósito…
+que se pase es recuperable; que se quede corta es cómo se llega a cero sin
+aviso»*. Y luego lo fija en **$5/$25**, que es la tarifa de Opus 5.
+
+Pero la familia tiene modelos por encima: **Fable 5 y Mythos 5 están a
+$10/$50**. Si alguien pone `COPILOT_ANTHROPIC_MODEL_PRO=claude-fable-5` —que es
+justo el caso «alguien añadió un modelo sin pasar por aquí» que el fallback
+existe para cubrir—, **la estimación sale a la mitad**. El principio está bien
+escrito y el número no lo cumple.
+
+De paso, la tabla no lista `claude-fable-5`, `claude-opus-4-7` ni
+`claude-opus-4-6`, que son ids vigentes.
+
+### 49.5 🟠 `Promise.all` dentro de una transacción, que este proyecto prohíbe dos veces
+
+`email-classification.service.ts:150`
+
+```ts
+return Promise.all(toCreate.map((data) => tx.task.create({ data })));
+```
+
+`tasks.service.ts` y `emails.service.ts` llevan **cada uno** un comentario que
+dice lo contrario: *«Secuencial y no `Promise.all`: Prisma desaconseja lanzar
+consultas concurrentes sobre el cliente de una transacción interactiva»*.
+
+Una transacción interactiva de Prisma va por **una sola conexión**; disparar N
+`create` a la vez sobre `tx` es exactamente lo que las otras dos evitan. Que
+funcione hoy no lo convierte en correcto: es la misma regla escrita dos veces y
+rota en el tercer sitio.
+
+### 49.6 🟠 La sonda del frontend puede gritar por un `.md`
+
+`frontend-al-dia.service.ts` declara su propia invariante:
+
+> *«Es el mismo criterio que usa el `ignoreCommand` de Vercel, **y tiene que
+> seguir siéndolo**. Si aquí se mira una lista y allí otra, la sonda avisa de
+> despliegues que Vercel se salta a propósito.»*
+
+**Ya no es el mismo criterio, y en las dos direcciones:**
+
+| | Sonda (`RUTAS_DEL_FRONTEND`) | `scripts/vercel-ignore.sh` |
+|---|---|---|
+| `apps/web` | ✅ | ✅ |
+| `packages/shared` | ✅ | ✅ |
+| `vercel.json` | ❌ **falta** | ✅ |
+| Excluir `**/*.md` | ❌ **no excluye** | ✅ excluye |
+
+La segunda fila es la peligrosa. `ultimoCommitDelFrontend` pregunta a GitHub por
+el último commit que tocó `apps/web` **sin filtrar `.md`**. Un commit que solo
+toque un `.md` de esa carpeta se convierte en `referencia`, Vercel **no
+construye** —lo excluye a propósito— y, pasada la hora de margen, la sonda
+declara **`atrasado` de forma permanente** hasta que llegue un cambio de frontend
+de verdad.
+
+Es literalmente el fallo que su propio comentario predice: *«una sonda que avisa
+de lo normal se deja de mirar en una semana»*.
+
+_Hoy no hay ningún `.md` bajo esas rutas, así que está latente. Lo activa el
+primer `README.md` que alguien añada a `apps/web`._
+
+### 49.7 🟡 El agujero del título en blanco se tapó en un DTO y no en el otro
+
+`ConfirmedTaskDto` se arregló bien —`@Transform(trim)` + `@MinLength(1)`, con
+cinco pruebas—. **`CreateTaskFromCopilotDto` sigue con `@IsString()` +
+`@IsNotEmpty()`**, que no rechaza `'   '`.
+
+Y no hay segunda barrera: `copilot.service.createTask` llama a
+`this.tasks.create(userId, {…} as never)`, **saltándose `CreateTaskDto`** —que sí
+recorta y exige longitud—. Así que un título de espacios desde la tarjeta del
+copiloto crea una tarjeta en blanco en el tablero.
+
+### 49.8 🟡 Tres asimetrías de validación entre DTO hermanos
+
+- **`UpdateTaskDto.description`** no tiene `@MaxLength`; `CreateTaskDto` la
+  limita a 5.000. Se puede engordar por la puerta de atrás lo que no se puede
+  crear por la de delante.
+- **`CreateEntryDto.taskId`** y **`QueryTimeDto.taskId`** no tienen `@MaxLength`,
+  cuando todos los demás campos de id del proyecto llevan `@MaxLength(64)`
+  (`sourceEmailId`, `emailId`, `threadId`, `taskId` del contexto del copiloto).
+- **`UpdateEntryDto`** deja mandar `endedAt` sin `startedAt`. Si el servicio no
+  revalida el rango contra lo guardado, un tramo puede quedar con fin anterior al
+  inicio; conviene comprobarlo al arreglarlo.
+
+### 49.9 🟡 La versión que publica `/health` no es la que inyecta el despliegue
+
+`service-context.ts:16`
+
+```ts
+export const SERVICE_VERSION =
+  process.env.K_REVISION ?? process.env.SERVICE_VERSION ?? '0.1.0';
+```
+
+En Cloud Run **`K_REVISION` siempre existe**, así que gana siempre y la variable
+`SERVICE_VERSION` —que `deploy.yml` se molesta en rellenar con el SHA de git— **no
+se usa nunca ahí**. `/health` responde `version: "pmo-api-00107-gz4"`, que es el
+nombre de la revisión: identifica el despliegue pero **no dice qué commit corre**,
+que es la pregunta que este proyecto se hace todo el rato.
+
+### 49.10 🔵 Tres detalles menores, comprobados
+
+- **`gcp-logging.traceFieldsFrom`**: `flags === '01'` da por no muestreada
+  cualquier otra combinación con el bit activo (`'03'`); y del formato
+  `X-Cloud-Trace-Context` se toma el `spanId` **en decimal**, donde Cloud Logging
+  espera hexadecimal. El camino preferido (`traceparent`) es correcto.
+- **`subidaCercana`** devuelve **solo la primera** subida pendiente (`for … return`).
+  Hoy solo hay una; con dos, la segunda no se menciona.
+- **`precioDe`** compara con `new Date('2026-08-31')`, que es medianoche **UTC**:
+  la subida se aplica cinco horas antes en hora local. El sentido del error es el
+  seguro (estima de más), pero corta el día en un huso distinto al del resto del
+  proyecto.
+
+---
+
+## B. Frontend
+
+### 49.11 🟠 El semáforo del backend no puede ponerse en rojo
+
+`App.tsx:139-147`
+
+```tsx
+{health ? (
+  <span className="h-3 w-3 … bg-green-500" />
+  <span>{health.status.toUpperCase()}</span>
+```
+
+El punto se pinta **verde siempre que `health` tenga valor**, sin mirar
+`health.status`. Y el endpoint elegido es **`/health`**, que por diseño responde
+`status: 'ok'` sin tocar ninguna dependencia — su propio docblock lo dice: *«No
+comprueba dependencias, a propósito»*.
+
+O sea: la tarjeta que dice «Estado del backend» **solo puede estar verde o
+desconectada**. Con Postgres caído y Redis caído seguiría verde. La respuesta de
+verdad la da `/health/ready`, que la interfaz no consulta.
+
+Y se agrava: el `useEffect` tiene dependencias `[]`, así que **se consulta una vez
+al montar y nunca más**. Es un semáforo permanentemente verde mostrando un valor
+de cuando se abrió la pestaña.
+
+### 49.12 🟡 La nota del gráfico dice algo que empeora con cada despliegue
+
+`DashboardPage.tsx:92`
+
+> *«Las tareas completadas antes del **último despliegue** no tienen registro de
+> fecha y no aparecerán aquí.»*
+
+No es el último despliegue: es **desde que se empezó a escribir `completedAt`**,
+una fecha fija. Tal como está, el texto le dice al usuario que **cada despliegue
+le borra el histórico**, que es alarmante y falso. `metrics.service` lo tiene bien
+explicado en su docblock; la interfaz lo repite mal.
+
+### 49.13 🟡 «Bandeja Pendiente» se repite a sí misma y con la etiqueta equivocada
+
+```tsx
+value={inbox.pending}
+subtitle={`Total: ${inbox.byStatus.PENDING || 0} sin leer`}
+```
+
+El subtítulo enseña **el mismo número** que el valor, con otro nombre. Y ese otro
+nombre es incorrecto: `PENDING` es un estado de **triage**, no de lectura. El
+esquema lo dice expresamente —*«es una decisión de la persona y no del sistema:
+`processedAt` dice que el worker ya lo analizó, que es otra cosa»*—. La tarjeta
+llama «sin leer» a correos que se han leído y no se han despachado.
+
+### 49.14 🟡 Dos tarjetas de métricas con el color fijo
+
+`trend="good"` está **codificado a mano** en «Completadas (Ventana)» y
+`trend="neutral"` en «WIP» y «Bandeja Pendiente». Cero tareas completadas en la
+semana se pinta igual que cincuenta. Solo «Atrasadas» calcula su color de verdad
+(`overdue.count > 0 ? 'bad' : 'good'`).
+
+### 49.15 🔵 La pantalla de entrada lleva un andamio de desarrollo
+
+`LoginPage.tsx:29`
+
+```tsx
+<span className="…">Sprint 1 · Autenticación</span>
+```
+
+Es lo primero que ve cualquiera que abra el producto, y es vocabulario interno
+del plan de trabajo.
+
+---
+
+## C. Lo que está bien, y hay que decirlo
+
+Un listado de defectos sobre una base de este nivel miente por omisión. Cuatro
+cosas que he intentado romper y no he podido:
+
+- **`google-oidc.verifier.ts` falla cerrado** en los dos casos en que podría fallar
+  abierto: sin audiencia configurada y sin cuenta esperada. Y explica por qué una
+  firma de Google **no acredita** que la llamada sea nuestra.
+- **`logger.config` + `gcp-logging`** tapan `cookie`, `authorization`, `set-cookie`
+  y once parámetros de consulta —`code`, `state`, `token`…—, y el comentario dice
+  que el `code` de OAuth ya se filtró una vez y por eso existe la lista.
+- **`describir-error.ts`** saca el motivo real de los rechazos de Google, que
+  `googleapis` esconde dos niveles adentro en `err.response.data.error`.
+- **`con-plazo.ts`** limpia el temporizador perdedor en un `finally`, con la
+  historia de cómo se descubrió: siete pruebas triviales tardando 24 segundos.
+
+## D. Lo que enseña este barrido
+
+Los hallazgos de hoy **no son de arquitectura**: son de **regla escrita y no
+aplicada en el tercer sitio**. El `logger.error(msg, error)` que un archivo entero
+existe para prohibir. El `Promise.all` en transacción que dos servicios prohíben
+por escrito. La invariante «misma lista que el `ignoreCommand`» rota en el archivo
+que la declara. El título en blanco tapado en un DTO y no en su hermano.
+
+**Este proyecto documenta sus reglas mejor de lo que las cumple.** Y no por
+descuido: cada una está escrita en el sitio donde se aprendió, y **ninguna está
+escrita en el sitio donde se repite**. Un comentario solo protege el archivo en el
+que vive.
+
+Lo que convertiría esto en otra cosa es que las cuatro reglas de arriba fueran
+**comprobables** —una regla de ESLint para `logger.error` con dos argumentos, una
+prueba que compare las dos listas de rutas, un DTO base para los títulos— en vez
+de párrafos que hay que recordar. La diferencia entre una regla escrita y una que
+se sostiene sola ya la dice el propio proyecto en otro sitio: *«olvidarse NO
+COMPILA»*.
