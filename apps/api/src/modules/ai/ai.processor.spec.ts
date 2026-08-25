@@ -24,10 +24,11 @@ describe('AiProcessor · el correo sin texto se cierra dejando rastro', () => {
     const prisma = { email: { findUnique: jest.fn().mockResolvedValue(email), update } };
     const classification = { classifyAndPersist: jest.fn().mockResolvedValue({ isActionable: false, tasks: [] }) };
 
-    // El orden del constructor es (classification, prisma).
-    const processor = new AiProcessor(classification as never, prisma as never);
+    const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
+    // El orden del constructor es (classification, prisma, alertas).
+    const processor = new AiProcessor(classification as never, prisma as never, alertas as never);
 
-    return { processor, update, classification };
+    return { processor, update, classification, alertas };
   }
 
   const job = { data: { emailId: 'e1' } } as never;
@@ -105,5 +106,80 @@ describe('AiProcessor · el correo sin texto se cierra dejando rastro', () => {
 
     expect(classification.classifyAndPersist).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Saldo agotado — la causa, no el síntoma.
+ *
+ * **No es un 429.** Un 429 es `rate_limit_error` y esperar arregla; el saldo
+ * agotado llega como **`billing_error` con 403** y esperar no rellena la cuenta.
+ * Sin distinguirlos, el día que se acabe el crédito cada correo agota sus tres
+ * intentos y cae en la DLQ: la DLQ avisaría de que «un job falló» y **nadie
+ * diría por qué**.
+ */
+describe('AiProcessor · el credito agotado se dice con su nombre', () => {
+  function crear(error: unknown) {
+    const prisma = {
+      email: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'e1',
+          processedAt: null,
+          bodyText: 'hola',
+          snippet: 'hola',
+          labels: [],
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const classification = { classifyAndPersist: jest.fn().mockRejectedValue(error) };
+    const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
+    const processor = new AiProcessor(classification as never, prisma as never, alertas as never);
+    return { processor, alertas };
+  }
+
+  const job = { data: { emailId: 'e1' } } as never;
+
+  it('un billing_error avisa de que se acabo el credito y NO se relanza', async () => {
+    // No se relanza porque reintentar no rellena la cuenta: gastar los tres
+    // intentos solo llena la DLQ de sintomas.
+    const { processor, alertas } = crear(
+      Object.assign(new Error('Your credit balance is too low'), { status: 403, type: 'billing_error' }),
+    );
+
+    await expect(processor.process(job)).resolves.toBeUndefined();
+
+    expect(String(alertas.avisar.mock.calls[0][0])).toContain('credito de Anthropic');
+  });
+
+  it('lo detecta por el texto aunque el `type` no viaje', async () => {
+    const { processor, alertas } = crear(
+      Object.assign(new Error('Your credit balance is too low to access the API'), { status: 403 }),
+    );
+
+    await processor.process(job);
+
+    expect(alertas.avisar).toHaveBeenCalledTimes(1);
+  });
+
+  it('un 403 de permisos NO se confunde con falta de saldo', async () => {
+    // 403 lo comparten `billing_error` y `permission_error`, y piden cosas
+    // distintas: una es «paga» y la otra «la clave no tiene permiso».
+    const { processor, alertas } = crear(
+      Object.assign(new Error('API key lacks permission'), { status: 403, type: 'permission_error' }),
+    );
+
+    await expect(processor.process(job)).rejects.toThrow();
+    expect(alertas.avisar).not.toHaveBeenCalled();
+  });
+
+  it('un 429 sigue siendo freno de cola, no falta de saldo', async () => {
+    const { processor, alertas } = crear(
+      Object.assign(new Error('rate limited'), { status: 429, type: 'rate_limit_error' }),
+    );
+
+    await processor.process(job).catch(() => undefined);
+
+    expect(alertas.avisar).not.toHaveBeenCalled();
   });
 });

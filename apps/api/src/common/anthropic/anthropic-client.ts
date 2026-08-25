@@ -110,6 +110,34 @@ export function esSobrecarga(error: unknown): boolean {
  * ¿Merece la pena esperar y volver, o es un fallo nuestro que se repetiría
  * igual? Lo segundo incluye el 400 del esquema y el 401 de la credencial.
  */
+/**
+ * ¿El fallo es **por saldo agotado**?
+ *
+ * ⚠️ **No es un 429, y esa es la parte que hay que saber.** Un 429 es
+ * `rate_limit_error`: se ha ido demasiado deprisa y esperar arregla. El saldo
+ * agotado llega como **`billing_error` con estado 403**, y **no es
+ * reintentable**: esperar no rellena la cuenta.
+ *
+ * Las dos cosas se distinguen por el campo `type` del error, no por el estado:
+ * 403 lo comparten `billing_error` y `permission_error`, que piden cosas muy
+ * distintas — una es «paga» y la otra «la clave no tiene permiso».
+ *
+ * **Por qué importa distinguirlo.** Sin esto, el día que se acabe el crédito
+ * cada correo agota sus tres intentos y cae en la cola de fallidos. La DLQ
+ * avisaría del síntoma —«un job falló»— y **nadie diría la causa**: alguien
+ * estaría a las tres de la mañana leyendo trazas de clasificación con la
+ * ingesta parada, cuando la respuesta era una línea de la consola de facturación.
+ */
+export function esSaldoAgotado(error: unknown): boolean {
+  const tipo = (error as { type?: unknown } | null)?.type;
+  if (tipo === 'billing_error') return true;
+
+  // Respaldo por si el `type` no viaja: algunos envoltorios solo dejan el
+  // mensaje. Se mira el texto **ademas** del tipo, nunca en su lugar.
+  const mensaje = String((error as { message?: unknown } | null)?.message ?? '').toLowerCase();
+  return estadoHttp(error) === 403 && /credit|balance|billing/.test(mensaje);
+}
+
 export function convieneEsperar(error: unknown): boolean {
   const estado = estadoHttp(error);
   return estado === 429 || estado === 529 || (estado !== null && estado >= 500);

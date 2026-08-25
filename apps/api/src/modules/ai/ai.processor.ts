@@ -6,10 +6,12 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import {
   convieneEsperar,
   describirFallo,
+  esSaldoAgotado,
   esperaSugeridaMs,
 } from '../../common/anthropic/anthropic-client';
 import type { ClassifyEmailJob, ClassifyEmailResult } from './classify-email.job';
 import { AJUSTE_WORKER } from '../../common/bullmq/polling.config';
+import { AlertService } from '../../common/alerts/alert.service';
 import { describirError, stackDe } from '../../common/observability/describir-error';
 
 /**
@@ -51,6 +53,16 @@ const LIMITE_POR_VENTANA = { max: 20, duration: 60_000 };
  * ingesta** — probablemente el parseo MIME no sacando el cuerpo de cierto tipo
  * de correo.
  */
+/**
+ * Silencio entre avisos de saldo agotado.
+ *
+ * Doce horas: mientras la cuenta siga vacia **todos** los correos fallaran por
+ * lo mismo, asi que avisar por cada uno seria inundar el canal con el mismo
+ * hecho -la leccion del barrido, otra vez-. Con doce horas el aviso llega, se
+ * repite si el problema dura un dia entero, y no tapa nada mas.
+ */
+const FRENO_SIN_SALDO_S = 12 * 3_600;
+
 export const SKIP_REASON = {
   /** Ni `bodyText` ni `snippet`: no hay nada que darle al modelo. */
   sinTexto: 'SIN_TEXTO',
@@ -67,6 +79,7 @@ export class AiProcessor extends WorkerHost {
   constructor(
     private readonly classification: EmailClassificationService,
     private readonly prisma: PrismaService,
+    private readonly alertas: AlertService,
   ) {
     super();
   }
@@ -148,6 +161,35 @@ export class AiProcessor extends WorkerHost {
           (result.tasks.length ? `, ${result.tasks.length} tareas creadas` : ''),
       );
     } catch (error) {
+      // ─── Saldo agotado: la causa, dicha con su nombre ──────────────────
+      //
+      // Va **antes** que el freno a propósito, aunque no se solapen hoy: si
+      // algún día `convieneEsperar` se ampliara, esperar por falta de crédito
+      // sería dormir la cola para siempre.
+      //
+      // Y no se reintenta: **esperar no rellena la cuenta**. Se avisa con la
+      // causa —no con el síntoma— y se deja caer, porque lo que hay que hacer
+      // es recargar, no volver a intentarlo.
+      //
+      // Sin esto, el día que se acabe el crédito cada correo agota sus tres
+      // intentos y cae en la DLQ. La DLQ avisaría de que «un job falló» y nadie
+      // diría por qué: media hora leyendo trazas a las tres de la mañana con la
+      // ingesta parada, cuando la respuesta estaba en la consola de facturación.
+      if (esSaldoAgotado(error)) {
+        this.logger.error(
+          `Se acabo el credito de Anthropic al clasificar ${emailId}: ${describirError(error)}`,
+        );
+        await this.alertas.avisar(
+          'Se acabo el credito de Anthropic',
+          'La clasificacion de correos esta parada por saldo, no por un fallo del codigo. ' +
+            'Reintentar no arregla nada: hay que recargar la cuenta. Mientras tanto los ' +
+            'correos siguen entrando y se guardan, pero nadie los clasifica.',
+          'anthropic-sin-saldo',
+          FRENO_SIN_SALDO_S,
+        );
+        return;
+      }
+
       // Saturación de la API: no es un job malo, es que no hay cuota ahora.
       if (convieneEsperar(error)) {
         return this.frenarLaCola(emailId, error);
