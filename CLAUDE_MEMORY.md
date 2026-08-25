@@ -9,7 +9,7 @@
 
 ---
 
-## El cron de coste, de diario a horario — y los dos supuestos que iban colgados de la hora (2026-08-25)
+## El cron de coste, de diario a horario — y tres husos que iban colgados de la hora (2026-08-25)
 
 Hallazgo de @Alana, desde fuera: de los seis disparadores, `pmo-coste-ia` era el
 único con **una cuenta atrás corriendo por debajo**, y corría **una vez al día a
@@ -98,25 +98,71 @@ horaria la ventana cambiaría de tamaño veinticuatro veces al día y el ritmo d
 saltos que **no están en el gasto**. Ahora se corta por días locales: hoy y los
 seis anteriores, siempre los mismos.
 
-### Lo que quedó fuera, y no es mío decidirlo
+### El día de la subida, cobrado barato (autorizado por Doc en la misma sesión)
 
-🟠 **`precioDe(fila.model, fila.dia)` se come el día de la subida.** Las filas
-llevan `2026-08-31T00:00:00Z`, y el umbral de la subida es
-`2026-08-31T00:00:00-05:00` = `05:00Z`. Como `00:00Z < 05:00Z`, **todo el día 31
-se cobra al precio viejo** y la estimación sale hasta un 50 % baja ese día. Es un
-día y solo el de cada subida, pero va en la dirección incómoda —la misma que
-acabo de cerrar en dos sitios— y es una línea. **No lo toco: no está en el
-encargo.** Queda para que Doc decida.
+Lo vi al tirar del hilo del huso y lo dejé fuera del primer encargo; Doc dio luz
+verde y va en el mismo día.
+
+**`precioDe(fila.model, fila.dia)` se comía el día de la subida.** La fila del 31
+lleva dentro `2026-08-31T00:00:00Z` y el umbral de la subida es
+`2026-08-31T00:00:00-05:00` = `05:00Z`. Como `00:00Z < 05:00Z`, **el día 31 entero
+se cobraba al precio viejo**: hasta un 50 % de menos justo el día en que el gasto
+se encarece, y otra vez hacia «queda más de lo que queda».
+
+⚠️ **El fondo no era la fecha: era que `Date` hacía de dos cosas a la vez.**
+
+| Lo que llega a la función | Qué es de verdad |
+|---|---|
+| `ahora`, `new Date()` | Un **instante** |
+| `aiUsage.dia` | Una **fecha del calendario** disfrazada de `Date` |
+
+`diaLocal` guarda el día local como medianoche UTC, así que como instante la fila
+del 31 son **las 19:00 del día 30 en Tulum**. Compararla contra un instante cuesta
+exactamente las cinco horas del huso, siempre hacia el lado barato. Y no se arregla
+eligiendo mejor la zona: **una fecha no tiene hora**, así que cualquier conversión
+a instante se inventa una.
+
+Por eso el arreglo no es mover el umbral, es **partir la función en dos** y que
+cada escala se compare consigo misma:
+
+- `precioDe(model, instante)` — lo de siempre, para `ahora`. Sigue comparando
+  instantes contra las 00:00 locales del día de la subida.
+- `precioDelDia(model, dia)` — la nueva, para las filas. Compara dos
+  `YYYY-MM-DD` **como texto**, que en ISO ordena igual que el calendario. Sin
+  husos por medio no hay desfase que equivocarse.
+
+Los dos sitios que pasaban filas por la tabla —`estimar` y `ritmoDiario`— usan
+ahora `precioDelDia`. `subidaCercana` se queda con instantes, que es lo suyo, y
+las 00:00 locales salen ya de un solo sitio (`entraEnVigor`) en vez de estar
+escritas dos veces.
+
+**Hay una prueba que fija que las dos funciones NO coinciden** sobre la misma
+marca de día: si algún día empezaran a dar lo mismo, sería que alguien reunificó
+las escalas y el fallo puede volver.
+
+Se caza antes de que muerda: la primera subida es el **31 de agosto**, y hoy es
+25.
+
+⚠️ **Este cambio no está en un commit mío: viaja en `de1a6ed` («fix del umbral
+UTC en precioDe»).** Lo barrió otro agente desde el árbol de trabajo mientras yo
+todavía estaba pasando las pruebas — el contenido es exacto y no se perdió nada,
+pero el mensaje no cuenta lo que hace y el commit de código y el de bitácora
+quedaron separados por cuatro. Si alguien busca de dónde salió `precioDelDia`,
+está ahí. Es la otra cara del polizón: cuatro procesos sobre **un solo árbol de
+trabajo**, y quien commitea de más se lleva lo que otro tenía a medias. El gancho
+de `pre-commit` protege las bitácoras, no el código a medio terminar.
 
 ### Comprobado
 
-- `apps/api`: **707 pruebas en 36 suites, todas en verde**; `tsc --noEmit` limpio;
-  ESLint limpio en los tres archivos tocados.
+- `apps/api`: **712 pruebas en 36 suites, todas en verde**; `tsc --noEmit` limpio;
+  ESLint limpio en todo `common/costs/`.
 - `deploy.yml` se parsea como YAML válido y los otros cuatro disparadores
   conservan su horario (`30 3,15`, `*/30`, `*/15`).
-- Cuatro pruebas nuevas o reescritas fijan lo de arriba: el día en curso medido a
+- Nueve pruebas nuevas o reescritas fijan lo de arriba: el día en curso medido a
   dos horas distintas del mismo día, la ventana cortada por días locales, el
-  freno contra la cadencia **horaria** (≥ 23 h) y las claves separadas por umbral.
+  freno contra la cadencia **horaria** (≥ 23 h), las claves separadas por umbral,
+  y el día de la subida cobrado al precio nuevo tanto en `precioDelDia` como de
+  extremo a extremo en `estimar`.
 
 ## Tres formas de que «verde» no signifique nada, en una sola tarde (2026-08-25)
 
