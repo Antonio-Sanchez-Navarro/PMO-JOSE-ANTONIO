@@ -64,7 +64,10 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
           setHealth(data);
           setError(null);
         })
-        .catch((e: unknown) => setError(String(e)));
+        .catch((e: unknown) => {
+          setHealth(null);
+          setError(String(e));
+        });
     };
 
     check();
