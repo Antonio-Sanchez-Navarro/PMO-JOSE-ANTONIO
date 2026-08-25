@@ -91,7 +91,7 @@ export function subidaCercana(
   dias = 14,
 ): { model: string; el: string; porQue: string; subida: number }[] {
   const limite = new Date(cuando.getTime() + dias * 24 * 3_600_000);
-  const subidas = [];
+  const subidas: { model: string; el: string; porQue: string; subida: number }[] = [];
 
   for (const [model, precio] of Object.entries(PRECIOS)) {
     if (!precio.cambia) continue;
