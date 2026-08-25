@@ -1,4 +1,4 @@
-import { EmailStatus, TaskPriority, TaskStatus } from '@prisma/client';
+import { TaskStatus } from '@prisma/client';
 
 export type { DashboardMetrics, ThroughputPoint, TimeSeriesPoint as TimePoint } from '@pmo/shared';
 
