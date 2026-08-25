@@ -9,6 +9,67 @@
 
 ---
 
+## La revalidación del socket, encendida — y el `emit` que difundía a todos (2026-08-25)
+
+### §47.4 · el interruptor, y por qué se comprobó la premisa antes de tocarlo
+
+`REVALIDACION_ACTIVA` llevaba apagada desde el 08-22 **por una razón medida**, no
+por descuido: sin manejador de rechazo en el cliente y con reintentos infinitos,
+cerrar el socket al caducar daba **una reconexión cada ~5 s por pestaña**, unas
+17.000 al día, cada una despertando Cloud Run.
+
+> **La mitad servidor sola no es media solución: convierte un fallo ocasional en
+> uno garantizado.**
+
+El encargo decía que @Gravity ya había blindado el cliente. **Se comprobó en
+`useSocket.ts` antes de mover la constante**, no porque se dudara de nadie sino
+porque encender esto contra un cliente sordo es justo el fallo del 08-22:
+
+| Condición | Dónde |
+|---|---|
+| Escucha `SESSION_EVENTS.rechazada` y llama a `/auth/refresh` | línea 102 |
+| `connect_error` distingue `CADUCADA` de `INVALIDA` | línea 120 |
+| `reconnectionAttempts: 5` | línea 95 |
+
+**La tercera es la que apaga el fuego.** Sin tope, un rechazo que no se arregla
+solo reintenta para siempre; con tope, el ciclo se cierra —el cliente trae cookie
+nueva— en vez de repetirse.
+
+⚠️ **Y una consecuencia que el encargo no mencionaba: había que retirar la prueba
+contraria.** «Con la revalidación apagada, un token caducado NO cierra el socket»
+fijaba el comportamiento viejo, y encender sin borrarla deja la suite roja. Estaba
+escrito en el propio spec por quien la dejó dormida. **Dos pruebas que se
+contradicen no son más cobertura: son una que miente.**
+
+La prueba despertada no pasa por casualidad: el token caduca en 1 s y espera el
+aviso: con el interruptor apagado esa promesa no resuelve nunca y el `it` muere
+por timeout. Que pase **es** la revalidación funcionando.
+
+### §43.5 · «que se difunda para que se note» pagaba la visibilidad con datos ajenos
+
+Un payload sin `userId` se emitía a **todos los clientes del servidor**, con este
+razonamiento escrito al lado: *«es lo visible en vez de lo silencioso; un evento
+que no llega a nadie sería un fallo mudo»*.
+
+**El objetivo era bueno y el medio no.** Hoy hay un solo usuario y no se nota; el
+día que haya dos, el fallo mudo se habría convertido en una fuga entre personas
+—y nadie lo habría revisado, porque ya estaba «resuelto»—. Es la forma de deuda
+más difícil de ver: la que viene **con su justificación escrita**.
+
+La visibilidad se conserva entera **subiendo el log a `error`**: Error Reporting
+lee las excepciones de Cloud Logging, así que sale a la superficie solo, mientras
+que el `warn` de antes se perdía entre el ruido.
+
+Misma familia que el `indeterminado` de la sonda del frontend: **no poder
+encaminar no es encaminar bien**, y se dice en vez de disimularlo.
+
+Una de las cuatro pruebas cubre el error contiguo, que es el que se cuela solo:
+no basta con no llamar a `server.emit`, hay que **no encaminar a la sala
+`undefined`** — que para socket.io es un nombre válido, no falla, y simplemente no
+llega a nadie.
+
+---
+
 ## §45.1: el asunto colaba cabeceras, y la condición que lo permitía parecía una defensa (2026-08-25)
 
 `encodeHeader` devolvía el texto **intacto** si era ASCII puro:
