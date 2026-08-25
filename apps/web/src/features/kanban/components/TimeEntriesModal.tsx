@@ -9,6 +9,20 @@ interface TimeEntriesModalProps {
   taskId: string;
 }
 
+/**
+ * Convierte una fecha a string 'YYYY-MM-DDTHH:mm' en la hora local del navegador.
+ * Evita la deriva de zona horaria (+5h por guardado) que producía toISOString().slice(0, 16).
+ */
+const toLocalDatetimeValue = (date: Date): string => {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+
 export const TimeEntriesModal: React.FC<TimeEntriesModalProps> = ({ isOpen, onClose, taskId }) => {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -44,8 +58,8 @@ export const TimeEntriesModal: React.FC<TimeEntriesModalProps> = ({ isOpen, onCl
     const now = new Date();
     // Default form values: started 1h ago, ended now
     const oneHourAgo = new Date(now.getTime() - 3600000);
-    setStartedAt(oneHourAgo.toISOString().slice(0, 16));
-    setEndedAt(now.toISOString().slice(0, 16));
+    setStartedAt(toLocalDatetimeValue(oneHourAgo));
+    setEndedAt(toLocalDatetimeValue(now));
     setNote('');
     setEditingId(null);
   };
@@ -56,8 +70,8 @@ export const TimeEntriesModal: React.FC<TimeEntriesModalProps> = ({ isOpen, onCl
       return;
     }
     setEditingId(entry.id);
-    setStartedAt(new Date(entry.startedAt).toISOString().slice(0, 16));
-    setEndedAt(new Date(entry.endedAt).toISOString().slice(0, 16));
+    setStartedAt(toLocalDatetimeValue(new Date(entry.startedAt)));
+    setEndedAt(toLocalDatetimeValue(new Date(entry.endedAt)));
     setNote(entry.note || '');
   };
 

@@ -6,7 +6,7 @@ import { z } from 'zod';
 const taskSchema = z.object({
   title: z.string().min(1, 'El título es obligatorio'),
   status: z.enum(['TODO', 'IN_PROGRESS', 'POSTPONED', 'DONE', 'OVERDUE'] as const),
-  priority: z.enum(['LOW', 'MEDIUM', 'HIGH'] as const),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const),
   dueDate: z.string().optional(),
 });
 
@@ -95,6 +95,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, onSubmit 
                 <option value="LOW">Baja</option>
                 <option value="MEDIUM">Media</option>
                 <option value="HIGH">Alta</option>
+                <option value="URGENT">Urgente</option>
               </select>
             </div>
           </div>

@@ -15,6 +15,13 @@ interface CreateTaskCardProps {
   task: CreateTaskData;
 }
 
+const PRIORITY_LABELS: Record<TaskPriority, string> = {
+  [TaskPriority.LOW]: 'Baja',
+  [TaskPriority.MEDIUM]: 'Media',
+  [TaskPriority.HIGH]: 'Alta',
+  [TaskPriority.URGENT]: 'Urgente',
+};
+
 export const CreateTaskCard: React.FC<CreateTaskCardProps> = ({ task }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [taskData, setTaskData] = useState<CreateTaskData>(task);
@@ -118,14 +125,14 @@ export const CreateTaskCard: React.FC<CreateTaskCardProps> = ({ task }) => {
                 value={taskData.priority}
                 onChange={(e) => setTaskData({...taskData, priority: e.target.value as TaskPriority})}
               >
-                <option value={TaskPriority.LOW}>Low</option>
-                <option value={TaskPriority.MEDIUM}>Medium</option>
-                <option value={TaskPriority.HIGH}>High</option>
-                <option value={TaskPriority.URGENT}>Urgent</option>
+                <option value={TaskPriority.LOW}>Baja</option>
+                <option value={TaskPriority.MEDIUM}>Media</option>
+                <option value={TaskPriority.HIGH}>Alta</option>
+                <option value={TaskPriority.URGENT}>Urgente</option>
               </select>
             ) : (
               <div className="text-xs text-gray-800 font-medium">
-                {taskData.priority}
+                {PRIORITY_LABELS[taskData.priority] || taskData.priority}
               </div>
             )}
           </div>
