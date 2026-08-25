@@ -249,6 +249,61 @@ describe('El correo que sale hacia Gmail', () => {
 
     expect(raw).not.toMatch(/[+/=]/);
   });
+
+  describe('un asunto no puede colar cabeceras (§45.1)', () => {
+    // El agujero: `\r` y `\n` **son ASCII**, así que la comprobación de "¿es
+    // ASCII puro?" daba `true` y devolvía el asunto intacto. La condición tenía
+    // cara de comprobación de seguridad y era la puerta.
+
+    it('el Bcc inyectado en el asunto no llega a ser una cabecera', () => {
+      const raw = buildRawMessage({
+        ...(borrador as object),
+        subject: 'Hola\r\nBcc: colado@ejemplo.com',
+      } as never);
+
+      const [cabeceras] = leer(raw).split('\r\n\r\n');
+
+      // Lo que de verdad importa: que no exista una cabecera Bcc. Se comprueba
+      // sobre el mensaje armado y no sobre encodeHeader, porque el daño se hace
+      // al unir las cabeceras con \r\n — probar la función sola dejaría pasar
+      // una regresión que volviera a meter el texto en crudo desde otro sitio.
+      expect(cabeceras).not.toMatch(/^Bcc:/m);
+      // La dirección sigue apareciendo, pero **como texto del asunto y en una
+      // sola línea**, que es inofensivo. Se sanea, no se tira el correo: quien
+      // rechaza de plano es el DTO, en la frontera.
+      expect(cabeceras).toContain('Subject: Hola Bcc: colado@ejemplo.com');
+      expect(cabeceras.split('\r\n').filter((l) => l.startsWith('Subject:'))).toHaveLength(1);
+    });
+
+    it('tampoco por el salto solo, ni por el retorno solo, ni por un NUL', () => {
+      // El NUL se escribe asi y no como escape: un \0 literal en el fuente
+      // es un byte NUL de verdad dentro del archivo, y eso convierte el `.ts`
+      // en binario para media herramienta del repositorio, empezando por `grep`.
+      const veneno0 = `a${String.fromCharCode(0)}Bcc: x@y.com`;
+
+      for (const veneno of ['a\nBcc: x@y.com', 'a\rBcc: x@y.com', veneno0]) {
+        const [cabeceras] = leer(
+          buildRawMessage({ ...(borrador as object), subject: veneno } as never),
+        ).split('\r\n\r\n');
+
+        expect(cabeceras).not.toMatch(/^Bcc:/m);
+      }
+    });
+
+    it('el asunto saneado sigue codificándose si lleva acentos', () => {
+      // El orden importa: si se codificara el original en vez del saneado, el
+      // encoded-word llevaría los saltos dentro y volverían al decodificar.
+      expect(encodeHeader('Reunión\r\nBcc: x@y.com')).toBe(
+        `=?UTF-8?B?${Buffer.from('Reunión Bcc: x@y.com', 'utf8').toString('base64')}?=`,
+      );
+    });
+
+    it('un asunto normal no se toca', () => {
+      // La sanitización no puede cobrarse el caso corriente.
+      expect(encodeHeader('Weekly update')).toBe('Weekly update');
+      expect(encodeHeader('Actualización')).toBe('=?UTF-8?B?QWN0dWFsaXphY2nDs24=?=');
+    });
+  });
 });
 
 describe('POST /copilot/emails/send', () => {

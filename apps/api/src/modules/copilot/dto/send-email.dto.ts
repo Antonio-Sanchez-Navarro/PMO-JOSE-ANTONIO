@@ -6,6 +6,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
 } from 'class-validator';
 
@@ -42,9 +43,26 @@ export class SendEmailDto {
   @IsEmail({}, { each: true })
   cc?: string[];
 
+  /**
+   * Asunto, en **una sola línea**.
+   *
+   * ⚠️ **El salto de línea no se rechaza por estética: separa cabeceras.** Un
+   * asunto con `\r\n` dentro se parte en dos al armar el mensaje, y lo que va
+   * detrás entra como una cabecera más — `Bcc: alguien@ejemplo.com`, por
+   * ejemplo, que manda copia oculta sin que se vea en ninguna pantalla.
+   *
+   * Se rechaza **aquí**, con un motivo que la persona puede leer, y además se
+   * sanea en `encodeHeader`, que es la capa que ninguna ruta puede saltarse.
+   * No es duplicar: una cosa es avisar en la frontera y otra garantizar al
+   * final, y la segunda tiene que aguantar aunque mañana entre por otra puerta.
+   */
   @IsString()
   @IsNotEmpty()
   @MaxLength(500)
+  // eslint-disable-next-line no-control-regex
+  @Matches(/^[^\x00-\x1F\x7F]*$/, {
+    message: 'El asunto no puede contener saltos de línea ni caracteres de control',
+  })
   subject!: string;
 
   @IsString()
