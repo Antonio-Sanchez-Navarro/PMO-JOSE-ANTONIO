@@ -12,4 +12,5 @@ git diff --quiet "$P" "$C" -- \
   ':(top)apps/web' \
   ':(top)packages/shared' \
   ':(top)vercel.json' \
+  ':(top)scripts/vercel-ignore.sh' \
   ':(exclude)**/*.md'
