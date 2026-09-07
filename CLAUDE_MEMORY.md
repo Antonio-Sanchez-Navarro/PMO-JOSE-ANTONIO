@@ -9,6 +9,198 @@
 
 ---
 
+## El entorno local, reconstruido tras el formateo — y el `.env` que apuntaba a producción (2026-09-07)
+
+Encargo del Jefe: `npm install`, levantar Postgres y Redis, y comprobar que
+Prisma conecta. Salió limpio, pero por el camino apareció **la razón por la que
+nada local podía conectar**, y no era el formateo.
+
+### Lo que el formateo se llevó y lo que no
+
+| | |
+|---|---|
+| `node_modules` | **Intacto.** `npm install` dijo *up to date*, 949 paquetes |
+| Imágenes de Docker | Perdidas: `infra:up` las bajó de cero |
+| Volumen `pgdata` | **Perdido.** La base nació vacía y hubo que reaplicar las 11 migraciones |
+| `.env` | Sobrevivió — y ahí estaba el problema |
+| Gancho de `pre-commit` | Seguía activo (`core.hooksPath` = `.githooks`) |
+
+⚠️ **El cliente de Prisma es código generado, y un formateo lo deja sin
+regenerar aunque `node_modules` esté entero.** `prisma generate` antes de
+cualquier otra cosa. Es el mismo motivo que ya está escrito en el `prebuild` de
+`apps/api/package.json` para el CI; vale igual para una máquina recién puesta.
+
+### El `.env` tenía la base de producción, y eso rompía una invariante escrita
+
+`DATABASE_URL` apuntaba a `34.59.49.175:5432` —Cloud SQL de **producción**, con
+la contraseña en claro— mientras `REDIS_URL` sí era local. Con
+`NODE_ENV=development`.
+
+Lo grave no es la latencia: es que **`deploy.yml` declara por escrito la
+invariante contraria**, y la declara en su propio comentario:
+
+> «**`DATABASE_URL` no sale nunca de Google Cloud**»
+
+La DSN vive en Secret Manager como `pmo-database-url:latest` y el pipeline la
+monta con `--set-secrets` justo para sostener eso. Tenerla además en un `.env`
+local la sacaba de Google Cloud sin que ningún diff lo enseñara — y dejaba el
+desarrollo **a un `prisma migrate reset` de distancia de la base real**.
+
+Es exactamente el patrón que `AI_ROLES.md` describe: *la regla está escrita en el
+archivo donde se aprendió y rota en el tercero.* Aquí el tercero era un archivo
+que no está en git, que es el peor sitio para romperla porque nadie la ve romperse.
+
+**Opción A, autorizada por el Jefe:** `DATABASE_URL` a
+`postgresql://pmo:pmo@localhost:5432/pmo` —que es lo que `.env.example` ya
+decía— y producción documentada **sin la DSN**: un puntero a Secret Manager y la
+invariante citada. Copiar la contraseña a un comentario habría conservado en
+claro justo lo que hay que rotar; el secreto es recuperable de su fuente
+autorizada, así que no se pierde nada al no escribirlo.
+
+### 🔴 Mi explicación del timeout era falsa, y la correcta ya estaba medida
+
+Comprobé que el puerto 5432 de esa IP no contesta y **atribuí el timeout al
+formateo**: máquina nueva, IP pública nueva, fuera de las redes autorizadas.
+Sonaba razonable y era una suposición.
+
+`ALANA.md` §52.3 lo tenía medido: **las redes autorizadas de Cloud SQL están
+vacías desde el 19-08.** No se cerró nada al formatear; no había nada abierto.
+
+La consecuencia práctica importa, porque cambia una decisión: yo le ofrecí a Doc
+una Opción B —«autorizar esta IP»— presentándola como el otro camino. Con las
+redes vacías desde agosto, esa opción no era un comando: era reabrir a mano el
+acceso público a la base de producción para trabajar en local. **Ofrecí como
+alternativa simétrica algo que no lo era.** Al describir dos caminos, el coste
+real de cada uno es parte de la descripción.
+
+### Dos verificaciones que parecen la misma y no lo son
+
+Esto es lo que más me costó y lo que menos se ve:
+
+| Comando | Qué prueba |
+|---|---|
+| `DATABASE_URL=... prisma migrate status` | Que **la base está accesible** |
+| `prisma migrate status` *sin* la variable | Que **el `.env` es correcto** |
+
+Pasé la primera antes de editar el `.env` y da verde con el `.env` roto — porque
+la variable de la línea de comandos gana. Solo la segunda contesta la pregunta
+del encargo, y su salida lo dice literalmente:
+
+```
+Environment variables loaded from .env
+Datasource "db": PostgreSQL database "pmo", schema "public" at "localhost:5432"
+Database schema is up to date!
+```
+
+Y la conexión se firmó además **con el cliente generado**, no solo con la CLI:
+11 tablas, 11 migraciones aplicadas, `task.count`/`email.count`/`aiUsage` a 0.
+La CLI probaría que Prisma llega a la base, no que el cliente que usa la
+aplicación sea el bueno — que es justo lo que estaba en duda tras un formateo.
+
+*Detalle de operación:* un script de verificación en `/tmp` **no resuelve
+`@prisma/client`**. `node_modules` está en la raíz del monorepo y el temp de
+Windows queda fuera del árbol; el script tiene que correr dentro.
+
+### `.env` y `.env.txt`: ninguno era «el bueno», y eso casi cuesta el arreglo
+
+Había dos archivos de entorno y la pregunta obvia era cuál valía, para renombrar
+el otro y acabar. **La respuesta era que cada uno acertaba en una mitad
+distinta**, y responderla mal habría deshecho en silencio lo de arriba.
+
+Tenían **las mismas 24 claves** —no le faltaban variables a ninguno— con **18
+valores idénticos y 6 distintos**:
+
+| Clave | `.env` | `.env.txt` | Cuál valía |
+|---|---|---|---|
+| `DATABASE_URL` | local | **producción** | `.env` |
+| `JWT_SECRET` | el marcador de `.env.example` | 64 c., generado | `.env.txt` |
+| `ANTHROPIC_API_KEY` | **401** | distinta | `.env.txt` |
+| `GEMINI_API_KEY` | **400** | distinta | `.env.txt` |
+| `GOOGLE_CLIENT_SECRET` | **`invalid_client`** | distinta | `.env.txt` |
+| `TOKEN_ENCRYPTION_KEY` | hex válido | distinta | indistinguible |
+
+⚠️ **Renombrar el `.txt` habría recuperado las credenciales y, en el mismo gesto,
+devuelto la DSN de producción al `.env`** — con `NODE_ENV=development`, y sin que
+nada lo señalara, porque el archivo no está en git y no hay diff que mirar. Lo
+correcto era fusionar, no elegir.
+
+### Cómo se sabe si una credencial está viva, sin adivinar por su longitud
+
+Empecé mirando el tamaño de los valores, que no distingue nada: los dos
+`ANTHROPIC_API_KEY` medían 108 caracteres y uno estaba muerto. Se pregunta al
+proveedor, y las tres consultas son gratis y de solo lectura:
+
+| Credencial | Sonda | Lectura |
+|---|---|---|
+| Anthropic | `GET /v1/models` con `x-api-key` | 200 vale · 401 no |
+| Gemini | `GET /v1beta/models?key=` | 200 vale · 400 no |
+| OAuth de Google | `POST oauth2/token` con un `refresh_token` **falso** | ver abajo |
+
+La tercera es la que no es obvia y la que más costaría reinventar: se manda un
+token de refresco inventado a propósito y **se lee el error, no el éxito**.
+`invalid_client` significa que el par `client_id`/`client_secret` no es bueno;
+`invalid_grant` significa que **las credenciales sí valen** y lo único que falla
+es el token falso que acabas de mandar. O sea: el error que buscas es el que
+parece peor.
+
+Sirvió para separar dos cosas que se confundían: el `GOOGLE_CLIENT_ID` era
+**idéntico** en los dos archivos y solo cambiaba el secreto, así que no eran dos
+clientes OAuth — era un cliente con un secreto viejo y uno vigente.
+
+### 🔴 `.env.txt` se borró a mitad de la comparación, y yo no tenía los valores
+
+Entre comparar los dos archivos y salir a validar las credenciales, **`.env.txt`
+desapareció del disco**. No fue mi `rm` —el mío apuntaba a un respaldo propio—,
+no pasó por la papelera, y no quedó copia en el proyecto ni en Escritorio,
+Descargas o Documentos: lo busqué **por contenido**, no por nombre. Mientras
+tanto otro proceso escribía en el mismo árbol (`.gitignore` a las 14:41,
+`ALANA.md` y `PROMPT_ALANA.md` a las 14:44). No se lo atribuyo a nadie.
+
+**Y la parte que es culpa del método, no del borrado:** enmascaré los valores al
+compararlos, que es lo correcto para no volcar secretos en un informe — pero eso
+significa que **cuando el archivo desapareció, no quedaba ni una copia de nada**.
+Registré longitudes, no contenido.
+
+> Comparar dos archivos de secretos enmascarando es lo correcto **para el
+> informe** y deja el original como única copia. Si además va a decidirse cuál se
+> borra, el orden importa: primero se consolida, después se compara.
+
+Lo único que sobrevivió del archivo fue el dato menos secreto y, por casualidad,
+útil: el ID del proyecto (`pmo-dashboard-503418`), que estaba en tres líneas
+pegadas de la consola de Google que ni siquiera eran variables.
+
+### ✅ Entorno restaurado, y firmado contra los proveedores
+
+El Jefe reemitió las credenciales y las escribió él mismo en `.env`. No lo doy
+por bueno porque me lo digan —es la regla de esta casa— sino porque volví a
+pasar las mismas tres sondas:
+
+```
+ANTHROPIC_API_KEY     HTTP 200  VALIDA
+GEMINI_API_KEY        HTTP 200  VALIDA
+GOOGLE_CLIENT_SECRET  error=invalid_grant  -> PAR VALIDO
+JWT_SECRET            64 caracteres (ya no es el marcador)
+DATABASE_URL          localhost:5432/pmo
+```
+
+Comprobado además que **su edición no pisó la Opción A**: la DSN de producción no
+ha vuelto (`grep` a cero) y el bloque que documenta Secret Manager sigue en pie.
+Lo miré porque una edición manual sobre un archivo que otro acaba de tocar es
+justo donde se pierde un cambio sin que nadie se entere.
+
+Estado final, todo verificado en esta sesión:
+
+| Pieza | Estado |
+|---|---|
+| Dependencias | `npm install` — up to date, 949 paquetes |
+| Postgres 16.15 y Redis 7 | Arriba y **healthy**; Redis probado con `set`/`get`/`del` |
+| Esquema | 11 migraciones aplicadas, 11 tablas |
+| Prisma | Conecta leyendo el `.env`, sin variable por delante |
+| Credenciales de IA y OAuth | Las tres válidas contra su proveedor |
+
+Ninguno de los archivos de entorno ha viajado a git: `.gitignore` cubre `.env` y
+`.env.*`, comprobado con `git check-ignore`.
+
 ## El cron de coste, de diario a horario — y tres husos que iban colgados de la hora (2026-08-25)
 
 Hallazgo de @Alana, desde fuera: de los seis disparadores, `pmo-coste-ia` era el
