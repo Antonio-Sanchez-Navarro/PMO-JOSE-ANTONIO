@@ -507,3 +507,39 @@ en producción. Vale más el error que la regla.
   cerró, pero optimizar un número sin preguntarse qué señal lo producía se llevó
   la señal por delante. Antes de abaratar una llamada, escribe qué pregunta
   contesta y comprueba que la versión barata la sigue contestando.
+
+### 7. Una cuarentena que la bandeja no enseña no es una cuarentena
+
+Fase 6, 2026-09-08. El backend dejó de escribir en el tablero: la IA guarda su
+propuesta en `Email.proposedTasks` y espera a que una persona decida. La pieza
+que faltaba no era de backend.
+
+- **`taskCount` dejó de significar lo que significaba, y nadie lo notó.** Es el
+  número de filas `Task` de ese correo. Con la IA escribiendo en el tablero,
+  `taskCount > 0` quería decir «esto ya está atendido»; desde la Fase 6 un
+  correo con **tres propuestas esperando decisión** tiene `taskCount: 0` igual
+  que uno que nadie ha mirado. La lista los pintaba idénticos. Construimos una
+  bandeja de decisión en la que no se veía qué estaba esperando una decisión.
+- **Regla que me llevo:** cuando una capa deja de escribir donde escribía, hay
+  que ir a mirar **quién estaba leyendo de ahí**. El campo no desaparece —se
+  queda con el mismo nombre, el mismo tipo y un significado nuevo—, así que no
+  rompe la compilación ni los tests: rompe la pantalla, en silencio.
+- **Un campo que no devuelve ningún endpoint no existe.** `hasAttachments` se
+  detectaba en Gmail, se persistía y se le pasaba al modelo, pero no estaba en
+  ningún `select`. Funcionaba de cara al LLM y era invisible de cara a la
+  persona, que es quien tiene que decidir sabiendo que el modelo no leyó el PDF.
+- **Caché sin puerta de salida.** `classify` empezó a servir siempre la
+  propuesta guardada. Ahorra tokens y está bien, pero dejaba un correo mal
+  clasificado mal clasificado para siempre. Se cerró con `?force=true` y un
+  botón que dice lo que cuesta.
+
+### 8. Corrección a mi propia nota sobre `vercel.json`
+
+En el buzón escribí que el archivo «lleva una sola clave a propósito». **Falso, y
+lo comprobé al abrirlo:** lleva `ignoreCommand` y `headers`. Lo que es cierto —y
+lo que rompió el despliegue del 2026-08-07— es que **no puede llevar claves de
+build**: `buildCommand`, `outputDirectory` e `installCommand` vienen del panel.
+
+La nota generalizaba de un caso a una regla, y una regla más estricta de lo que
+manda el hecho acaba frenando cambios legítimos. Añadir cabeceras es seguro; el
+peligro está en una lista concreta de cuatro claves, no en el número de claves.
