@@ -39,6 +39,12 @@ export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze, readOnly
   const labels = email ? visibleLabels(email.labels ?? []) : [];
   const isProcessed = email ? Boolean(email.isConverted) : false;
 
+  // La cuarentena. `undefined` es "la IA no lo ha mirado"; un arreglo vacío es
+  // "lo miró y no vio nada que hacer", que no es lo mismo y merece decirse.
+  const proposals = email?.proposedTasks ?? null;
+  const pendingCount = proposals?.length ?? 0;
+  const analyzedWithNothing = Array.isArray(proposals) && proposals.length === 0;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
@@ -95,6 +101,47 @@ export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze, readOnly
                 )}
               </div>
 
+              {pendingCount > 0 && (
+                <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+                    <span aria-hidden="true">🕒</span>
+                    En cuarentena: {pendingCount}{" "}
+                    {pendingCount === 1 ? "tarea propuesta" : "tareas propuestas"}
+                  </h3>
+                  <p className="mt-1 text-xs text-amber-800">
+                    La IA las dejó esperando tu decisión. No están en el tablero hasta que las apruebes.
+                  </p>
+                  <ul className="mt-3 space-y-1.5">
+                    {proposals?.map((task, index) => (
+                      <li key={index} className="flex items-start gap-2 text-sm text-amber-900">
+                        <span
+                          aria-hidden="true"
+                          className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                        />
+                        <span className="min-w-0">
+                          {task.title ? (
+                            <span className="font-medium">{task.title}</span>
+                          ) : (
+                            <span className="font-medium italic text-amber-700">(sin título)</span>
+                          )}
+                          {task.dueDate && (
+                            <span className="text-xs text-amber-700">
+                              {" "}· vence {formatFullDate(task.dueDate)}
+                            </span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {analyzedWithNothing && !isProcessed && (
+                <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  La IA ya revisó este correo y no encontró ninguna tarea que proponer.
+                </div>
+              )}
+
               <div className="prose prose-slate max-w-none whitespace-pre-wrap text-slate-700 font-sans">
                 {email.bodyText || <span className="italic text-slate-400">Este correo no tiene cuerpo de texto.</span>}
               </div>
@@ -119,12 +166,20 @@ export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze, readOnly
                 onAnalyze(email.id);
               }}
               className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                isProcessed 
+                isProcessed
                   ? 'bg-emerald-100 text-emerald-700 cursor-not-allowed'
-                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                  : pendingCount > 0
+                    ? 'bg-amber-500 text-white hover:bg-amber-600'
+                    : 'bg-indigo-600 text-white hover:bg-indigo-700'
               }`}
             >
-              {isProcessed ? "✅ Convertido a Tareas" : "🪄 Generar Tareas (IA)"}
+              {isProcessed
+                ? "✅ Convertido a Tareas"
+                : pendingCount > 0
+                  // Revisar no vuelve a llamar al modelo: la propuesta ya está
+                  // guardada y el botón no debería sugerir que se paga otra vez.
+                  ? `🕒 Revisar ${pendingCount} ${pendingCount === 1 ? "propuesta" : "propuestas"}`
+                  : "🪄 Generar Tareas (IA)"}
             </button>
           )}
         </div>
