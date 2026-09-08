@@ -15,6 +15,20 @@ export interface EmailSnippet {
   taskCount?: number;
   isConverted?: boolean;
   status?: string;
+  /**
+   * Cuántas tareas dejó la IA esperando decisión en este correo.
+   *
+   * **Es el único distintivo que separa "aún no lo he mirado" de "esto te está
+   * esperando".** Desde la Fase 6 la IA no escribe en el tablero, así que
+   * `taskCount` sigue en 0 mientras hay propuestas vivas: sin este número los
+   * dos casos se pintan idénticos.
+   *
+   * Opcional porque una API anterior a la Fase 6 no lo manda, y una bandeja que
+   * se rompe contra la versión desplegada no le sirve a nadie.
+   */
+  proposedTaskCount?: number;
+  /** El correo trae adjuntos, cuyo contenido no bajamos ni lee el modelo. */
+  hasAttachments?: boolean;
 }
 
 /** Mensajes de un mismo hilo, del más reciente al más antiguo. */

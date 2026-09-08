@@ -8,6 +8,14 @@ interface AiValidationModalProps {
   proposal: EmailClassification | null;
   onConfirm: (finalData: EmailClassification) => Promise<void> | void;
   onCancel: () => void;
+  /**
+   * Pide un análisis nuevo al modelo, saltándose la propuesta guardada. Si no
+   * se pasa, el botón no se pinta: sin esto la única salida ante una propuesta
+   * equivocada era descartarla y quedarse sin nada.
+   */
+  onReanalyze?: () => Promise<void> | void;
+  /** El correo trae adjuntos que el modelo no ha podido leer. */
+  hasAttachments?: boolean;
 }
 
 export const AiValidationModal: React.FC<AiValidationModalProps> = ({
@@ -15,7 +23,10 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
   proposal,
   onConfirm,
   onCancel,
+  onReanalyze,
+  hasAttachments,
 }) => {
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
   const [category, setCategory] = useState<EmailCategory>(EmailCategory.OTHER);
   const [isCategoryModified, setIsCategoryModified] = useState(false);
   const [tasks, setTasks] = useState<ProposedTask[]>([]);
@@ -115,6 +126,16 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
 
         {/* Body */}
         <div className="p-6 space-y-6">
+          {hasAttachments && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <span aria-hidden="true">📎</span>
+              <p>
+                Este correo trae adjuntos. <strong>El modelo no ha leído su contenido</strong>, así
+                que lo que propone sale solo del texto del mensaje.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-4">
             <div>
               <label className="block mb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300">
@@ -217,7 +238,30 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 dark:bg-slate-800/50 dark:border-slate-700">
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3 dark:bg-slate-800/50 dark:border-slate-700">
+          {/* A la izquierda y en texto plano: reanalizar cuesta una llamada al
+              modelo, así que no compite visualmente con aprobar. */}
+          {onReanalyze ? (
+            <button
+              onClick={async () => {
+                setIsReanalyzing(true);
+                try {
+                  await onReanalyze();
+                } finally {
+                  setIsReanalyzing(false);
+                }
+              }}
+              disabled={isReanalyzing || isSubmitting}
+              className="text-xs font-medium text-slate-500 underline-offset-2 hover:text-indigo-600 hover:underline disabled:cursor-wait disabled:text-slate-400 dark:text-slate-400 dark:hover:text-indigo-400"
+              title="Pide un análisis nuevo al modelo y descarta los cambios de esta pantalla"
+            >
+              {isReanalyzing ? "🔄 Reanalizando…" : "🔄 Reanalizar (descarta los cambios)"}
+            </button>
+          ) : (
+            <span />
+          )}
+
+          <div className="flex gap-3">
           <button
             onClick={onCancel}
             className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-all"
@@ -233,6 +277,7 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
           >
             {isSubmitting ? "Insertando..." : "Aprobar e Insertar"}
           </button>
+          </div>
         </div>
       </div>
 

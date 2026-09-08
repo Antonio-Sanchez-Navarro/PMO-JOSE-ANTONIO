@@ -75,11 +75,25 @@ export const deleteTask = async (id: string): Promise<void> => {
   });
 };
 
-export const classifyEmail = async (emailId: string): Promise<EmailClassification> => {
-  const json = await apiFetch<{ data?: EmailClassification } | EmailClassification>(`/emails/${emailId}/classify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
+/**
+ * Pide la propuesta de la IA para un correo.
+ *
+ * **Sin `force` no cuesta tokens la segunda vez.** Desde la Fase 6 la API
+ * guarda la propuesta en el correo y la sirve de ahí, así que abrir la
+ * cuarentena de nuevo no vuelve a llamar al modelo.
+ *
+ * `force: true` es lo contrario: salta esa copia y paga un análisis nuevo. Es
+ * la única salida cuando el modelo se equivocó, y por eso el botón que lo
+ * dispara va aparte y dice lo que hace.
+ */
+export const classifyEmail = async (emailId: string, force = false): Promise<EmailClassification> => {
+  const json = await apiFetch<{ data?: EmailClassification } | EmailClassification>(
+    `/emails/${emailId}/classify${force ? '?force=true' : ''}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
   return (json as { data?: EmailClassification }).data || (json as EmailClassification);
 };
 

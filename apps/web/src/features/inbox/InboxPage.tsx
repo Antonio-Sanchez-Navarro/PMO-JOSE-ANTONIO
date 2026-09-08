@@ -17,9 +17,21 @@ import { EmailDetailModal } from "./components/EmailDetailModal";
 import { updateEmailStatus } from "../kanban/api/tasks.api";
 import { useSocket } from "../kanban/hooks/useSocket";
 import { useCopilot } from "../copilot/CopilotContext";
+import { useDashboardMetrics } from "../dashboard/hooks/useDashboardMetrics";
 
 export function InboxPage() {
   const [activeTab, setActiveTab] = useState<'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED'>('PENDING');
+
+  /**
+   * Los contadores de las pestañas salen de `/dashboard/metrics`, no de la
+   * lista cargada.
+   *
+   * La lista pide `take=20`: contar sus filas daba "20 correos" con 143 en la
+   * bandeja, y era exactamente el desfase entre la bandeja y el dashboard.
+   * `inbox.byStatus` cuenta los cuatro estados sobre la tabla entera, así que
+   * los dos sitios enseñan por fin el mismo número.
+   */
+  const { data: metrics, refresh: refreshMetrics } = useDashboardMetrics();
 
   const {
     threads,
@@ -44,14 +56,23 @@ export function InboxPage() {
 
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiProposal, setAiProposal] = useState<EmailClassification | null>(null);
+  const [aiHasAttachments, setAiHasAttachments] = useState(false);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
 
-  const handleAnalyzeEmail = async (emailId: string) => {
+  /**
+   * Abre la cuarentena de un correo.
+   *
+   * Sin `force` no cuesta tokens si el correo ya se analizó: la API sirve la
+   * propuesta que tiene guardada. Con `force` se paga un análisis nuevo, y solo
+   * se llega ahí desde el botón que lo dice.
+   */
+  const handleAnalyzeEmail = async (emailId: string, hasAttachments = false, force = false) => {
     try {
-      const toastId = toast.loading('Analizando correo con IA...');
-      const result = await classifyEmail(emailId);
+      const toastId = toast.loading(force ? 'Reanalizando el correo con IA…' : 'Analizando correo con IA...');
+      const result = await classifyEmail(emailId, force);
       toast.dismiss(toastId);
       setAiProposal(result);
+      setAiHasAttachments(hasAttachments);
       setIsAiModalOpen(true);
     } catch (e) {
       const error = e as Error & { response?: { status: number } };
@@ -71,7 +92,7 @@ export function InboxPage() {
           <h2 className="font-semibold text-slate-800">Bandeja de entrada</h2>
           {status === "ready" && (
             <p className="text-xs text-slate-400">
-              {emails.length} {emails.length === 1 ? "correo" : "correos"} ·{" "}
+              {emails.length} {emails.length === 1 ? "correo cargado" : "correos cargados"} ·{" "}
               {threads.length} {threads.length === 1 ? "conversación" : "conversaciones"}
               {labelFilter && ` · filtrado de ${totalEmails}`}
             </p>
@@ -93,19 +114,33 @@ export function InboxPage() {
           { id: 'IN_PROGRESS', label: 'En Proceso' },
           { id: 'COMPLETED', label: 'Completados' },
           { id: 'DISMISSED', label: 'Descartados' }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED')}
-            className={`py-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab.id
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        ].map(tab => {
+          const count = metrics?.inbox.byStatus[tab.id as keyof typeof metrics.inbox.byStatus];
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED')}
+              className={`flex items-center gap-2 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.id
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+              }`}
+            >
+              {tab.label}
+              {/* Sin métricas no se pinta nada: un cero inventado mientras carga
+                  se lee como "no tienes correos", que es peor que no decir nada. */}
+              {typeof count === "number" && (
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
+                    activeTab === tab.id ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {status === "ready" && labels.length > 0 && (
@@ -147,6 +182,9 @@ export function InboxPage() {
                   try {
                     const updated = await updateEmailStatus(id, newStatus, force);
                     updateEmail(updated as unknown as EmailSnippet);
+                    // El correo cambió de estado: los contadores de las
+                    // pestañas acaban de quedarse viejos.
+                    void refreshMetrics();
                   } catch (e) {
                     const error = e as Error;
                     toast.error(error.message || 'Error al cambiar estado');
@@ -174,6 +212,12 @@ export function InboxPage() {
           setAiProposal(null);
         }}
         proposal={aiProposal}
+        hasAttachments={aiHasAttachments}
+        onReanalyze={
+          aiProposal
+            ? () => handleAnalyzeEmail(aiProposal.emailId, aiHasAttachments, true)
+            : undefined
+        }
         onConfirm={async (data) => {
           try {
             const { category, tasks } = data;
@@ -186,6 +230,8 @@ export function InboxPage() {
             setAiProposal(null);
             // Refrescar bandeja para actualizar el estado visual de los correos
             refresh();
+            // Y los contadores: aprobar vacía la cuarentena de ese correo.
+            void refreshMetrics();
           } catch (e) {
             const error = e as Error;
             toast.error(error?.message || "Error al crear las tareas propuestas.");
@@ -210,8 +256,8 @@ function ThreadRow({
   onRead,
   onUpdateStatus,
 }: { 
-  thread: EmailThread; 
-  onAnalyze: (id: string) => Promise<void> | void; 
+  thread: EmailThread;
+  onAnalyze: (id: string, hasAttachments?: boolean) => Promise<void> | void;
   onRead: (id: string) => void;
   onUpdateStatus: (id: string, status: string, force?: boolean) => void;
 }) {
@@ -225,7 +271,7 @@ function ThreadRow({
         threadCount={thread.messages.length}
         expanded={expanded}
         onToggle={hasReplies ? () => setExpanded((open) => !open) : undefined}
-        onAnalyze={() => onAnalyze(thread.latest.id)}
+        onAnalyze={() => onAnalyze(thread.latest.id, thread.latest.hasAttachments)}
         onRead={() => onRead(thread.latest.id)}
         onUpdateStatus={(status, force) => onUpdateStatus(thread.latest.id, status, force)}
       />
@@ -237,7 +283,7 @@ function ThreadRow({
               <EmailRow 
                 email={message} 
                 nested 
-                onAnalyze={() => onAnalyze(message.id)} 
+                onAnalyze={() => onAnalyze(message.id, message.hasAttachments)} 
                 onRead={() => onRead(message.id)}
                 onUpdateStatus={(status, force) => onUpdateStatus(message.id, status, force)}
               />
@@ -275,7 +321,13 @@ function EmailRow({
 
   // Según HANDOFF: isConverted indica si el correo ya fue convertido a tareas
   const isProcessed = Boolean(email.isConverted);
-  
+
+  // La cuarentena, vista desde la lista. `taskCount` no sirve para esto: desde
+  // la Fase 6 sigue en 0 mientras las propuestas esperan, porque la IA ya no
+  // escribe en el tablero.
+  const proposalCount = email.proposedTaskCount ?? 0;
+  const hasProposals = proposalCount > 0;
+
   const { openCopilotWithContext } = useCopilot();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -328,12 +380,29 @@ function EmailRow({
           )}
         </div>
         <p className={`truncate text-sm text-slate-700 ${unread ? "font-semibold" : "font-medium"}`}>
+          {email.hasAttachments && (
+            <span
+              className="mr-1 text-slate-400"
+              title="Trae adjuntos. La IA no lee su contenido."
+              aria-label="Con adjuntos"
+            >
+              📎
+            </span>
+          )}
           {email.subject}
         </p>
         <p className="truncate text-sm text-slate-500">{email.snippet}</p>
 
-        {labels.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
+        {(hasProposals || labels.length > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {hasProposals && (
+              <span
+                className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+                title="La IA dejó tareas esperando tu decisión. No están en el tablero hasta que las apruebes."
+              >
+                🕒 {proposalCount} {proposalCount === 1 ? "propuesta" : "propuestas"}
+              </span>
+            )}
             {labels.map((label) => (
               <span
                 key={label.id}
@@ -417,12 +486,21 @@ function EmailRow({
                 disabled={isAnalyzing}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors rounded-md shadow-sm whitespace-nowrap border
                   ${isAnalyzing
-                    ? 'bg-indigo-100 text-indigo-700 border-indigo-200 cursor-default' 
-                    : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
+                    ? 'bg-indigo-100 text-indigo-700 border-indigo-200 cursor-default'
+                    : hasProposals
+                      // Ámbar y "revisar": abrir una propuesta guardada no
+                      // vuelve a llamar al modelo, y el botón no debe sugerir
+                      // que se paga otra vez por lo mismo.
+                      ? 'bg-amber-500 text-white border-amber-500 hover:bg-amber-600'
+                      : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
                   }
                 `}
               >
-                {isAnalyzing ? "⏳ Analizando..." : "🪄 Generar Tareas (IA)"}
+                {isAnalyzing
+                  ? "⏳ Analizando..."
+                  : hasProposals
+                    ? `🕒 Revisar ${proposalCount}`
+                    : "🪄 Generar Tareas (IA)"}
               </button>
             )}
           </div>
