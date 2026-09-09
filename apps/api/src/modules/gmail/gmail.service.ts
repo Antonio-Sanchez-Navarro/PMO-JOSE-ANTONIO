@@ -8,6 +8,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { describirError, stackDe } from '../../common/observability/describir-error';
 import { AlertService } from '../../common/alerts/alert.service';
 import type { ClassifyEmailJob } from '../ai/classify-email.job';
+import { esCuotaAgotada, GmailQuotaError } from './gmail-quota';
 
 /**
  * Qué pasó al intentar poner el `watch` de un buzón.
@@ -118,6 +119,20 @@ const MARGEN_FECHA_FUTURA_MS = 60 * 60_000;
  * es la velocidad: es **no causar el fallo que ademas ocultabamos**.
  */
 const TANDA_DESCARGA = 10;
+
+/**
+ * Pausa entre tandas de descarga.
+ *
+ * La cuota de Gmail se mide en unidades **por minuto y por usuario**, así que
+ * lo que la agota es el ritmo, no el tamaño del lote. Con 10 mensajes por tanda
+ * y esta pausa salen ~60 peticiones/minuto sostenidas, muy por debajo del
+ * techo, y el coste para el usuario es invisible: un tramo de 25 correos tarda
+ * dos segundos más y nadie lo está mirando —la ingesta es de fondo—.
+ */
+const PAUSA_ENTRE_TANDAS_MS = 1_000;
+
+/** `setTimeout` en forma de promesa. Sin dependencias: no hace falta más. */
+const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 
 /**
@@ -272,6 +287,17 @@ export class GmailService {
     for (let i = 0; i < ids.length; i += TANDA_DESCARGA) {
       const tanda = ids.slice(i, i + TANDA_DESCARGA);
 
+      // ─── Espaciado entre tandas ────────────────────────────────────────
+      //
+      // El troceado por sí solo no limita el ritmo: diez peticiones, e
+      // inmediatamente diez más. La cuota de Gmail se mide en **unidades por
+      // minuto y por usuario**, así que lo que la agota no es el tamaño del
+      // lote sino la velocidad a la que se encadenan. Esta pausa —solo entre
+      // tandas, nunca antes de la primera— convierte una ráfaga en un goteo.
+      if (i > 0) {
+        await esperar(PAUSA_ENTRE_TANDAS_MS);
+      }
+
       const resultados = await Promise.all(
         tanda.map(async (id) => {
           try {
@@ -283,6 +309,24 @@ export class GmailService {
             });
             return this.toEmailSnippet(detail.data);
           } catch (err) {
+            // ─── Freno en seco ─────────────────────────────────────────
+            //
+            // Un correo que falla por lo suyo se cuenta y se sigue: el resto
+            // de la bandeja no tiene la culpa. **La cuota agotada es lo
+            // contrario**: no es este correo el que falla, es que Google ha
+            // dejado de atendernos, y cada petición que mandemos a partir de
+            // aquí sólo hunde más el cubo y alarga la penalización.
+            //
+            // Por eso se relanza envuelta en vez de contarse como `fallidos`.
+            // Contarla era el corazón del incendio del 09-08: un 403 subía el
+            // contador, el contador retenía el marcador de historial, y el
+            // marcador retenido garantizaba que el tramo entero se volviera a
+            // descargar en la siguiente notificación. El propio remedio para
+            // no perder correos se convirtió en el motor del bucle.
+            if (esCuotaAgotada(err)) {
+              throw new GmailQuotaError(err, `descargando el mensaje ${id}`);
+            }
+
             this.logger.warn(
               `Error obteniendo detalle del mensaje ${id}: ${describirError(err)}`,
               stackDe(err),
@@ -580,8 +624,30 @@ export class GmailService {
       // avanzaba y ese correo no se volvia a ver nunca — el mismo agujero de
       // §37.1 una capa mas arriba, y disparandose justo al recuperarse de una
       // caida, que es cuando mas correos hay que perder.
-      const quedaPendiente =
-        descarga.fallidos > 0 || recuento.fallidos > 0 || recuento.sinEncolar > 0;
+      // ⚠️ **`sinEncolar` NO retiene el marcador, y se sacó a propósito el
+      // 2026-09-09.** Es la diferencia entre «el correo no existe» y «el correo
+      // existe pero todavía no lo ha clasificado nadie», y solo la primera es
+      // irrecuperable desde aquí.
+      //
+      // Un correo guardado sin encolar **ya tiene una red debajo**:
+      // `reconciliarSinClasificar()` busca `processedAt: null` cada quince
+      // minutos —que es exactamente este conjunto— y lo reencola. Retener el
+      // marcador además de eso no lo salvaba dos veces: costaba **volver a
+      // descargar el tramo entero en cada notificación de Pub/Sub**.
+      //
+      // Y ese coste fue el motor del P0 del 08-09. Con la clasificación caída
+      // por una clave inválida, *todos* los correos quedaban `sinEncolar`, así
+      // que el marcador no avanzaba nunca y cada aviso redescargaba lo mismo
+      // hasta agotar la cuota de Gmail. Entonces el 403 pasó a contar como
+      // `descarga.fallidos` —otro motivo para retener— y el bucle se cerró
+      // sobre sí mismo.
+      //
+      // Los otros dos siguen reteniendo, y ahí no hay red que valga:
+      // `recuento.fallidos` es un `upsert` que falló —el correo no está en
+      // ninguna parte— y `descarga.fallidos` es uno que Gmail no dejó bajar,
+      // que tampoco llegó a la base. Si el marcador avanzara, ninguno de los
+      // dos se volvería a ver: `users.history.list` ya no los mencionaría.
+      const quedaPendiente = descarga.fallidos > 0 || recuento.fallidos > 0;
       const newHistoryId = quedaPendiente
         ? startHistoryId
         : (notifiedHistoryId ?? latestHistoryId ?? startHistoryId);
@@ -601,17 +667,60 @@ export class GmailService {
       if (quedaPendiente) {
         await this.alertas.avisar(
           'Sincronizacion de Gmail incompleta: el marcador no avanza',
-          `Usuario ${userId}: ${descarga.fallidos} sin descargar, ${recuento.fallidos} ` +
-            `sin guardar y ${recuento.sinEncolar} guardado(s) sin encolar. El marcador se queda en ` +
-            `${startHistoryId} y se reintentara el mismo tramo. Si esto se repite, ` +
+          `Usuario ${userId}: ${descarga.fallidos} sin descargar y ${recuento.fallidos} ` +
+            `sin guardar. Esos correos no estan en la base, asi que el marcador se queda ` +
+            `en ${startHistoryId} y se reintentara el mismo tramo. Si esto se repite, ` +
             'mira los avisos anteriores: un correo que falla siempre atasca la ingesta ' +
             'y los historyId caducan a la semana.',
           `gmail-sync-incompleta:${userId}`,
         );
       }
 
+      // Los `sinEncolar` se registran pero **no avisan desde aqui**: el barrido
+      // de reconciliacion ya tiene su propio aviso para los huerfanos, con
+      // freno y contando solo los ids nuevos. Duplicarlo gastaria el canal, y
+      // un canal que avisa de mas es un canal que ya nadie lee.
+      if (recuento.sinEncolar > 0) {
+        this.logger.warn(
+          `Sync de ${userId}: ${recuento.sinEncolar} correo(s) guardado(s) pero NO encolado(s). ` +
+            'El marcador avanza igual; los recoge el barrido de reconciliacion en <=15 min.',
+        );
+      }
+
       return { processed: recuento.encolados, mode: 'incremental', historyId: newHistoryId };
     } catch (err) {
+      // ─── La cuota va PRIMERO, y el orden no es estético ─────────────────
+      //
+      // Debajo, un error manda a `backfill`. `backfill` hace un `messages.list`
+      // y hasta 25 `messages.get` **más**: si llegamos aquí porque Google ya no
+      // nos atiende, caer ahí es echar gasolina — y encima `backfill` **avanza
+      // el marcador a propósito**, así que un backfill que se queda a medias
+      // por falta de cuota nos deja el `historyId` movido y el tramo real sin
+      // ingerir. Perder correos por intentar arreglar la cuota.
+      //
+      // Se para aquí, con el marcador intacto —no se ha tocado en toda esta
+      // rama— y se deja subir para que el worker pause la cola.
+      if (err instanceof GmailQuotaError || esCuotaAgotada(err)) {
+        const quota = err instanceof GmailQuotaError ? err : new GmailQuotaError(err, 'sincronizando');
+
+        this.logger.warn(
+          `Cuota de Gmail agotada para ${userId}: se detiene la ingesta y el marcador ` +
+            `se queda en ${startHistoryId}. ${describirError(quota.causaOriginal)}`,
+        );
+
+        await this.alertas.avisar(
+          'Cuota de Gmail agotada: ingesta detenida',
+          `Usuario ${userId}: Google responde 403/429 por cuota. La ingesta se para y el ` +
+            `historyId se queda en ${startHistoryId} sin avanzar, asi que no se pierde el ` +
+            'tramo. Se reanuda sola cuando el cubo se rellene. Si esto se repite sin parar, ' +
+            'mira si algo esta reintentando en bucle: la causa tipica es un fallo aguas ' +
+            'abajo (clasificacion caida) que retiene el marcador y hace repetir el tramo.',
+          `gmail-cuota-agotada:${userId}`,
+        );
+
+        throw quota;
+      }
+
       if (this.isHistoryExpired(err)) {
         this.logger.warn(
           `historyId ${startHistoryId} caducado para ${userId}: se rehace con backfill`,

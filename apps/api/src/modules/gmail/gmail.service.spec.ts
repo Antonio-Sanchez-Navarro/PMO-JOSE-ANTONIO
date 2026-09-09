@@ -1,5 +1,7 @@
 import type { ConfigService } from '@nestjs/config';
 import { GmailService } from './gmail.service';
+import { GmailQuotaError } from './gmail-quota';
+import { GmailQuotaError } from './gmail-quota';
 
 /**
  * `watchInbox` — el orden `stop` → `watch`, que es la ingesta entera.
@@ -166,6 +168,8 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
     correos?: number;
     /** Correos que Gmail no dejo descargar. Nunca llegan a `persistEmails`. */
     sinDescargar?: number;
+    /** Google corta por cuota al descargar (el incendio del 09-08). */
+    cuotaAgotada?: boolean;
   }
 
   function crear(opciones: Opciones = {}) {
@@ -235,6 +239,9 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
     (service as unknown as { fetchMessages: unknown }).fetchMessages = jest
       .fn()
       .mockImplementation((_g: unknown, ids: string[]) =>
+        opciones.cuotaAgotada
+          ? Promise.reject(new GmailQuotaError({ code: 403 }, 'descargando'))
+          :
         Promise.resolve({
           fallidos: opciones.sinDescargar ?? 0,
           correos: ids.map((id) => ({
@@ -249,8 +256,52 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
         }),
       );
 
-    return { service, prisma, add, upsert, alertas, historyList, getProfile };
+    return { service, prisma, add, upsert, alertas, historyList, getProfile, messagesList };
   }
+
+  /**
+   * P0 del 2026-09-08 · el bucle que se alimentaba de su propio remedio.
+   *
+   * Retener el marcador cuando falla un correo es correcto: evita perderlo. Pero
+   * un 403 por cuota se contaba como «un correo que no se pudo descargar», así
+   * que también retenía el marcador — y un marcador retenido garantiza volver a
+   * descargar el mismo tramo en la siguiente notificación, gastando más cuota.
+   * Cuanta menos cuota quedaba, más se repetía.
+   */
+  describe('cuota agotada: freno en seco', () => {
+    it('no avanza el marcador: el tramo sigue ahí para cuando vuelva la cuota', async () => {
+      const { service, prisma } = crear({ cuotaAgotada: true });
+
+      await expect(service.syncHistory(USUARIO)).rejects.toBeInstanceOf(GmailQuotaError);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('NO cae a backfill, que es lo que echaría gasolina', async () => {
+      const { service, getProfile, messagesList } = crear({ cuotaAgotada: true });
+
+      await expect(service.syncHistory(USUARIO)).rejects.toBeInstanceOf(GmailQuotaError);
+
+      // `backfill` hace un `messages.list` y hasta 25 `messages.get` más. Ir ahí
+      // con la cuota agotada gasta lo que no hay — y encima `backfill` avanza el
+      // marcador a propósito, así que uno a medias dejaría el `historyId` movido
+      // y el tramo real sin ingerir: perder correos por intentar arreglar la cuota.
+      expect(messagesList).not.toHaveBeenCalled();
+      expect(getProfile).not.toHaveBeenCalled();
+    });
+
+    it('avisa con la causa, no con el síntoma', async () => {
+      const { service, alertas } = crear({ cuotaAgotada: true });
+
+      await expect(service.syncHistory(USUARIO)).rejects.toBeInstanceOf(GmailQuotaError);
+
+      expect(alertas.avisar).toHaveBeenCalledWith(
+        expect.stringContaining('Cuota de Gmail'),
+        expect.stringContaining(MARCADOR_VIEJO),
+        `gmail-cuota-agotada:${USUARIO}`,
+      );
+    });
+  });
 
   it('si un correo NO se puede guardar, el marcador se queda donde estaba', async () => {
     // El agujero original: el marcador avanzaba igual y ese correo desaparecía.
@@ -263,11 +314,43 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
     expect(res.historyId).toBe(MARCADOR_VIEJO);
   });
 
-  it('si el correo se guarda pero NO se encola, el marcador tampoco avanza', async () => {
-    // Este es el que más costaba ver: el dato está, el procesamiento no, y el
-    // `catch` compartido lo dejaba en un `warn` con el contador sin subir.
+  /**
+   * Esta prueba decía lo contrario hasta el 2026-09-09, y el cambio está
+   * firmado por Doc.
+   *
+   * Retener el marcador por un `sinEncolar` protegía un correo **que ya estaba
+   * protegido**: `reconciliarSinClasificar()` busca `processedAt: null` cada
+   * quince minutos, que es exactamente este caso. Lo que sí costaba era volver
+   * a descargar el tramo entero en cada notificación de Pub/Sub — y con la
+   * clasificación caída, *todos* los correos caen aquí, así que el marcador no
+   * avanzaba nunca. Ese fue el motor del P0 que agotó la cuota de Gmail.
+   */
+  it('si el correo se guarda pero NO se encola, el marcador SÍ avanza', async () => {
     const add = jest.fn().mockRejectedValue(new Error('Redis dijo que no'));
     const { service, prisma } = crear({ add });
+
+    const res = await service.syncHistory(USUARIO);
+
+    expect(prisma.user.update).toHaveBeenCalled();
+    expect(res.historyId).not.toBe(MARCADOR_VIEJO);
+  });
+
+  it('y no avisa por ello: el barrido de reconciliación ya tiene su propio aviso', async () => {
+    // Dos avisos para el mismo hecho gastan el canal, y un canal que avisa de
+    // más es un canal que ya nadie lee.
+    const add = jest.fn().mockRejectedValue(new Error('Redis dijo que no'));
+    const { service, alertas } = crear({ add });
+
+    await service.syncHistory(USUARIO);
+
+    expect(alertas.avisar).not.toHaveBeenCalled();
+  });
+
+  it('lo que NO llegó a la base sigue reteniendo el marcador', async () => {
+    // La frontera del cambio: un correo que Gmail no dejó descargar no está en
+    // ninguna parte, y el barrido no puede rescatar lo que no existe. Si el
+    // marcador avanzara, `users.history.list` ya no volvería a mencionarlo.
+    const { service, prisma } = crear({ sinDescargar: 1 });
 
     const res = await service.syncHistory(USUARIO);
 
@@ -287,8 +370,11 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
   });
 
   it('cuando queda algo pendiente, avisa en vez de callarse', async () => {
-    const add = jest.fn().mockRejectedValue(new Error('Redis dijo que no'));
-    const { service, alertas } = crear({ add });
+    // El disparador es un correo que **no llegó a la base**. Antes valía un
+    // fallo al encolar, pero desde el 09-09 ese caso ni retiene el marcador ni
+    // avisa: lo cubre el barrido de reconciliación, con su propio aviso.
+    const upsert = jest.fn().mockRejectedValue(new Error('la base dijo que no'));
+    const { service, alertas } = crear({ upsert });
 
     await service.syncHistory(USUARIO);
 
