@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { Task, TaskStatus } from '../types';
 import { TimeEntry, SESSION_EVENTS, CODIGO_SESION, type SesionRechazadaEvento, type CodigoSesion } from '@pmo/shared';
-import { PROD_API_URL, apiFetch } from '../../../lib/api';
+import { apiFetch } from '../../../lib/api';
 
 export const TASK_EVENTS = {
   created: 'task.created',
@@ -88,7 +88,12 @@ export const useSocket = ({
     if (!globalSocket) {
       // Vite proxy no proxifica WebSockets por defecto, así que conectamos al host backend.
       // withCredentials asegura que enviemos la cookie pmo_session para que el backend nos asigne nuestra sala.
-      const socketUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? PROD_API_URL : "http://localhost:3000");
+      // Misma variable que el cliente HTTP. Sin ella en produccion se intenta el
+      // propio dominio: no conectara, pero `api.ts` ya ha gritado por consola
+      // que falta la configuracion, que es el fallo real.
+      const socketUrl =
+        import.meta.env.VITE_API_URL ||
+        (import.meta.env.PROD ? window.location.origin : "http://localhost:3000");
       globalSocket = io(socketUrl, {
         withCredentials: true,
         transports: ['websocket', 'polling'],
