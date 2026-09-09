@@ -60,6 +60,36 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
     ]);
   };
 
+  /**
+   * Salida no destructiva: `Escape` cierra sin decidir nada.
+   *
+   * Hasta la auditoría 9926 las tres únicas salidas eran descartar, aprobar o
+   * pagar un reanálisis: abrir para mirar obligaba a decidir, y la única
+   * escapatoria inocua era recargar la página. Toda la Fase 6 existe para poner
+   * a una persona entre proponer y crear, así que **un diálogo que no se puede
+   * cerrar sin decidir empuja a decidir por salir**, que es la misma prisa que
+   * se quería quitar.
+   *
+   * Cerrar no pierde nada: la propuesta vive en el correo y sigue ahí al
+   * volver. Lo único que se deja atrás es la edición a medias de esta pantalla.
+   */
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const alCerrarConTeclado = (evento: KeyboardEvent) => {
+      if (evento.key !== 'Escape') return;
+      // El gestor de etiquetas se pinta por encima: Escape cierra primero el de
+      // arriba, no los dos de golpe.
+      if (isTagManagerOpen) return;
+      // Ni a mitad de una escritura ni de una llamada al modelo.
+      if (isSubmitting || isReanalyzing) return;
+      onCancel();
+    };
+
+    document.addEventListener('keydown', alCerrarConTeclado);
+    return () => document.removeEventListener('keydown', alCerrarConTeclado);
+  }, [isOpen, isTagManagerOpen, isSubmitting, isReanalyzing, onCancel]);
+
   // Sincronizar el estado interno con la propuesta que llega
   useEffect(() => {
     if (proposal && isOpen) {
@@ -107,11 +137,22 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md"
+      // `onMouseDown` y no `onClick`: con clic, arrastrar el ratón desde dentro
+      // del diálogo y soltarlo fuera —seleccionando texto, por ejemplo— cuenta
+      // como clic en el fondo y cerraría lo que se estaba leyendo.
+      onMouseDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (isSubmitting || isReanalyzing) return;
+        onCancel();
+      }}
+    >
       <div className="w-full max-w-2xl overflow-hidden bg-white shadow-2xl rounded-2xl dark:bg-slate-800 ring-1 ring-slate-900/5 transition-all">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700 bg-gradient-to-r from-indigo-50 to-white dark:from-slate-800 dark:to-slate-800">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
             <span className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400">
               <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -121,6 +162,18 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
               <h2 className="text-xl font-bold text-slate-800 dark:text-white">IA ha extraído una tarea</h2>
               <p className="text-sm text-slate-500 dark:text-slate-400">Revisa la propuesta antes de enviarla al tablero.</p>
             </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={isSubmitting || isReanalyzing}
+              aria-label="Cerrar sin cambios"
+              title="Cerrar sin cambios (Esc). La propuesta se queda como está."
+              className="shrink-0 rounded-md p-1 text-xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+            >
+              ✕
+            </button>
           </div>
         </div>
 
@@ -266,7 +319,10 @@ export const AiValidationModal: React.FC<AiValidationModalProps> = ({
             onClick={onCancel}
             className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-all"
           >
-            Descartar
+            {/* Decía "Descartar", y no descarta nada: la propuesta sigue
+                guardada en el correo y reaparece al volver a abrirlo. El
+                nombre asustaba de una pérdida que no ocurre. */}
+            Cerrar sin cambios
           </button>
           <button
             onClick={handleSubmit}
