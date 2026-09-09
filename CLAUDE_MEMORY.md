@@ -8,6 +8,106 @@
 > pagado.
 
 ---
+## P0 · el bucle de Gmail que se alimentaba de su propio remedio (2026-09-09)
+
+La clasificación se rompió por una clave de Anthropic inválida y acabamos con la
+cuota de Gmail agotada y 403 en cadena. El camino, que es lo que hay que
+entender porque **ninguna de las piezas estaba mal por separado**:
+
+1. La clasificación cae → los correos se guardan pero **no se encolan** →
+   `recuento.sinEncolar > 0`.
+2. `syncHistory` retiene el marcador de historial. **Esto es correcto**: existe
+   para no perder correos, y está documentado con su porqué.
+3. Marcador retenido = la siguiente notificación de Pub/Sub vuelve a descargar
+   **el mismo tramo entero**. Y otra. Y otra.
+4. La cuota se agota. Y entonces el 403 empieza a contar como
+   `descarga.fallidos`, que es **otro motivo para retener el marcador**.
+
+En el paso 4 el remedio se convierte en el motor: cuanta menos cuota quedaba,
+más se repetía el tramo, y cuanto más se repetía, menos cuota quedaba.
+
+### La frontera que faltaba
+
+**Un fallo por correo y un fallo de la API entera no se parecen en nada.** El
+primero se reintenta —el resto de la bandeja no tiene la culpa—. El segundo hay
+que dejar de intentarlo **inmediatamente**, porque cada reintento empeora
+exactamente aquello que lo causó. `fetchMessages` los trataba igual: un `catch`
+que contaba y seguía.
+
+Ahora hay `gmail-quota.ts` con `esCuotaAgotada`, y **mira el motivo, no el
+estado**. Gmail devuelve 403 tanto para cuota como para
+`insufficientPermissions`, y son opuestos: la cuota se rellena sola esperando, y
+un permiso que falta no se arregla esperando ni en una semana. Confundirlos
+dormiría la ingesta indefinidamente por un OAuth mal concedido, sin decir la
+causa. Es la misma trampa que ya estaba documentada para el 403 de Anthropic
+(`billing_error` contra `permission_error`), y se resuelve igual: el texto del
+mensaje es **respaldo**, nunca sustituto del `reason`.
+
+### Las cuatro redes, de arriba abajo
+
+| | Qué evita |
+|---|---|
+| `limiter: 6/min` + `concurrency: 1` en la cola | Que una ráfaga de avisos arranque N sincronizaciones a la vez. Dos del mismo buzón en paralelo se pisan el marcador y gastan doble para traer lo mismo |
+| Pausa de 1 s entre tandas de 10 | El troceado no limitaba el **ritmo**: diez peticiones e inmediatamente diez más. La cuota se mide por minuto, así que lo que la agota es la velocidad, no el lote |
+| Freno en seco en `fetchMessages` | Deja de pedir en cuanto Google dice que no, en vez de recorrer los ids restantes chocando |
+| `worker.rateLimit()` + `RateLimitError()` | Pausa la ingesta entera y devuelve el job **sin gastarle un intento** |
+
+⚠️ **La cuarta es la que salva los `historyId`, y por eso no vale un error
+normal.** Con un error corriente el job gasta sus tres intentos y cae en la cola
+de fallidos: el aviso de Pub/Sub desaparece, nadie vuelve a pedir ese tramo, y el
+marcador se queda esperando una notificación que ya no llegará. Los `historyId`
+caducan a la semana — un job tirado hoy es un backfill, y un hueco de correos,
+dentro de siete días.
+
+### El orden del `catch` es parte del arreglo
+
+En `syncHistory`, la cuota se comprueba **antes** que el 404. Debajo, un error
+manda a `backfill`, y `backfill` hace un `messages.list` más hasta 25
+`messages.get`: ir ahí con la cuota agotada es echar gasolina. Y peor —
+`backfill` **avanza el marcador a propósito**, así que uno que se quede a medias
+por falta de cuota deja el `historyId` movido y el tramo real sin ingerir.
+Perder correos por intentar arreglar la cuota.
+
+### El retroceso exponencial vive en memoria del proceso, y es una decisión
+
+`pausasSeguidas` no está en Redis: se reinicia en cada despliegue y no se
+comparte entre instancias. Es a propósito. La alternativa era otra pieza de
+estado compartido que puede fallar, y aquí una escalada **aproximada que
+funciona sola** vale más que una exacta con una dependencia más. Una
+sincronización buena lo reinicia: un atasco resuelto no debe seguir castigando.
+
+### El motor, apagado (firmado por Doc el 2026-09-09)
+
+El paso 2 sigue igual: **`sinEncolar` retiene el marcador**.
+
+Y esa parte concreta es redundante, porque la red ya existe:
+`reconciliarSinClasificar()` busca `where: { processedAt: null, receivedAt: { lt:
+limite } }` — exactamente los correos guardados y sin encolar— y los reencola
+cada 15 minutos. O sea que un correo `sinEncolar` **ya está a salvo sin retener
+el marcador**, y retenerlo cuesta volver a descargar el tramo entero en cada
+notificación.
+
+Retener para `fallidos` (el `upsert` falló: el correo no está en ninguna parte) y
+para `descarga.fallidos` sí es necesario: ahí no hay red debajo.
+
+**Hecho:** `sinEncolar` sale de la condición. `quedaPendiente` queda en
+`descarga.fallidos > 0 || recuento.fallidos > 0` — los dos casos en que el correo
+**no está en ninguna parte** y no hay red debajo que pueda rescatarlo.
+
+Con eso el bucle no arranca ni aunque la clasificación se vuelva a caer: los
+correos se guardan, el marcador avanza, y el barrido los reencola en ≤15 min.
+
+Y el aviso se movió de sitio en vez de duplicarse: `syncHistory` **registra** los
+`sinEncolar` en el log pero ya no avisa, porque el barrido tiene su propio aviso
+con freno y contando solo los ids nuevos. **Un canal que avisa de más es un canal
+que ya nadie lee** — es la misma regla que el propio barrido tenía escrita.
+
+La prueba que decía «si el correo se guarda pero NO se encola, el marcador
+tampoco avanza» ahora dice lo contrario, con el porqué encima. Y se añadió la que
+fija la frontera: **lo que no llegó a la base sigue reteniendo**.
+
+---
+
 ## Operación Queso: los siete agujeros de la Fase 6, tapados (2026-09-08)
 
 Seis puntos de @Gravity (P1–P6) y uno de @Alana (C2). Cierre:
