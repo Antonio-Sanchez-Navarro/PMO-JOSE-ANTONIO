@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Task, TaskPriority, TaskSource } from '@prisma/client';
+import { Prisma, TaskPriority, TaskSource } from '@prisma/client';
 import { AiService } from './ai.service';
 import { adjustPriority } from './priority.rules';
 import { senderFromHeader, withContextPrefix } from './title.prefix';
@@ -36,7 +36,12 @@ export interface ClassifyResult {
   category: string;
   /** Lo seguro que estaba el modelo, para que quien materialice pueda anotarlo. */
   aiConfidence: number;
-  tasks: Task[];
+  /**
+   * Borradores, **no filas**: desde la Fase 6 la IA no crea nada en `Task`.
+   * Decía `Task[]` y se devolvía `draft.tasks as any`, que es la firma de que
+   * el tipo llevaba tiempo mintiendo — ninguna de esas "tareas" tenía `id`.
+   */
+  tasks: TaskDraft[];
   /** `true` si el modelo no extrajo tareas y se generó una desde el asunto. */
   usedFallback: boolean;
 }
@@ -74,6 +79,33 @@ export interface TaskDraft {
   priorityReason: string | null;
   /** De qué prioridad venía. `null` si no hubo ajuste. */
   priorityAdjustedFrom: TaskPriority | null;
+}
+
+/**
+ * Pasa los borradores a algo que Prisma acepte en una columna `Json`.
+ *
+ * Existe porque `TaskDraft` **no es JSON**: lleva un `Date` en `dueDate`, y
+ * `Prisma.InputJsonValue` no admite objetos con métodos. Antes esto se resolvía
+ * con un `as any`, y el `as any` escondía algo peor que un tipo feo: al leer la
+ * columna, `dueDate` ya no es un `Date` sino la cadena ISO en que Prisma lo
+ * convirtió al guardarlo. El tipo decía `Date` y el valor era `string`, así que
+ * cualquier `.toISOString()` sobre un borrador releído reventaba en ejecución.
+ *
+ * Convertir aquí, a la vista, hace que lo que se guarda y lo que se lee tengan
+ * la misma forma — y que el compilador pueda vigilarlo.
+ */
+export function aJsonDeBorradores(tasks: TaskDraft[]): Prisma.InputJsonValue {
+  return tasks.map((t) => ({
+    title: t.title,
+    description: t.description,
+    priority: t.priority,
+    tags: t.tags,
+    dueDate: t.dueDate ? t.dueDate.toISOString() : null,
+    source: t.source,
+    aiConfidence: t.aiConfidence,
+    priorityReason: t.priorityReason,
+    priorityAdjustedFrom: t.priorityAdjustedFrom,
+  }));
 }
 
 /** Resultado del análisis sin tocar la base de datos. */
@@ -142,14 +174,14 @@ export class EmailClassificationService {
           isActionable,
           category,
           processedAt: new Date(),
-          proposedTasks: draft.tasks as any, // Prisma JsonValue compatible
+          proposedTasks: aJsonDeBorradores(draft.tasks),
         },
       });
     });
 
     // Se devuelven los borradores, no filas: todavía no existen. Quien los
     // materialice lo hará al aprobarlos con `POST /emails/:id/to-task`.
-    return { isActionable, category, aiConfidence, tasks: draft.tasks as any, usedFallback };
+    return { isActionable, category, aiConfidence, tasks: draft.tasks, usedFallback };
   }
 
   /**

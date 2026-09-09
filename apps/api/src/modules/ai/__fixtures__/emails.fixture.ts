@@ -23,7 +23,7 @@ const BASE: Email = {
   receivedAt: new Date('2026-07-24T15:30:00.000Z'),
   processedAt: null,
   skipReason: null,
-  proposedTasks: null as any,
+  proposedTasks: null,
   hasAttachments: false,
 };
 

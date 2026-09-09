@@ -410,7 +410,10 @@ describe('EmailClassificationService', () => {
     });
 
     const [propuesta] = propuestas();
-    expect(propuesta.dueDate).toEqual(new Date('2026-07-24'));
+    // Cadena ISO y no `Date`: lo que se guarda es JSON, y es exactamente lo
+    // que se relee. Mientras el tipo decía `Date`, esta prueba pasaba con un
+    // objeto que la columna nunca llegó a contener.
+    expect(propuesta.dueDate).toBe('2026-07-24T00:00:00.000Z');
     // `sourceEmailId` y `userId` ya no viajan en cada tarea: el borrador vive
     // dentro de la fila del correo, que es quien los tiene.
     expect(propuesta.source).toBe(TaskSource.EMAIL);

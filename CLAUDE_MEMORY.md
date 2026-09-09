@@ -8,6 +8,57 @@
 > pagado.
 
 ---
+## Los siete `any` que tumbaron el despliegue, y el error que escondían (2026-09-09)
+
+CI abortó la Fase 6 entera: `--max-warnings 0` y siete `no-explicit-any`. Todos
+eran el **mismo sitio**: la frontera entre `TaskDraft[]` —dominio, con `Date`— y
+la columna `Json` de Prisma.
+
+⚠️ **El umbral no está en `package.json`.** El script es `eslint "src/**/*.ts"` a
+secas; quien lo abra buscando `--max-warnings` no lo encuentra y concluye que el
+aviso no corta. Vive en `ci.yml`:
+`npm run lint --workspaces --if-present -- --max-warnings 0`.
+
+### El `any` no era feo: era un error tapado
+
+`TaskDraft` **no es JSON**. Lleva un `Date` en `dueDate`, y
+`Prisma.InputJsonValue` no admite objetos con métodos. El `as any` callaba esa
+queja — y con ella, la consecuencia:
+
+**Al releer la columna, `dueDate` ya no es un `Date`: es la cadena ISO en que
+Prisma lo convirtió al guardarlo.** El tipo decía `Date`, el valor era `string`,
+y `.toISOString()` sobre un borrador releído reventaba en ejecución. Peor: el
+mismo endpoint devolvía **`Date` si acababa de clasificar y `string` si servía el
+borrador guardado**. La forma de la respuesta dependía de si alguien había mirado
+antes ese correo.
+
+Nadie lo había visto porque sobre el cable las dos se serializan igual. Solo
+aparecía al tocar el valor en el servidor.
+
+El arreglo es una función a la vista, `aJsonDeBorradores`, y `ProposedTask.dueDate`
+pasa a ser `string | null`. Lo que se guarda y lo que se lee tienen ya la misma
+forma, y el compilador puede vigilarlo.
+
+### Lo demás que salió al quitar los `as`
+
+- **`ClassifyResult.tasks` decía `Task[]`** y se devolvía `draft.tasks as any`.
+  Ninguna de esas «tareas» tenía `id`: no eran filas, eran borradores. El tipo
+  llevaba mintiendo desde la Fase 6.
+- **`findOne` tenía cuatro campos duplicados** (`proposedTaskCount`,
+  `hasAttachments`, `taskCount`, `isConverted`): Doc y yo los añadimos a la vez
+  en el mismo literal. `TS1117`, invisible mientras el resto no compilara.
+- Un `import` duplicado en `gmail.service.spec.ts`, mío.
+- `FilaTriage.proposedTasks: any` → `Prisma.JsonValue`, y un lector
+  `tareasPropuestas()` que comprueba que sea un array en vez de afirmarlo. Una
+  columna `Json` puede traer un número o una cadena suelta; afirmar que es una
+  lista sin mirar era el `as` de antes con otro nombre.
+
+**Regla:** un `as any` en una frontera de serialización no es deuda estética. Es
+el compilador avisando de que **los dos lados no tienen la misma forma**, y
+silenciarlo no los iguala: solo mueve el fallo a ejecución.
+
+---
+
 ## P0 · el bucle de Gmail que se alimentaba de su propio remedio (2026-09-09)
 
 La clasificación se rompió por una clave de Anthropic inválida y acabamos con la

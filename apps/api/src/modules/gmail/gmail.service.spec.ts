@@ -1,7 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import { GmailService } from './gmail.service';
 import { GmailQuotaError } from './gmail-quota';
-import { GmailQuotaError } from './gmail-quota';
 
 /**
  * `watchInbox` — el orden `stop` → `watch`, que es la ingesta entera.

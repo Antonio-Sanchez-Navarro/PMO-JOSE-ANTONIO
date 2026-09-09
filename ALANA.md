@@ -9261,3 +9261,228 @@ da el primero por cerrado hasta comprobarlo aparte.** El silencio de un aviso
 nunca es una prueba.
 
 **No cierro nada.**
+
+---
+
+## 63.1 Actualización de las 19:05 UTC: la clave está subida y **no aplicada** (2026-09-09)
+
+Vuelvo a mirar con `gcloud` ya restablecido. **Tres cosas han cambiado y una es
+la que hay que hacer ahora mismo.**
+
+**✅ Upstash se desatascó.** Último `max requests limit` a las **18:23:46 UTC**;
+en los últimos quince minutos, **cero**. La cola vuelve a aceptar trabajo.
+
+**🔴 Y con la cola moviéndose ha vuelto el 401, justo como dije en §63.2.**
+`API key is invalid` en los últimos quince minutos: **100**, que es el tope que
+pedí. No estaba resuelto: estaba tapado.
+
+**🔴 La causa exacta, y no es la que parecía.** `pmo-anthropic-api-key` ya tiene
+**tres versiones**, y comprobé la `latest` contra Anthropic:
+
+```
+clave 'latest' de Secret Manager -> HTTP 200
+```
+
+**La clave buena YA está en Secret Manager.** Lo que falta es aplicarla: la
+revisión viva sigue siendo **`pmo-api-00117-jm7`, creada el 2026-09-08 a las
+20:00 UTC** — anterior a la subida. Cloud Run resuelve `secretKeyRef: latest`
+**cuando arranca la instancia**, así que las que están corriendo siguen con la
+clave muerta en memoria.
+
+Se hizo el paso 2 del paso a paso y no el paso 3. **Es la lección de §27 otra
+vez, y esta vez con una credencial: escrito y guardado no es lo mismo que
+puesto.** Y mi paso a paso lo decía, pero lo decía en un tercer bloque de código
+después de dos — **eso es mío, no suyo**: si un paso es imprescindible para que
+los anteriores sirvan de algo, no puede parecer opcional por ir el último.
+
+**🔴 Y el 403 de cuota de Gmail sigue intacto:** también **100** en los últimos
+quince minutos. Nadie lo ha tocado, y sigue siendo código (§62.5).
+
+**No cierro nada.**
+
+---
+
+## 64. Auditoría de caja negra de las 16 mutaciones declaradas (2026-09-09, 19:15 UTC)
+
+Doc entrega una lista de sixteen cambios —siete de infraestructura, nueve de
+código— y pide verificar el estado real. **Los comprobé contra producción, no
+contra la lista**, que es la regla que me dejé escrita en §59.8.
+
+**El resumen en una frase: la infraestructura está hecha y el frontend está
+desplegado; el backend no, y ahí viven los seis cambios que arreglan lo que está
+roto.**
+
+### 64.1 Infraestructura: siete de siete, con una objeción de forma
+
+| # | Declarado | Verificado |
+|---|---|---|
+| 1 | Facturación a `015607-DFA49A-B3BAC3` | ✅ `billingAccountName` es esa, `billingEnabled: true` |
+| 2 | Uptime check HTTPS a `/health/live` | ✅ existe y **pasa** · 🟡 **no es HTTPS** (ver abajo) |
+| 3 | Nueva versión de `pmo-google-client-secret` | ✅ **4 versiones**; `latest` probada contra Google |
+| 4 | Nueva versión de `pmo-anthropic-api-key` | ✅ en Secret Manager · 🔴 **no en el servicio** |
+| 5 | Redirect URI vieja añadida al cliente OAuth | ✅ probado de caja negra |
+| 6 | Upstash a pago por uso | ✅ **cero** rechazos de cuota |
+| 7 | Commits empujados a `origin/master` | ✅ `master == origin/master`, HEAD `85b5d4d` |
+
+**Cómo probé el 3 y el 5 sin tocar nada.** El secreto de Google, con un
+`refresh_token` inventado contra `oauth2.googleapis.com`: devuelve
+**`invalid_grant`**, que significa que **Google aceptó las credenciales del
+cliente** y solo rechazó mi token falso. Y el `redirect_uri`: pedí
+`/auth/google`, saqué la URL de autorización que construye la aplicación
+—`redirect_uri=…pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback`, la vieja—
+y se la pasé a Google: contesta **302**, no la página de error 400. **Está
+registrada.**
+
+#### 🟡 La objeción del uptime check, y estuve a punto de contarla mal
+
+`uptimeCheckConfigs` por REST me devolvió **vacío** y casi escribo que el cambio
+no existía. **Lo crucé con `gcloud monitoring uptime list-configs` y sí está.**
+Anoto el fallo de método: *una lectura que devuelve vacío no prueba ausencia
+hasta confirmarla por otra vía.*
+
+Existe, y su configuración real es:
+
+```yaml
+displayName: PMO-PRESUPUESTO
+monitoredResource: { host: pmo-api-mlpuuasqka-uc.a.run.app }
+httpCheck:
+  path: /health/live
+  port: 80                    # <-- no useSsl
+  acceptedResponseStatusCodes: [ STATUS_CLASS_2XX ]
+period: 300s
+```
+
+**Se declaró HTTPS y es HTTP.** Y por el puerto 80 ese host devuelve **302**, que
+no es 2XX. Así que fui a la métrica antes de opinar:
+
+```
+uptime_check/check_passed — OK: 1294 · FALLOS: 0 · desde 16:08 UTC
+```
+
+**Funciona**, porque el sondeo de Google sigue la redirección. Pero funciona por
+un comportamiento que nadie eligió: el check valida un salto a HTTPS y el 200 del
+otro lado. **Con `useSsl: true` y puerto 443 mediría lo que dice medir.** La
+política está activa, con 60 s de duración y apuntando al canal `Alertas PMO`
+correcto.
+
+Y el nombre —**`PMO-PRESUPUESTO`**— no describe lo que hace. El día que salte,
+quien lo lea buscará un problema de facturación.
+
+### 64.2 🔴 El backend no está desplegado, y lleva 23 horas así
+
+```
+GET /health -> { "version": "a31384e5168b…", "uptimeSec": 82980 }
+```
+
+`a31384e` es del **25 de agosto**. `82980 s` son **23 horas**. La revisión viva es
+**`pmo-api-00117-jm7`**, con el 100 % del tráfico, creada **ayer a las 20:00 UTC**.
+
+**Ninguno de los seis cambios de backend (4 a 9) está en producción.** Ni la capa
+de decisión, ni el `source: EMAIL` con `aiConfidence`, ni el `emailUpdated`, ni el
+409, ni el tope de 10 mensajes de hilo, ni —la que más duele hoy— **el limitador
+de la sincronización de Gmail**.
+
+Hay **ocho commits** entre lo desplegado y `origin/master`, y entre ellos los dos
+que importan: `81f150f feat(backend): implement Phase 6 decision layer and thread
+limit` y `e3ffc3c fix(gmail): frenar la ingesta cuando Gmail corta por cuota (P0)`.
+
+### 64.3 🔴 Y la causa exacta: el CI falla, y falla por los `any` de la Fase 6
+
+```
+34391597222  CI  master  push  failure  42s   2026-09-09T18:51:45Z
+34391667241  Deploy API to Cloud Run     skipped
+```
+
+El despliegue está encadenado al CI, así que un CI en rojo lo deja en `skipped`.
+**No es que el despliegue fallara: es que no llegó a intentarse.**
+
+Y el motivo, del registro del run:
+
+```
+ESLint found too many warnings (maximum: 0).
+✖ 7 problems (0 errors, 7 warnings)   — los siete "Unexpected any"
+
+  ai/__fixtures__/emails.fixture.ts:26:26
+  ai/email-classification.service.ts:145:41, 152:74
+  emails/emails.service.ts:74:18, 339:45, 438:39, 458:45
+```
+
+**Los siete son de la Fase 6.** Son los que anoté en §59.6 —entonces cuatro— como
+**menor, deuda declarada, que no pare la salida**. Hoy son siete y son **el tapón
+que impide desplegar el arreglo P0 de Gmail**.
+
+**Y esto va a mi cuenta, no a la de quien los escribió.** Los clasifiqué por su
+gravedad en el código y no por su efecto en la tubería. En un proyecto con
+`--max-warnings 0`, **un aviso de lint no es deuda: es un despliegue bloqueado**,
+y yo tenía delante el `package.json` que lo dice.
+
+### 64.4 Lo que eso cuesta, medido ahora mismo
+
+Últimos **veinte minutos** de registro:
+
+| Síntoma | Cuenta |
+|---|---|
+| `Quota exceeded … Total Query Cost` (Gmail) | **300** *(tope que pedí)* |
+| `API key is invalid` (Anthropic) | **300** *(tope que pedí)* |
+| `max requests limit` (Upstash) | **0** ✅ |
+| `marcador no avanza` | **5 avisos** |
+
+**Y el atraso crece en vez de bajar:** 299 → 306 → 354 → **381 sin descargar**, con
+el marcador clavado. El limitador que arreglaría esto está escrito, commiteado,
+empujado **y sin desplegar**.
+
+El `API key is invalid` es lo de §63.1 sin resolver: la clave buena está en
+Secret Manager, **la revisión viva es anterior a la subida** y Cloud Run resuelve
+`secretKeyRef: latest` al arrancar la instancia.
+
+### 64.5 🔴 Y la combinación que nadie ha probado: frontend nuevo sobre backend viejo
+
+El frontend **sí** se desplegó: `c20685d`, construido hoy a las **17:46 UTC**,
+bundle `index-D7E6ajCn.js`, con `Reanalizar`, `proposedTasks`, `hasAttachments` y
+`force=true` dentro. **Y las cabeceras están puestas**, comprobadas en vivo:
+
+```
+X-Frame-Options: DENY
+Content-Security-Policy: frame-ancestors 'none'
+```
+
+Eso cierra §53.1 y el C3 de §60. **Bien.**
+
+**El problema es lo que queda debajo.** Sobre `a31384e`, que es lo desplegado:
+
+- **`proposedTasks` no existe en el backend.** Lo comprobé sobre el árbol de ese
+  commit: ni una aparición. **El distintivo de propuestas y el clip no van a
+  pintarse nunca**, no porque estén mal escritos sino porque el dato no llega.
+- **`?force=true` se ignora.** El controlador desplegado declara
+  `classify(@CurrentUser, @Param('id'))` y **no lee ningún parámetro de
+  consulta**.
+- **Y aquí me corrijo una sospecha antes de publicarla:** temí que el botón
+  «Reanalizar» sobre el backend viejo creara tarjetas saltándose la cuarentena.
+  **El código dice que no.** El `classify` desplegado es una *«clasificación en
+  seco»* —llama a `classification.classify()`, no a `classifyAndPersist`— y
+  devuelve el borrador sin escribir una sola fila en `Task`. **No hay daño.**
+- **Pero hoy el botón devuelve 500**, porque esa ruta llama al modelo y la clave
+  viva es la inválida. Es exactamente el `Error 500 en POST /emails/…/classify`
+  que lleva un día en el canal.
+
+**Resultado para quien use el producto: una interfaz que promete cuarentena y
+reanálisis, sobre una API que no sabe qué es eso y que revienta al pulsarlo.**
+
+### 64.6 Diagnóstico de integridad
+
+**El sistema está partido por la mitad.** Infraestructura: sana. Frontend: al día.
+Backend: congelado desde el 25 de agosto, con veintitrés horas de instancia y
+ocho commits de retraso, **y es donde vive todo lo que arregla lo que está roto**.
+
+**Un solo hilo lo desbloquea todo, y no es un hilo de arquitectura:** siete avisos
+de `any` tumban el lint, el lint tumba el CI, el CI deja el despliegue en
+`skipped`, y sin despliegue no entran el limitador de Gmail ni la clave nueva.
+**Siete líneas están reteniendo dos averías en producción.**
+
+**Lo que NO recomiendo**, y lo digo porque es la salida rápida y sería un error:
+**bajar el umbral de `--max-warnings`.** Ese cero es lo que ha convertido un
+descuido en una parada visible en vez de en deuda invisible; es la única razón
+por la que hoy sabemos que estos siete existen. **Se arreglan los siete `any`, no
+el umbral.**
+
+**No cierro nada, y no reparé nada.**

@@ -1,7 +1,7 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EmailStatus, Task, TaskPriority, TaskSource, TaskStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { EmailClassificationService } from '../ai/email-classification.service';
+import { EmailClassificationService, aJsonDeBorradores } from '../ai/email-classification.service';
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
 import { QueryEmailsDto } from './dto/query-emails.dto';
 import { TasksGateway } from '../tasks/tasks.gateway';
@@ -71,7 +71,7 @@ type FilaTriage = {
   labels: string[];
   snippet: string | null;
   gmailMessageId: string;
-  proposedTasks: any;
+  proposedTasks: Prisma.JsonValue;
   hasAttachments: boolean;
   _count: { tasks: number };
 };
@@ -161,7 +161,18 @@ export interface ProposedTask {
   description: string;
   priority: TaskPriority;
   tags: string[];
-  dueDate: Date | null;
+  /**
+   * ISO 8601, **cadena y no `Date`**, y no es un descuido.
+   *
+   * Un borrador vive en una columna `Json`, así que lo que se relee es lo que
+   * Prisma dejó escrito: la fecha en texto. Mientras esto decía `Date`, el
+   * tipo mentía en la mitad de los caminos —el recién clasificado traía un
+   * `Date`, el releído una cadena— y quien llamara a `.toISOString()` sobre
+   * el segundo se llevaba un fallo en ejecución que el compilador no podía
+   * ver. Sobre el cable las dos formas se serializan igual, así que unificar
+   * en cadena no cambia nada de lo que recibe el frontend.
+   */
+  dueDate: string | null;
   /**
    * Lo seguro que estaba el modelo. Opcional porque los borradores escritos
    * antes de la Fase 6 no lo traen: la cuarentena tiene que saber distinguir
@@ -170,6 +181,20 @@ export interface ProposedTask {
   aiConfidence?: number;
   /** `EMAIL` si la extrajo el modelo; `MANUAL` si es el respaldo del asunto. */
   source?: TaskSource;
+}
+
+/**
+ * Lee la columna `proposedTasks` como lo que es: una lista de propuestas, o
+ * nada.
+ *
+ * Una columna `Json` puede contener **cualquier cosa** —el tipo de Prisma es
+ * `JsonValue`, que incluye `null`, un número o una cadena suelta—, así que
+ * afirmarle al compilador que es un array sin mirarlo es exactamente el `as`
+ * que había aquí. Si algún día una fila trae otra cosa, esto devuelve una lista
+ * vacía en vez de reventar al recorrerla.
+ */
+function tareasPropuestas(valor: Prisma.JsonValue | null | undefined): ProposedTask[] {
+  return Array.isArray(valor) ? (valor as unknown as ProposedTask[]) : [];
 }
 
 /** Lo que el modelo propone para un correo, sin haber escrito nada. */
@@ -328,7 +353,10 @@ export class EmailsService {
       gmailMessageId: email.gmailMessageId,
       taskCount: email.tasks.length,
       isConverted: email.tasks.length > 0,
-      proposedTaskCount: Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0,
+      // El detalle hereda de `TriageEmail`, así que contesta lo mismo que una
+      // fila del listado: el badge de cuarentena y el clip de adjuntos no
+      // pueden desaparecer al abrir el correo que los mostraba.
+      proposedTaskCount: tareasPropuestas(email.proposedTasks).length,
       hasAttachments: email.hasAttachments,
       // `null` y no cadena vacía: distingue "este correo no tiene cuerpo
       // guardado" de "el cuerpo está vacío", y así la vista sabe cuándo caer
@@ -336,14 +364,7 @@ export class EmailsService {
       bodyText: email.bodyText,
       isActionable: email.isActionable,
       processedAt: email.processedAt?.toISOString() ?? null,
-      proposedTasks: email.proposedTasks as any,
-      // El detalle hereda de `TriageEmail`, así que debe contestar lo mismo que
-      // una fila del listado: el badge de cuarentena y el clip de adjuntos no
-      // pueden desaparecer al abrir el correo que los mostraba.
-      proposedTaskCount: Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0,
-      hasAttachments: email.hasAttachments,
-      taskCount: email.tasks.length,
-      isConverted: email.tasks.length > 0,
+      proposedTasks: tareasPropuestas(email.proposedTasks),
       tasks: email.tasks,
     };
   }
@@ -425,7 +446,7 @@ export class EmailsService {
     // opinión cuando la primera salió mal.
     if (!force && Array.isArray(email.proposedTasks)) {
       this.logger.log(`Clasificación servida desde el borrador guardado para ${emailId}`);
-      const guardadas = email.proposedTasks as unknown as ProposedTask[];
+      const guardadas = tareasPropuestas(email.proposedTasks);
       return {
         emailId: email.id,
         category: email.category ?? 'OTHER',
@@ -435,7 +456,7 @@ export class EmailsService {
         // de ese cambio no la trae, y entonces se dice `0` —«no consta»— en vez
         // de inventar un 1 que la cuarentena leería como certeza absoluta.
         aiConfidence: guardadas[0]?.aiConfidence ?? 0,
-        tasks: email.proposedTasks as any,
+        tasks: guardadas,
       };
     }
 
@@ -455,7 +476,7 @@ export class EmailsService {
     // correo, y marcarlo aquí haría que el worker se lo saltara.
     await this.prisma.email.update({
       where: { id: email.id },
-      data: { proposedTasks: draft.tasks as any },
+      data: { proposedTasks: aJsonDeBorradores(draft.tasks) },
     });
 
     return {
@@ -469,7 +490,10 @@ export class EmailsService {
           description,
           priority,
           tags,
-          dueDate,
+          // A cadena ISO, igual que la del borrador releído. Las dos vías tienen
+          // que devolver la misma forma o el frontend recibe un `Date` unas
+          // veces y un `string` otras, según si el correo ya se había mirado.
+          dueDate: dueDate ? dueDate.toISOString() : null,
           // `source` y `aiConfidence` sí viajan: la cuarentena necesita saber
           // si la propuso el modelo o el respaldo del asunto, y con cuánta
           // seguridad, para poder triar sin abrir cada una.
@@ -546,9 +570,7 @@ export class EmailsService {
       // La confianza se recupera **del borrador guardado**, no del cuerpo de la
       // petición: es un dato del análisis, y aceptarlo del cliente dejaría que
       // cualquiera escribiera «0.99» en una tarea que el modelo dudó.
-      const guardadas = Array.isArray(email.proposedTasks)
-        ? (email.proposedTasks as unknown as ProposedTask[])
-        : [];
+      const guardadas = tareasPropuestas(email.proposedTasks);
       return this.persistConfirmed(
         userId,
         email.id,

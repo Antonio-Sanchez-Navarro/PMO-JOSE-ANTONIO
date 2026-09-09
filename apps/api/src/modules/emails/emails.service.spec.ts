@@ -620,7 +620,14 @@ describe('EmailsService — POST /emails/:id/classify', () => {
       expect(result.aiConfidence).toBe(0.9);
       // Reemplazar es la mitad del trabajo: si el nuevo borrador no se guardara,
       // el siguiente que abriera el correo seguiría viendo el viejo.
-      expect(prisma.email.update.mock.calls[0][0].data.proposedTasks).toEqual(propuesta.tasks);
+      // Se compara contra la forma JSON, que es lo que de verdad se escribe:
+      // el borrador entra con `Date` y sale con cadena ISO.
+      expect(prisma.email.update.mock.calls[0][0].data.proposedTasks).toEqual([
+        expect.objectContaining({
+          title: 'Enviar cotización',
+          dueDate: '2026-08-01T00:00:00.000Z',
+        }),
+      ]);
     });
   });
 
@@ -628,7 +635,9 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     await service.classify(USER_ID, emailNoAccionable.id);
 
     const data = prisma.email.update.mock.calls[0][0].data;
-    expect(data.proposedTasks).toEqual(propuesta.tasks);
+    expect(data.proposedTasks).toEqual([
+      expect.objectContaining({ title: 'Enviar cotización', dueDate: '2026-08-01T00:00:00.000Z' }),
+    ]);
     // `processedAt` es del worker: si se marcara aquí, mirar un correo lo
     // sacaría de la cola sin haberlo despachado nadie.
     expect(data).not.toHaveProperty('processedAt');
@@ -657,7 +666,7 @@ describe('EmailsService — POST /emails/:id/classify', () => {
         description: 'ctx',
         priority: 'URGENT',
         tags: ['obra'],
-        dueDate: new Date('2026-08-01'),
+        dueDate: '2026-08-01T00:00:00.000Z',
         source: TaskSource.EMAIL,
         aiConfidence: undefined,
       },
