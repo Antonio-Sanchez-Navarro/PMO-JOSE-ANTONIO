@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { EmailDetail, fetchEmail } from "../api/emails.api";
 import { formatFullDate, initialOf, parseSender, visibleLabels } from "../format";
+import { useGmailLabels } from "../useGmailLabels";
 
 
 export interface EmailDetailModalProps {
@@ -15,6 +16,9 @@ export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze, readOnly
   const [email, setEmail] = useState<EmailDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Mismo diccionario que la lista: el detalle no puede llamar "Clientes" a lo
+  // que la fila de al lado llama de otra manera.
+  const labelNames = useGmailLabels();
 
   useEffect(() => {
     if (isOpen && emailId) {
@@ -36,7 +40,7 @@ export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze, readOnly
   if (!isOpen) return null;
 
   const sender = email ? parseSender(email.from) : null;
-  const labels = email ? visibleLabels(email.labels ?? []) : [];
+  const labels = email ? visibleLabels(email.labels ?? [], labelNames) : [];
   const isProcessed = email ? Boolean(email.isConverted) : false;
 
   // La cuarentena. `undefined` es "la IA no lo ha mirado"; un arreglo vacío es

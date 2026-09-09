@@ -90,19 +90,40 @@ const SIN_NADA_LEGIBLE = /^[^\p{L}]+$/u;
 /**
  * Etiquetas mostrables de un correo, ya con nombre legible.
  *
- * **Los identificadores que no se pueden traducir no se pintan.** Enseñar el
- * número crudo no es un término medio entre el nombre y nada: es peor que nada,
- * porque parece un fallo de la aplicación.
+ * `nombres` es el diccionario de `GET /gmail/labels` (ver `useGmailLabels`).
+ * Se pasa y no se importa para que esta función siga siendo pura: es la que se
+ * puede probar sin levantar nada.
  *
- * Para enseñar el nombre de verdad hace falta preguntárselo a Gmail
- * (`users.labels.list`), y hoy la API no expone esa ruta. Cuando exista, esto
- * pasa a ser una consulta más y un mapa de `id → nombre` en esta misma función.
+ * El orden de resolución tiene un porqué en cada escalón:
+ *
+ * 1. **`LABEL_NAMES` manda sobre el diccionario.** Gmail devuelve las de
+ *    sistema con `name` igual a su constante —`IMPORTANT` se llama
+ *    «IMPORTANT»—, así que llamarla «Importante» es cosa nuestra, no suya.
+ * 2. **Las de usuario van con su nombre tal cual lo escribió su dueño.** Aquí
+ *    no se «embellece»: `prettifyLabelId` pasa a minúsculas todo menos la
+ *    primera letra, y convertiría «PMO Clientes» en «Pmo clientes».
+ * 3. **Las de sistema sin traducción** (`SENT`, `DRAFT`…) sí se embellecen,
+ *    que es lo que se hacía antes de tener el diccionario.
+ * 4. **Lo que siga sin una sola letra, no se pinta.** Sigue siendo la última
+ *    defensa: una etiqueta borrada en Gmail, o el diccionario aún cargando,
+ *    dejarían el identificador crudo en pantalla —el hallazgo C8—.
  */
-export function visibleLabels(labels: string[]): { id: string; name: string }[] {
+export function visibleLabels(
+  labels: string[],
+  nombres?: Record<string, { name: string; type: "system" | "user" }>,
+): { id: string; name: string }[] {
   return labels
     .filter((id) => !HIDDEN_LABELS.has(id))
-    .map((id) => ({ id, name: LABEL_NAMES[id] ?? prettifyLabelId(id) }))
-    .filter(({ name }) => !SIN_NADA_LEGIBLE.test(name));
+    .map((id) => {
+      const conocida = nombres?.[id];
+      // `resuelta` distingue «sé cómo se llama» de «me lo he inventado a
+      // partir del id». Solo lo segundo hay que vigilarlo.
+      if (LABEL_NAMES[id]) return { id, name: LABEL_NAMES[id], resuelta: true };
+      if (conocida?.type === "user") return { id, name: conocida.name, resuelta: true };
+      return { id, name: prettifyLabelId(conocida?.name ?? id), resuelta: Boolean(conocida) };
+    })
+    .filter(({ name, resuelta }) => resuelta || !SIN_NADA_LEGIBLE.test(name))
+    .map(({ id, name }) => ({ id, name }));
 }
 
 /** Convierte ids de etiquetas de usuario (`Label_12`, `TRABAJO/CLIENTES`) en algo legible. */

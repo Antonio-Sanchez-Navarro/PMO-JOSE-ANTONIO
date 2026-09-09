@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useInbox, type LabelFacet } from "./useInbox";
+import type { LabelsById } from "./useGmailLabels";
 import {
   formatEmailDate,
   formatFullDate,
@@ -38,6 +39,7 @@ export function InboxPage() {
     emails,
     totalEmails,
     labels,
+    labelNames,
     labelFilter,
     setLabelFilter,
     status,
@@ -175,8 +177,10 @@ export function InboxPage() {
             {threads.map((thread) => (
               <ThreadRow 
                 key={thread.threadId} 
-                thread={thread} 
-                onAnalyze={handleAnalyzeEmail} 
+                thread={thread}
+                labelNames={labelNames}
+                onAnalyze={handleAnalyzeEmail}
+
                 onRead={(id) => setSelectedEmailId(id)}
                 onUpdateStatus={async (id, newStatus, force) => {
                   try {
@@ -250,13 +254,15 @@ export function InboxPage() {
   );
 }
 
-function ThreadRow({ 
-  thread, 
+function ThreadRow({
+  thread,
+  labelNames,
   onAnalyze,
   onRead,
   onUpdateStatus,
-}: { 
+}: {
   thread: EmailThread;
+  labelNames: LabelsById;
   onAnalyze: (id: string, hasAttachments?: boolean) => Promise<void> | void;
   onRead: (id: string) => void;
   onUpdateStatus: (id: string, status: string, force?: boolean) => void;
@@ -268,6 +274,7 @@ function ThreadRow({
     <li>
       <EmailRow
         email={thread.latest}
+        labelNames={labelNames}
         threadCount={thread.messages.length}
         expanded={expanded}
         onToggle={hasReplies ? () => setExpanded((open) => !open) : undefined}
@@ -280,9 +287,11 @@ function ThreadRow({
         <ul className="border-t border-slate-100 bg-slate-50/60">
           {thread.messages.slice(1).map((message) => (
             <li key={message.id} className="border-t border-slate-100 first:border-t-0">
-              <EmailRow 
-                email={message} 
-                nested 
+              <EmailRow
+                email={message}
+                labelNames={labelNames}
+                nested
+
                 onAnalyze={() => onAnalyze(message.id, message.hasAttachments)} 
                 onRead={() => onRead(message.id)}
                 onUpdateStatus={(status, force) => onUpdateStatus(message.id, status, force)}
@@ -297,6 +306,7 @@ function ThreadRow({
 
 function EmailRow({
   email,
+  labelNames,
   threadCount,
   expanded,
   onToggle,
@@ -306,6 +316,7 @@ function EmailRow({
   onUpdateStatus,
 }: {
   email: EmailSnippet;
+  labelNames: LabelsById;
   threadCount?: number;
   expanded?: boolean;
   onToggle?: () => void;
@@ -316,7 +327,7 @@ function EmailRow({
 }) {
   const sender = parseSender(email.from);
   const interactive = Boolean(onToggle);
-  const labels = visibleLabels(email.labels ?? []);
+  const labels = visibleLabels(email.labels ?? [], labelNames);
   const unread = isUnread(email.labels ?? []);
 
   // Según HANDOFF: isConverted indica si el correo ya fue convertido a tareas

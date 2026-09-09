@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { visibleLabels } from "./format";
+import { useGmailLabels } from "./useGmailLabels";
 import type { EmailSnippet, EmailThread } from "./types";
 
 export type InboxStatus = "loading" | "ready" | "error";
@@ -53,6 +54,9 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
   const [maxResults, setMaxResults] = useState(initialMaxResults);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
+  // El diccionario de nombres de Gmail. Se pide una vez y lo comparten las
+  // facetas de aqui y las pildoras de cada fila, que tienen que decir lo mismo.
+  const labelNames = useGmailLabels();
   const reqIdRef = useRef(0);
 
   const load = useCallback(async (limit: number, { silent = false } = {}) => {
@@ -90,14 +94,14 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
   const labels = useMemo<LabelFacet[]>(() => {
     const counts = new Map<string, LabelFacet>();
     for (const email of emails) {
-      for (const label of visibleLabels(email.labels ?? [])) {
+      for (const label of visibleLabels(email.labels ?? [], labelNames)) {
         const existing = counts.get(label.id);
         if (existing) existing.count++;
         else counts.set(label.id, { ...label, count: 1 });
       }
     }
     return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-  }, [emails]);
+  }, [emails, labelNames]);
 
   const visible = useMemo(
     () => (labelFilter ? emails.filter((e) => (e.labels ?? []).includes(labelFilter)) : emails),
@@ -127,6 +131,7 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
     totalEmails: emails.length,
     threads,
     labels,
+    labelNames,
     labelFilter,
     setLabelFilter,
     status,
