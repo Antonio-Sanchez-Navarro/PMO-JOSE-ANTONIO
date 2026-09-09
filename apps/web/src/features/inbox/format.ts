@@ -77,11 +77,32 @@ const LABEL_NAMES: Record<string, string> = {
  */
 const HIDDEN_LABELS = new Set(["INBOX", "UNREAD"]);
 
-/** Etiquetas mostrables de un correo, ya con nombre legible. */
+/**
+ * Un nombre sin una sola letra no es un nombre.
+ *
+ * Las etiquetas propias del usuario llegan como identificadores numéricos de
+ * Gmail (`5704178821214641997`), y `LABEL_NAMES` solo cubre las del sistema. La
+ * barra de filtros los pintaba tal cual, al lado de «Importante» y «Personal»:
+ * una píldora que ocupa sitio, invita a pulsarla y no dice nada.
+ */
+const SIN_NADA_LEGIBLE = /^[^\p{L}]+$/u;
+
+/**
+ * Etiquetas mostrables de un correo, ya con nombre legible.
+ *
+ * **Los identificadores que no se pueden traducir no se pintan.** Enseñar el
+ * número crudo no es un término medio entre el nombre y nada: es peor que nada,
+ * porque parece un fallo de la aplicación.
+ *
+ * Para enseñar el nombre de verdad hace falta preguntárselo a Gmail
+ * (`users.labels.list`), y hoy la API no expone esa ruta. Cuando exista, esto
+ * pasa a ser una consulta más y un mapa de `id → nombre` en esta misma función.
+ */
 export function visibleLabels(labels: string[]): { id: string; name: string }[] {
   return labels
     .filter((id) => !HIDDEN_LABELS.has(id))
-    .map((id) => ({ id, name: LABEL_NAMES[id] ?? prettifyLabelId(id) }));
+    .map((id) => ({ id, name: LABEL_NAMES[id] ?? prettifyLabelId(id) }))
+    .filter(({ name }) => !SIN_NADA_LEGIBLE.test(name));
 }
 
 /** Convierte ids de etiquetas de usuario (`Label_12`, `TRABAJO/CLIENTES`) en algo legible. */
