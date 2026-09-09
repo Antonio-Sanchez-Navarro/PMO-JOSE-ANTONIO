@@ -61,13 +61,39 @@ hecho del calendario, no una opinión sobre la urgencia. Hay una prueba que lo f
 —manual, vencida: cambia `status`, no toca `priority`— porque es justo el matiz
 que se pierde al leer «no tocar lo manual» como «saltarse la fila entera».
 
-### Lo que queda decidido a medias, y lo digo
+### Y `create` también, firmado por el Jefe el mismo día
 
-**`create` sigue escalando por fecha aunque la persona pase una prioridad
-explícita.** Es comportamiento documentado y probado desde el Sprint 3, y la
-regla habla de *procesos de fondo*: al crear, el escalado ocurre en el mismo
-gesto y se ve al instante. Pero si el criterio es «manda la persona siempre»,
-`create` es el siguiente sitio donde mirar.
+Lo dejé abierto —«si el criterio es *manda la persona siempre*, `create` es el
+siguiente sitio donde mirar»— y la respuesta fue que sí. La regla vale igual al
+nacer la tarea.
+
+⚠️ **La condición es `dto.priority !== undefined`, no el valor.** Una tarea sin
+prioridad en el cuerpo nace `MEDIUM` por defecto, y eso **no es una decisión de
+nadie: es la ausencia de una**. Comparar contra `MEDIUM` habría congelado por
+accidente todas las tareas creadas sin elegir —la mayoría— y el escalado por
+fecha habría dejado de existir en la práctica, sin que ninguna prueba lo
+delatara: seguiría habiendo una que escala, la del caso explícito.
+
+Y la marca se escribe **al crear la fila**, no al primer `update`. Entre crear
+una tarea y volver a tocarla pueden pasar días; el barrido corre cada hora.
+
+Cuando la fecha pedía más urgencia y no se aplica, **queda en el log**: si
+alguien se extraña de ver una `LOW` venciendo mañana, ahí está el porqué —y es
+que lo pidió así—.
+
+**Cuatro pruebas decían lo contrario** y se reescribieron con el cambio y su
+firma encima. Se añadió la que faltaba y que antes no hacía falta: **sin
+prioridad elegida, la fecha sigue escalando**. Sin ella, un futuro «respetar
+siempre» pasaría el resto de la suite en verde.
+
+### Lo que sigue abierto
+
+`persistConfirmed` materializa las propuestas aprobadas en la cuarentena con la
+prioridad que viene en el cuerpo, y **no las marca**. Se puede defender de las
+dos formas —la persona aprobó esa tarjeta, pero no necesariamente eligió su
+prioridad— y desde el backend **no se distingue** si la editó o la aceptó tal
+cual. Marcarlas todas congelaría prioridades que en realidad propuso el modelo.
+Queda sin decidir, y a la vista.
 
 ---
 
