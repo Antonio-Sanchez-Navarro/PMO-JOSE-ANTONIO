@@ -57,19 +57,41 @@ export class TasksService {
     const vencida = dueDate !== null && dueDate < now && SWEEPABLE.includes(requested);
     const status = vencida ? TaskStatus.OVERDUE : requested;
 
+    // ─── Si la persona la eligió, la persona manda ────────────────────────
+    //
+    // Misma regla que en `update` y en el barrido: una prioridad **explícita**
+    // no se escala ni se degrada, y queda marcada para que ningún proceso de
+    // fondo la toque después.
+    //
+    // ⚠️ La diferencia está en **`dto.priority !== undefined`**, no en el valor.
+    // Una tarea sin prioridad en el cuerpo nace `MEDIUM` por defecto, y eso no
+    // es una decisión de nadie: es la ausencia de una. Comparar contra `MEDIUM`
+    // en vez de contra `undefined` congelaría por accidente todas las tareas
+    // creadas sin elegir, que son la mayoría, y el escalado por fecha dejaría
+    // de existir en la práctica.
+    const eligioLaPersona = dto.priority !== undefined;
+
     // `aiConfidence` es null: esta tarea no la propuso el modelo, así que no hay
-    // confianza que ponderar. La fecha sigue mandando igual.
+    // confianza que ponderar. La fecha manda solo cuando nadie eligió.
     const decision = adjustPriority(
       { priority: dto.priority ?? TaskPriority.MEDIUM, dueDate, aiConfidence: null },
       now,
     );
-    // El escalado no se aplica a lo que ya está cumplido.
-    const priority = status === TaskStatus.DONE ? (dto.priority ?? TaskPriority.MEDIUM) : decision.priority;
 
-    const ajustada = decision.adjusted && status !== TaskStatus.DONE;
+    // El escalado no se aplica ni a lo que ya está cumplido ni a lo que eligió
+    // una persona.
+    const ajustada = decision.adjusted && status !== TaskStatus.DONE && !eligioLaPersona;
+    const priority = ajustada ? decision.priority : (dto.priority ?? TaskPriority.MEDIUM);
 
     if (ajustada) {
       this.logger.log(`Prioridad al crear "${dto.title}": ${decision.reason}`);
+    } else if (eligioLaPersona && decision.adjusted) {
+      // Queda en el log que la fecha pedía más urgencia y no se aplicó: si
+      // alguien se extraña de ver una tarea LOW venciendo mañana, aquí está el
+      // porqué, y es que lo pidió así.
+      this.logger.log(
+        `Prioridad ${dto.priority} respetada al crear "${dto.title}" pese a la fecha: ${decision.reason}`,
+      );
     }
 
     // Antes de abrir la transacción: si alguna etiqueta no existe o es de otra
@@ -109,6 +131,19 @@ export class TasksService {
                 priorityReason: decision.reason,
                 priorityAdjustedAt: now,
                 priorityAdjustedFrom: dto.priority ?? TaskPriority.MEDIUM,
+              }
+            : {}),
+          // Y si la eligió una persona, se marca **aquí y ahora**: el candado
+          // tiene que existir desde que nace la fila, no desde la primera vez
+          // que alguien la edite. Entre crear una tarea y editarla pueden pasar
+          // días, y el barrido corre cada hora.
+          ...(eligioLaPersona
+            ? {
+                priorityReason: MOTIVO_PRIORIDAD_MANUAL,
+                priorityAdjustedAt: now,
+                // `null`: no viene de ningún ajuste. No es que el sistema la
+                // subiera desde algo, es que la puso una persona.
+                priorityAdjustedFrom: null,
               }
             : {}),
         },

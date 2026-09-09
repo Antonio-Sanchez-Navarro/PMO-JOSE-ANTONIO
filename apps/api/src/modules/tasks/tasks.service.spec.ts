@@ -315,35 +315,64 @@ describe('TasksService.create', () => {
     );
   });
 
-  it('escala la prioridad si la fecha aprieta', async () => {
+  /**
+   * ⚠️ **Estas cuatro decían lo contrario hasta el 2026-09-09**, y el cambio
+   * está firmado por el Jefe: *si la persona proporciona una prioridad
+   * explícita al crear, `create` debe respetarla y no sobrescribirla por la
+   * fecha*. Es la misma regla que ya gobernaba `update` y el barrido, aplicada
+   * también al nacimiento de la tarea.
+   *
+   * Lo que **no** cambia: sin prioridad en el cuerpo, la fecha sigue mandando.
+   * La diferencia está en si alguien eligió, no en el valor elegido.
+   */
+  it('NO escala lo que eligió una persona, aunque la fecha apriete', async () => {
     await service.create(USER, { title: 'x', priority: 'LOW' as any, dueDate: inHours(3) });
+
+    expect(creada().priority).toBe('LOW');
+  });
+
+  it('sin prioridad elegida, la fecha sigue escalando', async () => {
+    // Nadie ha decidido nada: `MEDIUM` es el valor por defecto, no una
+    // elección, y aquí no hay criterio humano que respetar.
+    await service.create(USER, { title: 'x', dueDate: inHours(3) });
 
     expect(creada().priority).toBe('URGENT');
   });
 
   describe('auditoría de prioridad', () => {
     it('guarda el motivo con la tarea, no solo en el log', async () => {
-      await service.create(USER, { title: 'x', priority: 'LOW' as any, dueDate: inHours(3) });
+      await service.create(USER, { title: 'x', dueDate: inHours(3) });
 
       // Hasta la deuda del Sprint 3, el porqué solo quedaba en el log del
       // proceso: la interfaz no podía leerlo y se perdía al rotar.
       expect(creada()).toMatchObject({
         priority: 'URGENT',
-        priorityReason: expect.stringContaining('LOW → URGENT'),
-        priorityAdjustedFrom: 'LOW',
+        priorityReason: expect.stringContaining('URGENT'),
+        priorityAdjustedFrom: 'MEDIUM',
         priorityAdjustedAt: expect.any(Date),
       });
     });
 
-    it('una tarea que nace con la prioridad pedida no tiene nada que explicar', async () => {
+    it('la elegida a mano nace marcada, para que el barrido no la toque', async () => {
       await service.create(USER, { title: 'x', priority: 'LOW' as any, dueDate: inHours(200) });
+
+      // El candado tiene que existir desde que nace la fila, no desde la
+      // primera edición: entre crear una tarea y volver a tocarla pueden pasar
+      // días, y el barrido de vencidas corre cada hora.
+      expect(creada().priorityReason).toBe(MOTIVO_PRIORIDAD_MANUAL);
+      // `null` y no un valor: no viene de ningún ajuste previo.
+      expect(creada().priorityAdjustedFrom).toBeNull();
+    });
+
+    it('la que nadie eligió y no se escaló no tiene nada que explicar', async () => {
+      await service.create(USER, { title: 'x', dueDate: inHours(200) });
 
       // Un motivo vacío en la tarjeta se leería como que el sistema la tocó.
       expect(creada().priorityReason).toBeUndefined();
       expect(creada().priorityAdjustedFrom).toBeUndefined();
     });
 
-    it('lo cumplido no se audita, porque tampoco se escala', async () => {
+    it('lo cumplido no se escala, y si lo eligieron queda marcado igual', async () => {
       await service.create(USER, {
         title: 'x',
         status: 'DONE' as any,
@@ -352,7 +381,7 @@ describe('TasksService.create', () => {
       });
 
       expect(creada()).toMatchObject({ priority: 'LOW' });
-      expect(creada().priorityReason).toBeUndefined();
+      expect(creada().priorityReason).toBe(MOTIVO_PRIORIDAD_MANUAL);
     });
   });
 
