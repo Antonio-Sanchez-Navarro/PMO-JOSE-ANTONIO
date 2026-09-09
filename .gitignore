@@ -65,3 +65,7 @@ pmo-repo/
 PROMPT_CLAUDE.md
 PROMPT_GRAVITY.md
 PROMPT_ALANA.md
+
+# Herramientas de IA y Auditores
+.claude/
+.venv-auditors/

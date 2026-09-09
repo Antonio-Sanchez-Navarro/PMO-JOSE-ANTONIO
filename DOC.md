@@ -63,6 +63,7 @@ instrucciones** que los agentes ejecutan.
 3. **Consulto antes de planear.** `ALANA.md` y `TASKS.md` primero, para no repartir dos veces lo ya entregado ni pasar por encima de una auditoría.
 4. **Cero confianza.** Riesgos estructurales, de concurrencia y de dependencias se señalan **antes** de autorizar el paso. `git commit -a` y los despliegues a ciegas no pasan.
 5. **Comandos aislados.** El CLI (`gcloud`, `gh`, PowerShell) va en su propio bloque, separado del mensaje al agente, para que no acabe pegado dentro de un prompt.
+6. **Pasos manuales detallados.** Cuando el Jefe (usuario) deba intervenir manualmente en infraestructura, consola o comandos locales, entregaré siempre un paso a paso detallado y exacto para la ejecución.
 
 **Cómo respondo:** en operación del proyecto, tres bloques —**[Análisis Rápido]**,
 **[Decisión Táctica]** y **[Mensaje para el Agente]**—. En conversación directa,
@@ -762,6 +763,13 @@ El trabajo en local resultó en un 100% de éxito en los 704 tests unitarios de 
 
 Con esto el código y la documentación están inmaculados, el CI/CD en verde, y la Fase 5 cierra su bloque de implementación preparándose para las pruebas en vivo.
 
+### 🧊 Fase de Congelación (2026-08-26)
+
+**Decisión ejecutiva del Jefe:** El producto funciona (ingesta, copiloto, interfaz) y los riesgos urgentes (cuota Upstash y alerta Anthropic) están mitigados. 
+- **Pausa general:** Cero auditorías nuevas. @Alana entra en letargo.
+- **Congelación de arreglos:** A menos que algo esté literalmente roto en la pantalla o quemando dinero, no se toca. Los casos de borde (zona horaria, campo CC, textos de 503, presupuesto al centavo) quedan en espera.
+- **Objetivo:** Dejar que el sistema respire en producción sin inyectar 10 commits diarios.
+
 ### ⚠️ Aviso sobre cuota de Upstash (Sondeo de 30s)
 
 ✅ **RESUELTO (2026-08-25).** Alana alertó que el primer arreglo de @Gravity usaba `/health` para el latido periódico y reservaba `/health/ready` para fallos, lo que dejaba al semáforo ciego a las caídas de Redis/Postgres. @Gravity lo corrigió (`ba609aa`): el latido ahora es contra `/health/ready` para mantener lectura profunda, pero el intervalo subió a **5 minutos (300s)**. Esto recorta el consumo a ~288 comandos/día por pestaña (1.7% del plan gratuito), siendo sostenible y devolviendo al semáforo su utilidad.
@@ -773,3 +781,14 @@ Con esto el código y la documentación están inmaculados, el CI/CD en verde, y
 - **El campo `Estado` de un encargo lo decide solo Doc:** Ha fallado dos veces: trabajo entrando con el documento en pausa, y encargos pidiendo cosas ya entregadas. **Desde el 2026-08-20, con Doc escribiendo solo en este archivo, el valor lo dicta Doc y lo transcribe el dueño de la bitácora.** El ejecutor no lo elige; lo copia.
 - **Un estado verificado caduca en cuanto alguien actúa sobre él:** lección de @Alana el 2026-08-20, que publicó una propuesta de tres capas y descubrió que la Capa 2 se había entregado mientras la escribía. Antes de publicar cualquier cosa que describa el estado del sistema, `git log` otra vez.
 - **Verificar en el código antes de dar una casilla por cerrada:** Nunca confiar ciegamente en el reporte sin evidencia (logs, HTTP 200 o el monitor en vivo).
+
+---
+
+## 🗺️ Visión Fase 6: De Motor de Reglas a PMO Real (2026-08-26)
+
+Tras la primera sesión de uso real del Jefe, Alana documentó 12 observaciones de UX que convergen en dos fallos estructurales de producto (no de ingeniería):
+
+1. **Falta la Capa de Decisión (Human-in-the-loop):** El pipeline de IA lee, propone y ejecuta de un tirón. Al no haber un paso de aprobación humana, el sistema crea tareas indeseadas y satura el tablero. La IA debe *proponer*; el humano debe *decidir*.
+2. **La Unidad Atómica debe ser el Hilo (`threadId`), no el Mensaje:** Al clasificar mensajes individuales, una respuesta en un correo arrastra el historial citado y duplica las tareas (ej. un "ok" a un hilo con 6 tareas crea 6 tareas nuevas).
+
+**Nota de Estado:** Estas correcciones estructurales quedan aparcadas bajo la directiva de la *Fase de Congelación*. Serán la hoja de ruta fundacional cuando el proyecto retome el desarrollo activo.

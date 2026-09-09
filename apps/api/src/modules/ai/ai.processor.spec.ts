@@ -25,13 +25,65 @@ describe('AiProcessor · el correo sin texto se cierra dejando rastro', () => {
     const classification = { classifyAndPersist: jest.fn().mockResolvedValue({ isActionable: false, tasks: [] }) };
 
     const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
-    // El orden del constructor es (classification, prisma, alertas).
-    const processor = new AiProcessor(classification as never, prisma as never, alertas as never);
+    // P5: el worker anuncia por socket cuando termina de clasificar, así que
+    // el gateway entra en el constructor —(classification, prisma, alertas,
+    // gateway)— y hace falta un doble aunque la prueba no lo mire.
+    const gateway = { emitEmailUpdated: jest.fn() };
+    const processor = new AiProcessor(
+      classification as never,
+      prisma as never,
+      alertas as never,
+      gateway as never,
+    );
 
-    return { processor, update, classification, alertas };
+    return { processor, update, classification, alertas, gateway };
   }
 
   const job = { data: { emailId: 'e1' } } as never;
+
+  /**
+   * P5 — el aviso que faltaba.
+   *
+   * La clasificación es asíncrona: quien tuviera la bandeja abierta llevaba un
+   * rato mirando una fila sin categoría y sin contador de cuarentena, y la
+   * propuesta no aparecía hasta recargar. El producto se sentía roto justo en
+   * el momento en que acababa de funcionar.
+   */
+  describe('P5 · al terminar, la bandeja abierta se entera', () => {
+    it('anuncia el correo por socket cuando la clasificación sale bien', async () => {
+      const { processor, gateway } = crear({
+        id: 'e1',
+        userId: 'user-1',
+        processedAt: null,
+        bodyText: 'Hay texto de sobra para clasificar',
+        snippet: null,
+        labels: ['INBOX'],
+      });
+
+      await processor.process(job);
+
+      // Sin `exceptSocketId`: lo disparó la cola, no una pestaña, así que se
+      // anuncia a todas las del usuario.
+      expect(gateway.emitEmailUpdated).toHaveBeenCalledWith({ id: 'e1', userId: 'user-1' });
+    });
+
+    it('no anuncia el correo que se cierra sin clasificar', async () => {
+      const { processor, gateway } = crear({
+        id: 'e1',
+        userId: 'user-1',
+        processedAt: null,
+        bodyText: null,
+        snippet: null,
+        labels: ['INBOX'],
+      });
+
+      await processor.process(job);
+
+      // Un correo cerrado por `sinTexto` no estrena propuesta: avisar aquí haría
+      // que la bandeja se refrescara para no enseñar nada nuevo.
+      expect(gateway.emitEmailUpdated).not.toHaveBeenCalled();
+    });
+  });
 
   it('lo marca como procesado: sin esto vuelve a ser candidato para siempre', async () => {
     const { processor, update } = crear({
@@ -134,8 +186,14 @@ describe('AiProcessor · el credito agotado se dice con su nombre', () => {
     };
     const classification = { classifyAndPersist: jest.fn().mockRejectedValue(error) };
     const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
-    const processor = new AiProcessor(classification as never, prisma as never, alertas as never);
-    return { processor, alertas };
+    const gateway = { emitEmailUpdated: jest.fn() };
+    const processor = new AiProcessor(
+      classification as never,
+      prisma as never,
+      alertas as never,
+      gateway as never,
+    );
+    return { processor, alertas, gateway };
   }
 
   const job = { data: { emailId: 'e1' } } as never;

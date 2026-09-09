@@ -1,9 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, Task, TaskPriority, TaskSource } from '@prisma/client';
+import { Task, TaskPriority, TaskSource } from '@prisma/client';
 import { AiService } from './ai.service';
 import { adjustPriority } from './priority.rules';
 import { senderFromHeader, withContextPrefix } from './title.prefix';
 import { PrismaService } from '../../common/prisma/prisma.service';
+
+/**
+ * Cuántos mensajes anteriores del hilo entran como contexto, y cuánto texto
+ * suman como mucho. Los dos topes existen porque fallan por motivos distintos:
+ * un hilo de muchos mensajes cortos agota el primero, y uno de tres mensajes
+ * con un informe pegado dentro agota el segundo.
+ */
+const HILO_MAX_MENSAJES = 10;
+const HILO_MAX_CARACTERES = 12_000;
+
+/** Entre mensajes del hilo, para que el modelo vea dónde acaba cada uno. */
+const SEPARADOR_HILO = '\n---\n';
 
 export interface ClassifyOptions {
   /**
@@ -22,6 +34,8 @@ export interface ClassifyOptions {
 export interface ClassifyResult {
   isActionable: boolean;
   category: string;
+  /** Lo seguro que estaba el modelo, para que quien materialice pueda anotarlo. */
+  aiConfidence: number;
   tasks: Task[];
   /** `true` si el modelo no extrajo tareas y se generó una desde el asunto. */
   usedFallback: boolean;
@@ -40,6 +54,15 @@ export interface TaskDraft {
   dueDate: Date | null;
   /** `EMAIL` si la extrajo el modelo; `MANUAL` si es el respaldo del asunto. */
   source: TaskSource;
+  /**
+   * Lo seguro que estaba el modelo del análisis del que salió esta propuesta.
+   *
+   * Viaja **dentro del borrador** —y no solo en el resultado del análisis—
+   * porque el JSON de `proposedTasks` es lo único que sobrevive entre que la IA
+   * propone y una persona aprueba, que pueden ser días. Sin esto, la cuarentena
+   * no tiene con qué triar y la tarjeta nace sin saber de dónde viene.
+   */
+  aiConfidence: number;
   /**
    * Por qué la capa determinista subió la prioridad que propuso el modelo, o
    * `null` si la dejó como venía.
@@ -104,61 +127,95 @@ export class EmailClassificationService {
     const draft = await this.analyze(email, options.forceActionable);
     const { isActionable, category, aiConfidence, usedFallback } = draft;
 
-    const toCreate: Prisma.TaskCreateManyInput[] = draft.tasks.map((task, index) => ({
-      userId: email.userId,
-      sourceEmailId: email.id,
-      title: task.title,
-      description: task.description,
-      priority: task.priority,
-      tags: task.tags,
-      dueDate: task.dueDate,
-      aiConfidence,
-      position: index,
-      source: task.source,
-      // Solo si hubo ajuste: una tarea que nace con la prioridad que dijo el
-      // modelo no tiene nada que explicar, y un motivo vacío en la tarjeta se
-      // leería como que el sistema la tocó.
-      ...(task.priorityReason
-        ? {
-            priorityReason: task.priorityReason,
-            priorityAdjustedAt: new Date(),
-            priorityAdjustedFrom: task.priorityAdjustedFrom,
-          }
-        : {}),
-    }));
-
-    const tasks = await this.prisma.$transaction(async (tx) => {
-      if (options.replaceExisting) {
-        // Solo lo que generó la IA para este correo. Lo que puso una persona
-        // (MANUAL) o llegó por otro canal sobrevive al reproceso.
-        const { count } = await tx.task.deleteMany({
-          where: { sourceEmailId: email.id, source: TaskSource.EMAIL },
-        });
-        if (count > 0) {
-          this.logger.log(`Reproceso: borradas ${count} tareas previas del email ${emailId}`);
-        }
-      }
-
+    await this.prisma.$transaction(async (tx) => {
+      // Human-in-the-loop: la IA ya no crea filas en `Task`. La propuesta se
+      // guarda en el JSON `proposedTasks` del `Email` y **se reemplaza entera**
+      // en cada pasada, así que un reproceso no acumula ni duplica. Lo que hay
+      // en `Task` es lo que aprobó una persona, y eso no se toca desde aquí.
+      //
+      // ⚠️ Por eso `options.replaceExisting` ya no cambia nada: no queda nada
+      // que borrar. Sigue en la firma y `ai.processor.ts` lo pasa en `true`.
+      // Pendiente de decisión: retirarlo o devolverle significado.
       await tx.email.update({
         where: { id: email.id },
         data: {
           isActionable,
           category,
           processedAt: new Date(),
+          proposedTasks: draft.tasks as any, // Prisma JsonValue compatible
         },
       });
-
-      if (toCreate.length === 0) return [];
-
-      // `createMany` no devuelve las filas creadas y la UI necesita los ids.
-      const creadas: Task[] = [];
-      for (const data of toCreate) {
-        creadas.push(await tx.task.create({ data }));
-      }
-      return creadas;
     });
 
-    return { isActionable, category, tasks, usedFallback };
+    // Se devuelven los borradores, no filas: todavía no existen. Quien los
+    // materialice lo hará al aprobarlos con `POST /emails/:id/to-task`.
+    return { isActionable, category, aiConfidence, tasks: draft.tasks as any, usedFallback };
+  }
+
+  /**
+   * El hilo citado que se le pasa al modelo, **acotado**.
+   *
+   * Sin techo, un hilo largo entra entero en cada clasificación: son tokens de
+   * entrada que se pagan en cada correo de la tanda, y el `max_tokens` del SDK
+   * solo acota la respuesta, no la petición. Un hilo de obra con cincuenta
+   * mensajes desbordaría la ventana y encarecería la cola entera sin que nada
+   * lo avisara — la cuenta aparecería después, en `pmo-coste-ia`.
+   *
+   * **Se piden del más nuevo al más viejo** y se le da la vuelta antes de armar
+   * el texto: así el recorte sacrifica lo más antiguo, que es lo menos
+   * relevante para el mensaje que se está analizando, y el modelo lo sigue
+   * leyendo en el orden en que ocurrió.
+   */
+  private async buildThreadContext(email: {
+    id: string;
+    userId: string;
+    threadId: string;
+    receivedAt: Date;
+  }): Promise<string | undefined> {
+    const previos = await this.prisma.email.findMany({
+      where: {
+        userId: email.userId,
+        threadId: email.threadId,
+        // Solo hacia atrás: un mensaje posterior no es contexto de este.
+        receivedAt: { lt: email.receivedAt },
+      },
+      orderBy: { receivedAt: 'desc' },
+      take: HILO_MAX_MENSAJES,
+      select: { bodyText: true, snippet: true },
+    });
+
+    const textos = previos.map((e) => e.bodyText || e.snippet || '').filter(Boolean);
+    if (textos.length === 0) return undefined;
+
+    let presupuesto = HILO_MAX_CARACTERES;
+    const cabidos: string[] = [];
+    let recortado = false;
+
+    for (const texto of textos) {
+      if (presupuesto <= 0) {
+        recortado = true;
+        break;
+      }
+      if (texto.length > presupuesto) {
+        cabidos.push(texto.slice(0, presupuesto));
+        recortado = true;
+        presupuesto = 0;
+      } else {
+        cabidos.push(texto);
+        presupuesto -= texto.length;
+      }
+    }
+
+    if (recortado || previos.length === HILO_MAX_MENSAJES) {
+      // Que quede en el log: si un hilo se clasifica raro, lo primero que hay
+      // que saber es si el modelo vio el hilo entero o solo la cola.
+      this.logger.log(
+        `Hilo del email ${email.id} recortado: ${cabidos.length} de ${previos.length} mensajes ` +
+          `(tope ${HILO_MAX_MENSAJES} mensajes / ${HILO_MAX_CARACTERES} caracteres)`,
+      );
+    }
+
+    return cabidos.reverse().join(SEPARADOR_HILO);
   }
 
   /**
@@ -168,12 +225,15 @@ export class EmailClassificationService {
   private async analyze(
     email: {
       id: string;
+      userId: string;
       subject: string | null;
       snippet: string | null;
       bodyText: string | null;
       receivedAt: Date;
       /** Cabecera `From` cruda: de ahí sale el remitente del prefijo. */
       from: string;
+      hasAttachments: boolean;
+      threadId: string;
     },
     forceActionable: boolean,
   ): Promise<ClassificationDraft> {
@@ -182,10 +242,13 @@ export class EmailClassificationService {
       throw new Error(`El email ${email.id} no tiene texto para analizar.`);
     }
 
+    const threadContext = await this.buildThreadContext(email);
+
     const analysis = await this.ai.analyzeEmail(
       email.subject || '(Sin Asunto)',
       textToAnalyze,
       email.receivedAt,
+      { hasAttachments: email.hasAttachments, threadContext }
     );
 
     const isActionable = analysis.isActionable || forceActionable;
@@ -219,6 +282,7 @@ export class EmailClassificationService {
             tags: task.tags,
             dueDate: task.dueDate,
             source: TaskSource.EMAIL,
+            aiConfidence: analysis.aiConfidence,
             priorityReason: decidida.reason,
             priorityAdjustedFrom: decidida.from,
           };
@@ -245,6 +309,9 @@ export class EmailClassificationService {
           tags: [],
           dueDate: null,
           source: TaskSource.MANUAL,
+          // La confianza sigue siendo la del análisis: el respaldo no la
+          // mejora, solo dice que una persona pidió una tarea igualmente.
+          aiConfidence: analysis.aiConfidence,
           // El respaldo desde el asunto nace en MEDIUM sin pasar por la capa
           // determinista: no hay fecha que pueda escalarla, así que no hay nada
           // que explicar.

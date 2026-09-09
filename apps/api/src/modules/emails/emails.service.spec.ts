@@ -34,8 +34,20 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
   let service: EmailsService;
   let prisma: any;
   let classification: { classifyAndPersist: jest.Mock; classify: jest.Mock };
+  let tx: any;
 
   beforeEach(() => {
+    // Fase 6: la vía IA ya no crea la fila por su cuenta — pasa por
+    // `persistConfirmed`, que abre transacción igual que la confirmación de la
+    // cuarentena. Sin este doble, el modo IA revienta con
+    // «this.prisma.$transaction is not a function».
+    tx = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue({ position: 4 }),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'task-x', ...data })),
+      },
+      email: { update: jest.fn().mockResolvedValue({}) },
+    };
     prisma = {
       email: { findFirst: jest.fn().mockResolvedValue(emailNoAccionable) },
       task: {
@@ -43,6 +55,7 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
         create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'task-1', ...data })),
         update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'task-1', ...data })),
       },
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
     classification = {
       classifyAndPersist: jest.fn().mockResolvedValue({
@@ -157,22 +170,45 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
     });
 
     it('un title en blanco no cuenta como modo manual', async () => {
-      await service.convertToTask(USER_ID, emailNoAccionable.id, { title: '   ' });
-
-      expect(classification.classifyAndPersist).toHaveBeenCalled();
+      // Sin título aprovechable no hay vía manual, y desde P6 tampoco hay vía
+      // automática: cae en el 409 que manda a la cuarentena.
+      await expect(
+        service.convertToTask(USER_ID, emailNoAccionable.id, { title: '   ' }),
+      ).rejects.toThrow(ConflictException);
+      expect(classification.classifyAndPersist).not.toHaveBeenCalled();
     });
   });
 
-  describe('modo IA (sin title)', () => {
-    it('fuerza la creación aunque el modelo no vea el correo accionable', async () => {
-      const result = await service.convertToTask(USER_ID, emailNoAccionable.id, {});
+  /**
+   * P6: la vía que llamaba al modelo y creaba lo que dijera **ya no existe**.
+   * Era la puerta trasera de la cuarentena — el tablero acababa igual de
+   * contaminado, solo que por otro camino. Lo que se prueba aquí es que la
+   * puerta está cerrada y que el 409 dice por dónde se pasa ahora.
+   */
+  describe('sin title y sin tasks[]: la puerta trasera está cerrada (P6)', () => {
+    it('no llama al modelo ni crea nada: responde 409', async () => {
+      await expect(service.convertToTask(USER_ID, emailNoAccionable.id, {})).rejects.toThrow(
+        ConflictException,
+      );
 
-      expect(classification.classifyAndPersist).toHaveBeenCalledWith(emailNoAccionable.id, {
-        replaceExisting: false,
-        forceActionable: true,
-      });
-      expect(result.mode).toBe('ai');
-      expect(result.usedFallback).toBe(true);
+      expect(classification.classifyAndPersist).not.toHaveBeenCalled();
+      expect(classification.classify).not.toHaveBeenCalled();
+      expect(prisma.task.create).not.toHaveBeenCalled();
+      expect(tx.task.create).not.toHaveBeenCalled();
+    });
+
+    it('el 409 explica las dos salidas: classify + tasks[], o title', async () => {
+      // Un 409 que solo dice «no puedo» deja al frontend adivinando. Este
+      // nombra los dos caminos que sí funcionan.
+      await expect(service.convertToTask(USER_ID, emailNoAccionable.id, {})).rejects.toThrow(
+        /classify/,
+      );
+      await expect(service.convertToTask(USER_ID, emailNoAccionable.id, {})).rejects.toThrow(
+        /"tasks"/,
+      );
+      await expect(service.convertToTask(USER_ID, emailNoAccionable.id, {})).rejects.toThrow(
+        /"title"/,
+      );
     });
 
     it('rechaza el correo sin texto pidiendo un title', async () => {
@@ -183,22 +219,18 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
       );
     });
 
-    it('los campos del cuerpo pisan lo que dijo el modelo', async () => {
-      await service.convertToTask(USER_ID, emailNoAccionable.id, {
-        priority: 'LOW' as any,
-        dueDate: '2026-09-01T00:00:00.000Z',
-      });
+    // Los overrides sueltos del cuerpo (`priority`, `dueDate`, `description`)
+    // servían para corregir lo que proponía el modelo por esta vía. Sin la vía,
+    // no corrigen nada: sin `title` ni `tasks[]` no hay nada que crear.
+    it('los campos sueltos del cuerpo no abren la vía automática', async () => {
+      await expect(
+        service.convertToTask(USER_ID, emailNoAccionable.id, {
+          priority: 'LOW' as any,
+          dueDate: '2026-09-01T00:00:00.000Z',
+        }),
+      ).rejects.toThrow(ConflictException);
 
-      expect(prisma.task.update).toHaveBeenCalledWith({
-        where: { id: 'task-1' },
-        data: { priority: 'LOW', dueDate: new Date('2026-09-01T00:00:00.000Z') },
-      });
-    });
-
-    it('no toca la tarea si el cuerpo no traía overrides', async () => {
-      await service.convertToTask(USER_ID, emailNoAccionable.id, {});
-
-      expect(prisma.task.update).not.toHaveBeenCalled();
+      expect(tx.task.create).not.toHaveBeenCalled();
     });
   });
 
@@ -210,10 +242,12 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
       expect(gateway.emitTaskCreated.mock.calls[0][0].title).toBe('A mano');
     });
 
-    it('anuncia también las que salieron del modelo', async () => {
-      await service.convertToTask(USER_ID, emailNoAccionable.id, {});
+    it('no anuncia nada cuando la conversión se rechaza por P6', async () => {
+      await expect(service.convertToTask(USER_ID, emailNoAccionable.id, {})).rejects.toThrow(
+        ConflictException,
+      );
 
-      expect(gateway.emitTaskCreated).toHaveBeenCalledTimes(1);
+      expect(gateway.emitTaskCreated).not.toHaveBeenCalled();
     });
 
     it('excluye del eco al socket que originó la conversión', async () => {
@@ -294,10 +328,36 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
     );
   });
 
-  it('marca origen MANUAL para que el reproceso no borre lo que un humano aprobó', async () => {
+  // Esto marcaba MANUAL, y el motivo era bueno: el reproceso del worker borraba
+  // lo que tenía origen EMAIL y habría destruido trabajo ya aprobado. Ese
+  // borrado desapareció en la Fase 6 —no queda un solo `deleteMany` sobre
+  // `Task`—, así que P2 devuelve el rastro: la propuso el modelo aunque la
+  // aprobara una persona, y el tablero tiene que poder decirlo.
+  it('marca origen EMAIL: la aprobó una persona, pero la propuso el modelo (P2)', async () => {
     await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
 
-    expect(tx.task.create.mock.calls[0][0].data.source).toBe(TaskSource.MANUAL);
+    expect(tx.task.create.mock.calls[0][0].data.source).toBe(TaskSource.EMAIL);
+  });
+
+  it('conserva la confianza del borrador guardado, no la que mande el cliente', async () => {
+    prisma.email.findFirst.mockResolvedValue({
+      ...emailNoAccionable,
+      proposedTasks: [{ title: 'Enviar cotización', aiConfidence: 0.42 }],
+    });
+
+    await service.convertToTask(USER_ID, emailNoAccionable.id, {
+      // Aunque el cuerpo intentara colar una confianza inventada, no se lee de
+      // aquí: es un dato del análisis, no del usuario.
+      tasks: aprobadas.map((t) => ({ ...t, aiConfidence: 0.99 })) as any,
+    });
+
+    expect(tx.task.create.mock.calls[0][0].data.aiConfidence).toBe(0.42);
+  });
+
+  it('sin borrador guardado, la tarea nace sin confianza en vez de con una inventada', async () => {
+    await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
+
+    expect(tx.task.create.mock.calls[0][0].data).not.toHaveProperty('aiConfidence');
   });
 
   it('anexa al final de "Por hacer" en vez de colarse en la posición 0', async () => {
@@ -344,17 +404,15 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('un tasks[] vacío no cuenta como confirmación y cae a la vía de siempre', async () => {
-    classification.classifyAndPersist.mockResolvedValue({
-      isActionable: true,
-      category: 'OTHER',
-      usedFallback: false,
-      tasks: [],
-    });
+  it('un tasks[] vacío no cuenta como confirmación', async () => {
+    // Aprobar cero tareas no es aprobar: cae fuera de la vía de confirmación.
+    // Antes eso lo recogía la vía automática; desde P6 no hay a dónde caer, y
+    // el 409 es la respuesta honesta.
+    await expect(
+      service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: [] }),
+    ).rejects.toThrow(ConflictException);
 
-    const result = await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: [] });
-
-    expect(result.mode).toBe('ai');
+    expect(classification.classifyAndPersist).not.toHaveBeenCalled();
   });
 
   it('anuncia al tablero una tarjeta por cada tarea aprobada', async () => {
@@ -443,7 +501,12 @@ describe('EmailsService — POST /emails/:id/classify', () => {
 
   beforeEach(() => {
     prisma = {
-      email: { findFirst: jest.fn().mockResolvedValue(emailNoAccionable) },
+      email: {
+        findFirst: jest.fn().mockResolvedValue(emailNoAccionable),
+        // Desde P3, clasificar guarda el borrador que acaba de salir: es lo que
+        // hace que un `?force=true` cambie lo que verá el siguiente que mire.
+        update: jest.fn().mockResolvedValue({}),
+      },
       task: { count: jest.fn(), create: jest.fn(), update: jest.fn() },
     };
     classification = {
@@ -481,7 +544,7 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     expect(classification.classify).not.toHaveBeenCalled();
   });
 
-  it('no persiste nada: ni crea tareas ni comprueba duplicados', async () => {
+  it('no crea tareas ni comprueba duplicados', async () => {
     await service.classify(USER_ID, emailNoAccionable.id);
 
     expect(prisma.task.create).not.toHaveBeenCalled();
@@ -489,6 +552,86 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     // así que aquí no hay 409 por duplicados.
     expect(prisma.task.count).not.toHaveBeenCalled();
     expect(classification.classifyAndPersist).not.toHaveBeenCalled();
+  });
+
+  /**
+   * P3 — el borrador guardado se sirve tal cual, y `?force=true` es la única
+   * forma de pedir otra opinión.
+   *
+   * Sin esta salida, un correo con borrador no se podía reanalizar **nunca**:
+   * `[]` también es un array, así que hasta un correo del que el modelo no
+   * propuso nada quedaba congelado para siempre.
+   */
+  describe('P3 · caché del borrador y ?force=true', () => {
+    const conBorrador = {
+      ...emailNoAccionable,
+      category: 'FINANCE',
+      isActionable: true,
+      proposedTasks: [
+        { title: 'Ya propuesta', description: '', priority: 'LOW', tags: [], dueDate: null, aiConfidence: 0.31 },
+      ],
+    };
+
+    it('sin force, sirve el borrador guardado y no llama al modelo', async () => {
+      prisma.email.findFirst.mockResolvedValue(conBorrador);
+
+      const result = await service.classify(USER_ID, emailNoAccionable.id);
+
+      expect(classification.classify).not.toHaveBeenCalled();
+      expect(result.tasks).toHaveLength(1);
+      expect(result.category).toBe('FINANCE');
+    });
+
+    it('devuelve la confianza real del borrador, no un 1 inventado', async () => {
+      prisma.email.findFirst.mockResolvedValue(conBorrador);
+
+      const result = await service.classify(USER_ID, emailNoAccionable.id);
+
+      expect(result.aiConfidence).toBe(0.31);
+    });
+
+    it('un borrador viejo sin confianza dice 0 —«no consta»— y no 1', async () => {
+      prisma.email.findFirst.mockResolvedValue({
+        ...conBorrador,
+        proposedTasks: [{ title: 'De antes de la Fase 6' }],
+      });
+
+      const result = await service.classify(USER_ID, emailNoAccionable.id);
+
+      // Un 1 se leería en la cuarentena como certeza absoluta, que es
+      // justamente lo contrario de lo que sabemos de ese borrador.
+      expect(result.aiConfidence).toBe(0);
+    });
+
+    it('un borrador vacío también es caché: `[]` no vuelve a llamar al modelo', async () => {
+      prisma.email.findFirst.mockResolvedValue({ ...conBorrador, proposedTasks: [] });
+
+      await service.classify(USER_ID, emailNoAccionable.id);
+
+      expect(classification.classify).not.toHaveBeenCalled();
+    });
+
+    it('con force sí vuelve a preguntar, y reemplaza el borrador', async () => {
+      prisma.email.findFirst.mockResolvedValue(conBorrador);
+
+      const result = await service.classify(USER_ID, emailNoAccionable.id, true);
+
+      expect(classification.classify).toHaveBeenCalled();
+      expect(result.aiConfidence).toBe(0.9);
+      // Reemplazar es la mitad del trabajo: si el nuevo borrador no se guardara,
+      // el siguiente que abriera el correo seguiría viendo el viejo.
+      expect(prisma.email.update.mock.calls[0][0].data.proposedTasks).toEqual(propuesta.tasks);
+    });
+  });
+
+  it('guarda el borrador, pero no marca el correo como procesado', async () => {
+    await service.classify(USER_ID, emailNoAccionable.id);
+
+    const data = prisma.email.update.mock.calls[0][0].data;
+    expect(data.proposedTasks).toEqual(propuesta.tasks);
+    // `processedAt` es del worker: si se marcara aquí, mirar un correo lo
+    // sacaría de la cola sin haberlo despachado nadie.
+    expect(data).not.toHaveProperty('processedAt');
   });
 
   it('no fuerza isActionable: si el modelo no ve nada, se dice', async () => {
@@ -499,7 +642,10 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     });
   });
 
-  it('devuelve la propuesta sin el origen interno de cada borrador', async () => {
+  // La cuarentena necesita triar sin abrir cada propuesta: `source` dice si la
+  // sacó el modelo o el respaldo del asunto, y `aiConfidence` con cuánta
+  // seguridad. Antes se recortaban por «internos»; desde P2 viajan.
+  it('devuelve la propuesta con el origen y la confianza de cada borrador', async () => {
     const result = await service.classify(USER_ID, emailNoAccionable.id);
 
     expect(result.emailId).toBe(emailNoAccionable.id);
@@ -512,9 +658,11 @@ describe('EmailsService — POST /emails/:id/classify', () => {
         priority: 'URGENT',
         tags: ['obra'],
         dueDate: new Date('2026-08-01'),
+        source: TaskSource.EMAIL,
+        aiConfidence: undefined,
       },
     ]);
-    expect(result.tasks[0]).not.toHaveProperty('source');
+    expect(result.tasks[0].source).toBe(TaskSource.EMAIL);
   });
 });
 
@@ -804,6 +952,10 @@ describe('EmailsService — PATCH /emails/:id/status (Inbox Zero)', () => {
     labels: ['INBOX'],
     snippet: 'Adjunto…',
     gmailMessageId: '19f95edbf2b0650a',
+    // Fase 6: los dos campos nuevos entran en `SELECT_TRIAGE`, así que la fila
+    // que devuelve la base los trae y `aTriageEmail` los mapea.
+    proposedTasks: null,
+    hasAttachments: true,
     _count: { tasks: 2 },
   };
 
@@ -879,6 +1031,10 @@ describe('EmailsService — PATCH /emails/:id/status (Inbox Zero)', () => {
       status: EmailStatus.COMPLETED,
       taskCount: 2,
       isConverted: true,
+      // Cuarentena: cuántas propuso la IA y siguen sin aprobar. `null` en el
+      // JSON es cero, no «desconocido»: la bandeja pinta un número o nada.
+      proposedTaskCount: 0,
+      hasAttachments: true,
       threadId: 'hilo-1',
       labels: ['INBOX'],
       snippet: 'Adjunto…',

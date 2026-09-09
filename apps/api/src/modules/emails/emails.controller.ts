@@ -75,6 +75,11 @@ export class EmailsController {
    * Primer paso de la validación humana: alimenta la cuarentena del frontend.
    * Es 200 y no 201 justamente porque no nace ningún recurso.
    *
+   * Con un borrador ya guardado se devuelve **ese**, sin volver a preguntarle
+   * al modelo: cuesta dinero y podría contestar algo distinto de lo que la
+   * persona tiene en pantalla. `?force=true` pide explícitamente otra opinión y
+   * reemplaza el borrador — es la única forma de reanalizar un correo.
+   *
    * Respuestas: 200 con la propuesta · 404 si el correo no es suyo o no existe
    * · 409 si el correo no tiene texto que analizar.
    */
@@ -83,8 +88,12 @@ export class EmailsController {
   classify(
     @CurrentUser() user: CurrentUserContext,
     @Param('id') id: string,
+    // `'true'` y no `Boolean(...)`: en una query todo llega como cadena, y
+    // `Boolean('false')` es `true`. Ese descuido convertiría el respaldo en
+    // «reanaliza siempre», que es justo lo que cuesta dinero.
+    @Query('force') force?: string,
   ): Promise<ClassificationResult> {
-    return this.emailsService.classify(user.userId, id);
+    return this.emailsService.classify(user.userId, id, force === 'true');
   }
 
   /**

@@ -193,27 +193,38 @@ export class AiService {
     this.logger.log(`Modelo de clasificación: ${this.model}`);
   }
 
-  /**
-   * @param receivedAt fecha de recepción del correo: ancla temporal para resolver
-   *   fechas relativas. Sin ella el modelo adivina el año y las fechas límite salen mal.
-   */
   async analyzeEmail(
     subject: string,
     bodyText: string,
     receivedAt: Date,
+    options?: { hasAttachments?: boolean; threadContext?: string },
   ): Promise<EmailAnalysisResult> {
     const fecha = receivedAt.toISOString().slice(0, 10);
+    const hasAttachments = options?.hasAttachments ?? false;
+    const threadContext = options?.threadContext;
+
+    let systemPrompt = SYSTEM_PROMPT;
+    if (hasAttachments) {
+      systemPrompt += '\n\nIMPORTANTE: El correo contiene archivos adjuntos pero NO puedes ver su contenido. NUNCA propongas una tarea que implique leer, revisar o procesar un documento adjunto directamente, ya que no tienes acceso a él.';
+    }
+
+    let userContent = `Fecha de recepción: ${fecha}\nSubject: ${subject}\n\n`;
+    if (threadContext) {
+      userContent += `Historial del hilo (citado):\n${threadContext}\n\n`;
+      userContent += `NUEVO MENSAJE (Analiza SOLO esto y no repitas tareas del historial):\n`;
+    }
+    userContent += `Body:\n${bodyText}`;
 
     let response: Anthropic.Message;
     try {
       response = await this.anthropic.messages.create({
         model: this.model,
         max_tokens: 2000,
-        system: SYSTEM_PROMPT,
+        system: systemPrompt,
         messages: [
           {
             role: 'user',
-            content: `Fecha de recepción: ${fecha}\nSubject: ${subject}\n\nBody:\n${bodyText}`,
+            content: userContent,
           },
         ],
         tools: [EXTRACTION_TOOL],

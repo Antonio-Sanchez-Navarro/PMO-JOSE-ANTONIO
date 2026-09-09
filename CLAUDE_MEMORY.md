@@ -8,6 +8,347 @@
 > pagado.
 
 ---
+## Operación Queso: los siete agujeros de la Fase 6, tapados (2026-09-08)
+
+Seis puntos de @Gravity (P1–P6) y uno de @Alana (C2). Cierre:
+
+```
+build → limpio    lint → 0 errores    jest → 36 suites · 730 pasan · 0 pendientes
+```
+
+### ⚠️ Lo que rompe el contrato, y @Gravity tiene que saberlo antes de tocar nada
+
+**`POST /emails/:id/to-task` sin `title` y sin `tasks[]` ahora responde 409.**
+Era la vía que llamaba al modelo y creaba lo que dijera —P6—, y **era la puerta
+trasera de la cuarentena**: mientras `classifyAndPersist` dejaba de escribir en
+`Task` para que una persona aprobara primero, un `to-task` con el cuerpo vacío
+seguía materializando la propuesta entera. El tablero acababa igual de
+contaminado, solo que por otro camino y sin que la pantalla de revisión se
+enterara.
+
+El flujo queda en dos tiempos y uno solo: `POST /:id/classify` para ver la
+propuesta, `POST /:id/to-task` con `tasks[]` para aprobar lo que se quiera. Quien
+no quiera pasar por ahí tiene la vía manual con `title`.
+
+Y el 409 **nombra las dos salidas** en vez de decir «no puedo»: hay un test que
+lo comprueba, porque un error que no dice por dónde se pasa deja al frontend
+adivinando.
+
+Consecuencias en el tipo: `ToTaskResult.mode` pierde `'ai'` y `usedFallback` es
+siempre `false` —se deja en la respuesta para no romper a quien ya lo lee, pero
+retirarlo es una limpieza pendiente que hay que coordinar—.
+
+### P2 · el rastro de la IA, y por qué se pudo invertir una decisión de agosto
+
+Las tareas aprobadas nacen ahora con **`source: TaskSource.EMAIL`** y con el
+`aiConfidence` del análisis que las propuso.
+
+Estaban en `MANUAL` **a propósito**, y el motivo era bueno: el reproceso del
+worker borraba lo que tenía origen `EMAIL` y marcarlas así habría destruido
+trabajo ya validado. Se puede invertir hoy **porque ese borrado desapareció en la
+Fase 6** — lo comprobé, no queda un solo `deleteMany` sobre `Task` en todo el
+backend. Queda escrito en el código: si alguien le devuelve significado a
+`replaceExisting`, tiene que excluir estas.
+
+**La confianza se recupera del borrador guardado, no del cuerpo de la petición.**
+Es un dato del análisis: aceptarlo del cliente dejaría que cualquiera escribiera
+`0.99` en una tarea que el modelo dudó. Hay un test que manda `0.99` en el cuerpo
+y comprueba que se guarda el `0.42` del borrador.
+
+Esto cierra el `it.todo` que dejé ayer. La respuesta era **meterlo en el
+borrador**, no en el resultado del análisis: ese objeto muere con la petición, y
+entre que la IA propone y una persona aprueba pueden pasar días. El JSON de
+`proposedTasks` es lo único que sobrevive ese hueco.
+
+### P3 · la caché tenía candado por dentro
+
+`classify` servía el borrador guardado y **no había forma de pedir otra opinión**:
+`[]` también es un array, así que hasta un correo del que el modelo no propuso
+nada quedaba congelado para siempre. Ahora `?force=true`.
+
+Dos detalles que costarían un rato si se pierden:
+
+- **`force === 'true'`, no `Boolean(force)`.** En una query todo llega como
+  cadena y `Boolean('false')` es `true`: ese descuido convierte el respaldo en
+  «reanaliza siempre», que es exactamente lo que cuesta dinero.
+- **Forzar reemplaza el borrador guardado.** Sin eso, quien pidió el reanálisis
+  vería lo nuevo y el siguiente que abriera el correo seguiría viendo lo viejo:
+  dos personas mirando el mismo correo y viendo cosas distintas.
+
+Y se retiró el `aiConfidence: 1` fijo que había en la caché. Cuando el borrador
+es anterior a la Fase 6 y no la trae, se dice **0 — «no consta»**: un 1 se lee en
+la cuarentena como certeza absoluta, que es lo contrario de lo que sabemos.
+
+### P5 · el worker ya no clasifica en silencio
+
+`emitEmailUpdated` al terminar. La clasificación es asíncrona: quien tuviera la
+bandeja abierta llevaba un rato mirando una fila sin categoría y sin contador de
+cuarentena, y la propuesta no aparecía hasta recargar. **El producto se sentía
+roto justo en el momento en que acababa de funcionar.**
+
+Sin `exceptSocketId`: aquí no hay una pestaña que originara la acción —lo disparó
+la cola—, así que va a todas las del usuario. Y **no** se avisa del correo que se
+cierra por `sinTexto`: refrescar para no enseñar nada nuevo es ruido.
+
+`AiModule` importa ahora `TasksModule` por su gateway. Sin ciclo: comprobado que
+`TasksModule` no depende de `AiModule`.
+
+### C2 · el hilo entra acotado: 10 mensajes / 12.000 caracteres
+
+Dos topes porque fallan por motivos distintos: un hilo de muchos mensajes cortos
+agota el primero, y uno de tres mensajes con un informe pegado dentro agota el
+segundo.
+
+**Se piden del más nuevo al más viejo (`orderBy: desc`) y se les da la vuelta
+antes de armar el texto.** Así el recorte sacrifica lo más antiguo —lo menos
+relevante para el mensaje que se analiza— y el modelo lo sigue leyendo en el
+orden en que ocurrió. Pedirlos ascendentes con `take` habría cortado justo al
+revés: se quedaría el principio del hilo y se perdería la conversación reciente.
+
+Queda en el log cuándo se recortó: si un hilo se clasifica raro, lo primero que
+hay que saber es si el modelo vio el hilo entero o solo la cola.
+
+### P1 y P4 · ya estaban, y así se comprobó
+
+`SELECT_TRIAGE`, `TriageEmail`, `EmailDetail` y `findOne` exponen los tres campos.
+Lo que sí faltaba y se arregló sobre la marcha: `findOne` construía su objeto a
+mano y se quedó sin `proposedTaskCount` ni `hasAttachments` cuando `TriageEmail`
+pasó a exigirlos — el detalle habría perdido el badge y el clip **justo al abrir
+el correo que los mostraba**.
+
+### La regla que deja esta tanda
+
+Todo el árbol se movió mientras se trabajaba: @Gravity en `apps/web` y Doc en el
+backend, a la vez. Dos errores de compilación aparecieron y se arreglaron solos
+entre compilaciones, y otros dos nacieron nuevos.
+
+**Recompilar antes de dar por bueno un diagnóstico, no después.** Un error leído
+hace diez minutos puede ya no existir — o puede haber otro distinto en su sitio.
+
+---
+
+## Regla de operación: los pasos del Jefe se escriben completos (2026-09-08)
+
+Orden del Jefe, general y sin caducidad: **cuando tenga que intervenir a mano
+—consola de Google Cloud, la nube o su máquina local— hay que darle siempre un
+paso a paso detallado y exacto.** No «revisa la facturación»: dónde se hace clic,
+qué se ve al llegar, qué valor esperar y cómo saber que salió bien.
+
+Vale para todos, y para mí en particular cuando el arreglo no es mío: en el corte
+de esta mañana lo que desatascó seis horas de caída no fue el diagnóstico —ya
+estaba escrito—, fue llevarlo a la pantalla exacta donde se veía el importe
+vencido.
+
+---
+
+## Fase 6: capa de decisión y unidad atómica — entregada en verde, con dos decisiones abiertas (2026-09-08)
+
+Doc implementó en `apps/api` el *human-in-the-loop*: que la IA deje de escribir
+en el tablero y proponga en cuarentena. **La idea está entera y bien puesta.**
+Lo verifiqué línea a línea contra el árbol de trabajo, y también lo compilé y lo
+pasé por Jest, que es donde aparece lo que falta.
+
+### Lo que sí está, comprobado
+
+| Punto | Dónde | Estado |
+|---|---|---|
+| `proposedTasks Json?` y `hasAttachments Boolean @default(false)` en `Email` | `schema.prisma` + migración `20260908183006_phase6_human_in_loop` | ✅ el SQL es correcto |
+| La IA ya no crea filas en `Task` | `email-classification.service.ts` · `classifyAndPersist` | ✅ escribe el JSON y nada más |
+| Contexto de hilo al LLM | mismo archivo · `analyze()` | ✅ busca por `threadId` + `receivedAt < actual`, y el `@@index([threadId])` ya existía |
+| Aviso de adjuntos al modelo | `ai.service.ts` · `analyzeEmail` | ✅ se añade al **system prompt**, no al cuerpo |
+| Limpieza tras aprobar | `emails.service.ts` · `persistConfirmed` | ✅ `proposedTasks: Prisma.JsonNull` |
+
+### Cómo llegó y cómo quedó
+
+Al recibirla estaba así: **`nest build` con 3 errores y 16 pruebas en rojo**. Al
+cierre:
+
+```
+build  → limpio        lint → 0 errores (6 warnings de `any`, previos)
+jest   → 36 suites · 714 pasan · 1 todo
+```
+
+⚠️ **Se trabajó con el árbol en movimiento**: @Gravity y Doc editaban a la vez.
+Dos de los tres errores del compilador —y uno nuevo que salió a mitad, `findOne`
+sin los campos que `TriageEmail` pasó a exigir— aparecieron y se arreglaron entre
+compilaciones. **Recompilar antes de dar por bueno un diagnóstico**, no después:
+un error leído hace diez minutos puede ya no existir, o puede haber otro.
+
+### Cómo se adaptaron las pruebas (lo que hay que saber para leerlas)
+
+Todo lo que antes se leía de `tx.task.create` se lee ahora del JSON:
+
+```js
+const propuestas = () => tx.email.update.mock.calls[0][0].data.proposedTasks;
+```
+
+Y dos bloques cambiaron de nombre porque el anterior prometía algo que ya no
+pasa: `replaceExisting` → **«reproceso — el borrador se reemplaza, no se
+acumula»**, y el de los overrides dejó de mirar un `task.update` (la fila ya no
+existe cuando se corrige) para mirar **con qué nace** la fila.
+
+Se añadieron dos pruebas que antes no existían: que el hilo se busca por
+`threadId` y **solo hacia atrás** (`receivedAt: { lt }`), y que `hasAttachments`
+llega al cuarto argumento de `analyzeEmail`.
+
+### Cuatro invariantes que cambiaron sin que nadie lo dijera
+
+Estas no las canta el compilador; las cantan las pruebas que se pusieron rojas,
+y **cada una tenía su test escrito precisamente para que no pasara**.
+
+- 🔴 **`replaceExisting` se acepta y se ignora.** Sigue en `ClassifyOptions` y
+  `ai.processor.ts:153` lo llama con `true` en cada reproceso. Dentro, el
+  comentario dice *«da igual ahora»*. Un parámetro que no hace nada es la clase
+  de trampa que esta casa lleva un mes documentando. Rojas:
+  `replaceExisting › borra las tareas previas` y `› acota el borrado al origen EMAIL`.
+- 🔴 **`TaskSource.EMAIL` se quedó sin productor.** Todo lo que se materializa
+  pasa ahora por `persistConfirmed`, que marca `MANUAL` a propósito y con su
+  motivo escrito. Es coherente con el human-in-the-loop —nada nace sin una
+  persona— pero deja el borrado por reproceso apuntando a un conjunto vacío.
+  Hay que decidirlo, no heredarlo.
+- 🔴 **`aiConfidence` se pierde por el camino.** Se sigue calculando y ya no
+  llega a la tarjeta: `classifyAndPersist` lo destructura y no lo usa, y el mapeo
+  a `ConfirmedTaskDto` no lo lleva. Roja: `traslada dueDate y aiConfidence`.
+- 🔴 **Y peor: en la caché se inventa.** `emails.service.ts:381` devuelve
+  `aiConfidence: 1` fijo, con el comentario *«o guardarlo también en la fila si
+  fuera necesario»*. Una pantalla de cuarentena existe **para triar por
+  confianza**; un 100 % constante es peor que no enseñar el número.
+
+### Dos cosas de diseño que conviene mirar antes de seguir
+
+- **La caché de `classify()` no tiene salida.** Devuelve pronto siempre que
+  `proposedTasks` sea un array — y `[]` también lo es. Como `classifyAndPersist`
+  escribe el JSON aunque el modelo no proponga nada, **cualquier correo ya
+  procesado no se puede volver a clasificar nunca** por esa ruta. Falta un
+  `force`, o borrar el JSON al reprocesar.
+- **El contexto del hilo no tiene tope.** `findMany` sin `take` y sin recorte de
+  caracteres, concatenando el `bodyText` **entero** de cada mensaje anterior. En
+  un hilo largo eso entra en cada clasificación, y lo paga el mismo presupuesto
+  que vigila `pmo-coste-ia`. El `max_tokens: 2000` acota la salida, no la
+  entrada.
+- Menor, pero es el «porqué» de esta casa: se borró el JSDoc de `analyzeEmail`
+  que explicaba **para qué** va `receivedAt` (ancla temporal; sin ella el modelo
+  adivina el año y las fechas límite salen mal). Eso ya costó un diagnóstico.
+
+### Las dos decisiones que quedan abiertas, y por qué no las tomé yo
+
+Poner una suite en verde **no es lo mismo que cerrar un diseño**. Dos cosas se
+dejaron marcadas en el código en vez de resolverlas a mi criterio, porque
+elegirlas por mi cuenta habría sido decidir la Fase 6 escribiendo tests a medida:
+
+1. **`aiConfidence` no se persiste en ninguna parte.** Se calcula, y ni entra en
+   el JSON del borrador ni en la fila que se materializa al aprobar. Está marcado
+   con un `it.todo` en el spec y un comentario en `classifyAndPersist`. Una
+   cuarentena existe para **triar por confianza**: si la UI lo va a enseñar,
+   necesita una columna o un campo en el JSON.
+2. **`replaceExisting` no hace nada.** Hay un test que lo deja escrito —`true` y
+   `false` producen lo mismo— para que no se lea como una opción viva. O se
+   retira el parámetro, o se le devuelve significado.
+
+**Regla que me llevo:** cuando adapto pruebas a un diseño nuevo, las que
+documentan una decisión pendiente se marcan (`it.todo`, o un test que afirma el
+comportamiento actual **diciendo que es provisional**). Borrarlas deja el hueco
+sin nadie mirándolo, y una suite verde por omisión miente más que una roja.
+
+---
+
+## Seis horas caída y la causa no estaba en la nube: una tarjeta rechazada (2026-09-08)
+
+El producto entero —login, tablero, copiloto, crones, webhook de Gmail— devolvió
+**503 desde el borde de Google** entre las **11:05:21Z** y las **17:11:44Z**.
+Ni un commit, ni un despliegue, ni una variable de por medio: la revisión que
+«fallaba» era `pmo-api-00113-92g`, del 25 de agosto, con `Ready: True` y el 100 %
+del tráfico todo el tiempo.
+
+**La cuenta de facturación estaba cerrada por impago.** @Alana la localizó
+(§56.1); lo que faltaba —el *por qué*— salió en la consola: la entidad emisora
+**rechazó la Visa •••• 5659** por **MXN 412.45** vencidos. Pagado, la API volvió
+sola en menos de dos minutos.
+
+### La trampa del nombre, que es lo que hay que llevarse
+
+Dos campos distintos se llaman igual en castellano y miden cosas opuestas:
+
+| Lo que preguntas | Lo que devuelve | Lo que significa |
+|---|---|---|
+| `gcloud billing projects describe` | `billingEnabled: true` | el proyecto está **enlazado** a una cuenta |
+| `gcloud billing accounts list` | `OPEN = False` | esa cuenta **no puede pagar** |
+
+**El que gobierna es el segundo, y está un nivel más arriba** — en la cuenta, no
+en el proyecto. `billingEnabled: true` con la cuenta cerrada es el estado exacto
+que tuvimos seis horas, y se lee como «la facturación está bien».
+
+Y la consola **no usa la palabra «desactivada» en ningún sitio**: dice *«tu
+cuenta está vencida o no tiene información de pago válida»*. Quien la mire
+buscando un cartel de apagado no lo encuentra, y concluye que no es eso.
+
+### Cómo se distingue esto de un fallo nuestro, sin `gcloud`
+
+El 503 de facturación **no toca nunca el contenedor**, así que tiene una firma
+que no se parece a la nuestra:
+
+- Llega en **menos de un segundo** —no hay arranque que esperar— y con cuerpo
+  **HTML de Google**, no JSON nuestro.
+- Es **idéntico por las dos formas de la URL** (`...-mlpuuasqka-uc` y
+  `...-614812477499.us-central1`). Si fuera del servicio, también, pero si fuera
+  de dominio no.
+- **No hay una sola línea de log del contenedor** en la ventana: el borde corta
+  antes.
+- El plano de control sigue contestando —`describe`, `list`— porque **leer es
+  gratis**. Solo se cae lo que cuesta: arrancar una instancia, Artifact Registry,
+  Scheduler (`reason: BILLING_DISABLED`).
+
+⚠️ Y el corte **no tiene autor en la auditoría**, porque no es un cambio. El
+servicio no tiene mínimo de instancias: la última se apagó por escala a cero
+tras servir su petición de las 11:05, y **la siguiente ya no pudo nacer**. Por
+eso la ventana fue de diez minutos y no hay nada dentro de ella.
+
+### La orden que llegó encima, y por qué no se ejecutó
+
+Con la API caída llegó el encargo de apuntar `CRON_OIDC_AUDIENCE`,
+`GMAIL_PUBSUB_AUDIENCE` y `GOOGLE_REDIRECT_URI` **«a la nueva URL» y
+redesplegar**. No había URL nueva: `services describe` devolvía la de siempre, un
+solo servicio, ningún proyecto nuevo. Y aunque la hubiera, el despliegue empuja
+la imagen a **Artifact Registry, que estaba rechazando por lo mismo** — habría
+sido una ejecución en rojo que no explica nada.
+
+**Quedó probado del todo cuando volvió:** el primer cron tras la recuperación
+—`pmo-reconciliar-clasificacion`, 17:15:02Z— entró con **200** y la audiencia
+intacta. No había nada que cambiar.
+
+### Lo que sí hay que saber para el día que la URL cambie de verdad
+
+No son «variables del servicio». Son **variables del repositorio** que consume
+`deploy.yml`, y la misma URL vive en **cuatro sitios que tienen que moverse
+juntos**:
+
+1. `vars.*` del repo → `gh variable set` + `workflow_dispatch`. **Nunca**
+   `gcloud run services update`: el despliegue usa `--set-env-vars`, que
+   **reemplaza el conjunto entero**, y lo inyectado a mano sobrevive hasta el
+   primer push y desaparece **sin un solo error**.
+2. **Los emisores.** Las dos audiencias son lo que el servicio *valida*; quien
+   llama lleva la suya. Medido: la suscripción `gmail-ingest-push` tiene endpoint
+   **y** audiencia embebidos, y los jobs de Scheduler igual. Mover solo el lado
+   del servicio deja **401 en cada cron y cada push**, con cara de guard roto.
+3. El **cliente OAuth** de la consola, o el login muere en
+   `redirect_uri_mismatch` desde la pantalla de Google.
+4. El **bundle del frontend**, que lleva el host dentro compilado.
+
+### Lo que este corte deja pendiente y es nuestro
+
+**Nadie vigila que el servicio conteste.** La Capa 2 mira los push de Gmail; el
+coste de IA tiene su cron. Pero `/health/live` —la sonda más barata que existe—
+**no la mira nadie desde fuera**, y por eso seis horas de caída total se
+descubrieron por casualidad. Un cron externo contra `/health/live` habría puesto
+fecha y hora al minuto.
+
+**Regla que me llevo:** cuando un campo de estado dice que sí y el sistema dice
+que no, **el que miente es mi lectura del campo**. Y cuando una orden nombra un
+valor nuevo —una URL, un host, un id—, **comprobar que existe antes de
+escribirlo**: la mitad de esta sesión se ahorró con un `services describe`.
+
+---
+
 
 ## El entorno local, reconstruido tras el formateo — y el `.env` que apuntaba a producción (2026-09-07)
 

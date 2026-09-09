@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { EmailStatus, Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
+import { EmailStatus, Task, TaskPriority, TaskSource, TaskStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
@@ -20,6 +20,10 @@ export interface TriageEmail {
   taskCount: number;
   /** Ya generó tareas: `to-task` daría 409 salvo que se insista con `force`. */
   isConverted: boolean;
+  /** Número de tareas propuestas por la IA que esperan revisión en cuarentena. */
+  proposedTaskCount: number;
+  /** Indica si el correo contiene archivos adjuntos. */
+  hasAttachments: boolean;
   /** Hilo de Gmail, para agrupar la lista como hace la bandeja. */
   threadId: string;
   /** Etiquetas de Gmail (`INBOX`, `UNREAD`, `CATEGORY_*`…), para los filtros. */
@@ -51,6 +55,8 @@ const SELECT_TRIAGE = {
   labels: true,
   snippet: true,
   gmailMessageId: true,
+  proposedTasks: true,
+  hasAttachments: true,
   _count: { select: { tasks: true } },
 } as const;
 
@@ -65,6 +71,8 @@ type FilaTriage = {
   labels: string[];
   snippet: string | null;
   gmailMessageId: string;
+  proposedTasks: any;
+  hasAttachments: boolean;
   _count: { tasks: number };
 };
 
@@ -80,6 +88,8 @@ function aTriageEmail(email: FilaTriage): TriageEmail {
     status: email.status,
     taskCount: email._count.tasks,
     isConverted: email._count.tasks > 0,
+    proposedTaskCount: Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0,
+    hasAttachments: email.hasAttachments,
     threadId: email.threadId,
     labels: email.labels,
     snippet: email.snippet ?? '',
@@ -102,6 +112,8 @@ export interface EmailDetail extends TriageEmail {
   isActionable: boolean;
   /** ISO 8601, o `null` si el worker todavía no lo ha despachado. */
   processedAt: string | null;
+  /** Las tareas propuestas por la IA que aún no se han convertido. */
+  proposedTasks?: ProposedTask[] | null;
   /** Las tareas que ya salieron de este correo, en el orden del tablero. */
   tasks: EmailTaskSummary[];
 }
@@ -109,11 +121,18 @@ export interface EmailDetail extends TriageEmail {
 export interface ToTaskResult {
   emailId: string;
   /**
-   * `'confirmed'` si el cuerpo traía `tasks[]` (aprobación desde la cuarentena),
-   * `'manual'` si traía `title`, `'ai'` si lo extrajo el modelo.
+   * `'confirmed'` si el cuerpo traía `tasks[]` (aprobación desde la cuarentena)
+   * o `'manual'` si traía `title`.
+   *
+   * `'ai'` desapareció en la Fase 6 (P6): ya no hay una vía que cree lo que
+   * diga el modelo sin que nadie lo mire.
    */
-  mode: 'confirmed' | 'manual' | 'ai';
-  /** Solo en modo 'ai': el modelo no vio nada accionable y se usó el asunto. */
+  mode: 'confirmed' | 'manual';
+  /**
+   * Quedaba del modo `'ai'` y hoy es siempre `false`. Se mantiene en la
+   * respuesta para no romper a quien ya la lee; retirarlo es una limpieza de
+   * contrato que hay que coordinar con el frontend.
+   */
   usedFallback: boolean;
   tasks: Task[];
 }
@@ -143,6 +162,14 @@ export interface ProposedTask {
   priority: TaskPriority;
   tags: string[];
   dueDate: Date | null;
+  /**
+   * Lo seguro que estaba el modelo. Opcional porque los borradores escritos
+   * antes de la Fase 6 no lo traen: la cuarentena tiene que saber distinguir
+   * «no consta» de «cero confianza».
+   */
+  aiConfidence?: number;
+  /** `EMAIL` si la extrajo el modelo; `MANUAL` si es el respaldo del asunto. */
+  source?: TaskSource;
 }
 
 /** Lo que el modelo propone para un correo, sin haber escrito nada. */
@@ -275,6 +302,8 @@ export class EmailsService {
         bodyText: true,
         isActionable: true,
         processedAt: true,
+        proposedTasks: true,
+        hasAttachments: true,
         tasks: {
           select: { id: true, title: true, status: true, priority: true },
           orderBy: { position: 'asc' },
@@ -297,12 +326,22 @@ export class EmailsService {
       labels: email.labels,
       snippet: email.snippet ?? '',
       gmailMessageId: email.gmailMessageId,
+      taskCount: email.tasks.length,
+      isConverted: email.tasks.length > 0,
+      proposedTaskCount: Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0,
+      hasAttachments: email.hasAttachments,
       // `null` y no cadena vacía: distingue "este correo no tiene cuerpo
       // guardado" de "el cuerpo está vacío", y así la vista sabe cuándo caer
       // al snippet en vez de enseñar un panel en blanco.
       bodyText: email.bodyText,
       isActionable: email.isActionable,
       processedAt: email.processedAt?.toISOString() ?? null,
+      proposedTasks: email.proposedTasks as any,
+      // El detalle hereda de `TriageEmail`, así que debe contestar lo mismo que
+      // una fila del listado: el badge de cuarentena y el clip de adjuntos no
+      // pueden desaparecer al abrir el correo que los mostraba.
+      proposedTaskCount: Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0,
+      hasAttachments: email.hasAttachments,
       taskCount: email.tasks.length,
       isConverted: email.tasks.length > 0,
       tasks: email.tasks,
@@ -358,10 +397,14 @@ export class EmailsService {
    * ya decidirá la persona. Forzar aquí sería inventarle una tarea a alguien
    * que solo estaba mirando.
    */
-  async classify(userId: string, emailId: string): Promise<ClassificationResult> {
+  async classify(
+    userId: string,
+    emailId: string,
+    force = false,
+  ): Promise<ClassificationResult> {
     const email = await this.prisma.email.findFirst({
       where: { id: emailId, userId },
-      select: { id: true, bodyText: true, snippet: true },
+      select: { id: true, bodyText: true, snippet: true, category: true, isActionable: true, proposedTasks: true },
     });
 
     if (!email) {
@@ -372,26 +415,68 @@ export class EmailsService {
       throw new ConflictException(`El correo ${emailId} no tiene texto que analizar.`);
     }
 
+    // La propuesta guardada se sirve tal cual: volver a preguntarle al modelo
+    // cuesta dinero y, peor, **puede devolver algo distinto de lo que la
+    // persona está mirando en pantalla**.
+    //
+    // `?force=true` es la salida: sin ella, un correo con borrador no se puede
+    // reanalizar nunca —`[]` también es un array, así que hasta un correo sin
+    // propuestas quedaba congelado— y el usuario no tiene forma de pedir otra
+    // opinión cuando la primera salió mal.
+    if (!force && Array.isArray(email.proposedTasks)) {
+      this.logger.log(`Clasificación servida desde el borrador guardado para ${emailId}`);
+      const guardadas = email.proposedTasks as unknown as ProposedTask[];
+      return {
+        emailId: email.id,
+        category: email.category ?? 'OTHER',
+        isActionable: email.isActionable,
+        // La confianza real del análisis que produjo este borrador. Viaja
+        // dentro de cada propuesta desde la Fase 6; si el borrador es de antes
+        // de ese cambio no la trae, y entonces se dice `0` —«no consta»— en vez
+        // de inventar un 1 que la cuarentena leería como certeza absoluta.
+        aiConfidence: guardadas[0]?.aiConfidence ?? 0,
+        tasks: email.proposedTasks as any,
+      };
+    }
+
     const draft = await this.classification.classify(email.id, { forceActionable: false });
 
     this.logger.log(
-      `Clasificación en seco del correo ${emailId}: ${draft.tasks.length} tarea(s) propuesta(s)`,
+      `Clasificación ${force ? 'forzada' : 'en seco'} del correo ${emailId}: ` +
+        `${draft.tasks.length} tarea(s) propuesta(s)`,
     );
+
+    // Lo que acaba de decir el modelo pasa a ser **el** borrador del correo.
+    // Sin esto, un `?force=true` devolvería una propuesta nueva a quien la pidió
+    // y la siguiente lectura seguiría sirviendo la vieja: dos personas mirando
+    // el mismo correo verían cosas distintas.
+    //
+    // No se toca `processedAt`: clasificar para mirar no es haber despachado el
+    // correo, y marcarlo aquí haría que el worker se lo saltara.
+    await this.prisma.email.update({
+      where: { id: email.id },
+      data: { proposedTasks: draft.tasks as any },
+    });
 
     return {
       emailId: draft.emailId,
       category: draft.category,
       isActionable: draft.isActionable,
       aiConfidence: draft.aiConfidence,
-      // `source` se queda fuera: al frontend le da igual de dónde salió el
-      // borrador, y lo que acabe creándose lo decide `to-task`.
-      tasks: draft.tasks.map(({ title, description, priority, tags, dueDate }) => ({
-        title,
-        description,
-        priority,
-        tags,
-        dueDate,
-      })),
+      tasks: draft.tasks.map(
+        ({ title, description, priority, tags, dueDate, source, aiConfidence }) => ({
+          title,
+          description,
+          priority,
+          tags,
+          dueDate,
+          // `source` y `aiConfidence` sí viajan: la cuarentena necesita saber
+          // si la propuso el modelo o el respaldo del asunto, y con cuánta
+          // seguridad, para poder triar sin abrir cada una.
+          source,
+          aiConfidence,
+        }),
+      ),
     };
   }
 
@@ -438,7 +523,7 @@ export class EmailsService {
     // podría convertir el correo de otra persona con solo conocer su id.
     const email = await this.prisma.email.findFirst({
       where: { id: emailId, userId },
-      select: { id: true, subject: true, snippet: true, bodyText: true },
+      select: { id: true, subject: true, snippet: true, bodyText: true, proposedTasks: true },
     });
 
     if (!email) {
@@ -458,7 +543,19 @@ export class EmailsService {
     // es lo que aprobó. No se vuelve a llamar al modelo — sería pagar otra vez
     // por una respuesta que además podría no coincidir con lo que aprobó.
     if (dto.tasks?.length) {
-      return this.persistConfirmed(userId, email.id, dto.tasks, dto.category);
+      // La confianza se recupera **del borrador guardado**, no del cuerpo de la
+      // petición: es un dato del análisis, y aceptarlo del cliente dejaría que
+      // cualquiera escribiera «0.99» en una tarea que el modelo dudó.
+      const guardadas = Array.isArray(email.proposedTasks)
+        ? (email.proposedTasks as unknown as ProposedTask[])
+        : [];
+      return this.persistConfirmed(
+        userId,
+        email.id,
+        dto.tasks,
+        dto.category,
+        guardadas[0]?.aiConfidence,
+      );
     }
 
     // Vía manual: la persona ya escribió el título, no hay nada que inferir.
@@ -492,34 +589,25 @@ export class EmailsService {
       );
     }
 
-    const result = await this.classification.classifyAndPersist(email.id, {
-      // Nunca borrar en la vía manual.
-      replaceExisting: false,
-      // Si alguien pide convertirlo, se convierte aunque el modelo diga que no.
-      forceActionable: true,
-    });
-
-    // Los campos del cuerpo pisan lo que dijo el modelo en la primera tarea.
-    const [first, ...rest] = result.tasks;
-    let tasks = result.tasks;
-    if (first && (dto.priority || dto.dueDate || dto.description)) {
-      const updated = await this.prisma.task.update({
-        where: { id: first.id },
-        data: {
-          ...(dto.priority ? { priority: dto.priority } : {}),
-          ...(dto.dueDate ? { dueDate: new Date(dto.dueDate) } : {}),
-          ...(dto.description ? { description: dto.description } : {}),
-        },
-      });
-      tasks = [updated, ...rest];
-    }
-
-    this.logger.log(
-      `Conversión por IA del correo ${emailId}: ${tasks.length} tarea(s)` +
-        (result.usedFallback ? ' (fallback desde el asunto)' : ''),
+    // ─────────────────────────────────────────────────────────────────────
+    // Aquí vivía la tercera vía: llamar al modelo y crear lo que dijera, sin
+    // que nadie lo hubiera visto. **Se retira en la Fase 6** (P6).
+    //
+    // Era la puerta trasera de la cuarentena: mientras `classifyAndPersist`
+    // dejaba de escribir en `Task` para que una persona aprobara primero, esta
+    // rama seguía materializando la propuesta entera con un `to-task` sin
+    // cuerpo. El tablero acababa igual de contaminado, solo que por otro
+    // camino y sin que la pantalla de revisión se enterara.
+    //
+    // El flujo, ahora, es uno solo y en dos tiempos: `POST /:id/classify` para
+    // ver qué propone, y `POST /:id/to-task` con `tasks[]` para aprobar lo que
+    // se quiera. Quien no quiera pasar por ahí tiene la vía manual: `title`.
+    // ─────────────────────────────────────────────────────────────────────
+    throw new ConflictException(
+      `El correo ${emailId} no se convierte solo: pide la propuesta con ` +
+        `POST /emails/${emailId}/classify y envíala aprobada en "tasks", ` +
+        `o manda "title" para crear la tarea a mano.`,
     );
-
-    return { emailId, mode: 'ai', usedFallback: result.usedFallback, tasks };
   }
 
   /**
@@ -535,6 +623,7 @@ export class EmailsService {
     emailId: string,
     confirmed: ConfirmedTaskDto[],
     category?: string,
+    aiConfidence?: number,
   ): Promise<ToTaskResult> {
     // Antes de abrir la transacción, y de una sola consulta para todas las
     // tareas: si alguna etiqueta no existe o es de otra persona, esto lanza un
@@ -578,10 +667,24 @@ export class EmailsService {
                 : {}),
               dueDate: task.dueDate ? new Date(task.dueDate) : null,
               position: position++,
-              // MANUAL y no EMAIL aunque las propusiera el modelo: las aprobó
-              // una persona. El reproceso del worker borra lo que tiene origen
-              // EMAIL, y eso destruiría trabajo ya validado.
-              source: TaskSource.MANUAL,
+              // EMAIL, no MANUAL: la propuso el modelo aunque la aprobara una
+              // persona, y el tablero tiene que poder decir de dónde salió cada
+              // tarjeta. Sin esto, `TaskSource.EMAIL` se quedaba sin productor y
+              // dejaba de existir la distinción entre lo que infirió la IA y lo
+              // que alguien escribió a mano.
+              //
+              // ⚠️ Esto era MANUAL a propósito, y el motivo importa: el
+              // reproceso del worker borraba lo que tenía origen EMAIL, así que
+              // marcarlas así habría destruido trabajo ya validado. Hoy es
+              // seguro **porque en la Fase 6 ese borrado desapareció** — no
+              // queda ni un `deleteMany` sobre `Task` en todo el backend. Si
+              // alguien le devuelve significado a `replaceExisting`, tiene que
+              // excluir estas: aprobadas por una persona, no reemplazables.
+              source: TaskSource.EMAIL,
+              // El rastro del análisis del que salió, para que la tarjeta pueda
+              // decir con cuánta seguridad se propuso. `undefined` en la vía
+              // manual, donde no hubo modelo que dudara.
+              ...(aiConfidence !== undefined ? { aiConfidence } : {}),
             },
             // Con las etiquetas dentro, igual que `POST /tasks`: la tarjeta
             // viaja en la respuesta 201 y en el `task.created`, y sin esto
@@ -596,6 +699,7 @@ export class EmailsService {
         data: {
           isActionable: true,
           processedAt: new Date(),
+          proposedTasks: Prisma.JsonNull, // limpiar las propuestas tras aprobar
           // Solo si la persona la tocó: sin esto, confirmar borraría la
           // categoría que ya tuviera el correo.
           ...(category ? { category } : {}),

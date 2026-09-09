@@ -32,6 +32,8 @@ export interface EmailSnippet {
   labels: string[];
   /** Cuerpo en texto plano. Solo se llena cuando se pide `format: 'full'`. */
   bodyText?: string;
+  /** Indica si el correo trae algún archivo adjunto. */
+  hasAttachments: boolean;
 }
 
 export interface SyncResult {
@@ -350,6 +352,9 @@ export class GmailService {
       }
     }
 
+    const allParts = this.collectParts(message.payload);
+    const hasAttachments = allParts.some((p) => p.body?.attachmentId != null);
+
     return {
       id: message.id!,
       threadId: message.threadId!,
@@ -359,6 +364,7 @@ export class GmailService {
       date: this.fechaDeRecepcion(header('date'), message),
       labels: message.labelIds ?? [],
       bodyText: bodyText || undefined,
+      hasAttachments,
     };
   }
 
@@ -762,6 +768,7 @@ export class GmailService {
             bodyText: email.bodyText,
             labels: email.labels,
             receivedAt: new Date(email.date),
+            hasAttachments: email.hasAttachments,
           },
           create: {
             gmailMessageId: email.id,
@@ -773,6 +780,7 @@ export class GmailService {
             labels: email.labels,
             receivedAt: new Date(email.date),
             userId,
+            hasAttachments: email.hasAttachments,
           },
         });
       } catch (err) {

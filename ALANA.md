@@ -112,6 +112,27 @@ curl <WEB_URL> | grep title    # y se compara con apps/web/index.html: el 08-10 
 > declarando que **no es un encargo y que el campo `Estado` sigue siendo de
 > Doc**. La regla de fondo no cambia: sin una orden así, Alana solo escribe aquí.
 
+> ### 🪜 Y desde hoy: al Jefe se le entrega un paso a paso, no un comando (2026-09-08)
+>
+> Regla general del equipo, fijada por Doc. **Cuando el Jefe tenga que intervenir
+> a mano —en la consola de Google, en la nube o en local— hay que darle el
+> recorrido exacto, paso por paso**, no la orden suelta.
+>
+> **Me obliga a mí más que a nadie**, y por lo que hago: yo encuentro y no
+> arreglo, así que **todo lo mío acaba en manos de otro**. Un hallazgo mío que
+> termina en «hay que rotar el secreto» no está entregado: está delegado a medias.
+>
+> Y hay caso propio del mismo día. En §56.1 dejé un `gcloud billing projects
+> link …` sin decir dónde se teclea, qué contesta si sale bien, ni **qué había
+> que averiguar antes** —por qué se cerró la cuenta—. La orden era correcta y la
+> entrega no lo era: **si la hubiera ejecutado tal cual, habría movido el
+> proyecto a otra cuenta de facturación sin necesidad**, porque una hora después
+> la original se reabrió sola.
+>
+> **La forma:** dónde se hace, qué se teclea o se pulsa, qué se espera ver
+> después, y **cómo se deshace** si sale mal. Si un paso puede romper algo, se
+> dice en ese paso y no al final.
+
 **`HANDOFF.md` ya no existe** (2026-08-03, `a1e9554`): se partió en dos y el
 reparto de documentos es otro. Ver §1 y §3.
 
@@ -6922,3 +6943,2321 @@ prueba que compare las dos listas de rutas, un DTO base para los títulos— en 
 de párrafos que hay que recordar. La diferencia entre una regla escrita y una que
 se sostiene sola ya la dice el propio proyecto en otro sitio: *«olvidarse NO
 COMPILA»*.
+
+---
+
+## 50. Despertar del 2026-08-26: los seis commits que quedaban sin auditar
+
+**Chequeo estándar, primero.** Árbol limpio, `master` y `origin/master` en
+`a31384e`, sin nada sin commitear. CI en verde, despliegue en `success`. La API
+sirve `7a85831` —y `SERVICE_VERSION` en Cloud Run es ese mismo SHA, así que
+**§49.9 está cerrado**: `/health` ya sabe decir qué commit corre—. Vercel sirve
+`259c91f`, posterior al último commit de `apps/web`; la sonda lo confirma cada
+media hora (*«sirve 259c91f · referencia ba609aa · comparación: ahead»*).
+`/health/ready` responde 200 con Postgres, esquema y Redis arriba. Los **seis**
+disparadores de Cloud Scheduler están `ENABLED` y con intento de hoy.
+
+Los dos últimos commits (`5b8df3a`, `a31384e`) no dispararon CI, y **está bien**:
+son solo `.md` y los salta el `paths-ignore` de `ci.yml`, que existe justo para
+eso.
+
+Desde mi última verificación (§49, que cerró en `f65ca20` y `780ad95`) hay
+**seis commits de código** sin auditar. Ninguno de los seis lleva ruido de fin
+de línea —`--numstat` y `--numstat --ignore-cr-at-eol` dan lo mismo en los
+seis—, que era la comprobación que me quedé debiendo desde `36938c9`.
+
+### ✅ `8219b96` + `7dd3152` — `DashboardMetrics` sale a `@pmo/shared`
+
+Correcto. Borra 70 líneas de `metrics.types.ts` y reexporta el contrato de
+`packages/shared`. Lo que había que comprobar no es la forma, que se ve, sino
+**los enums**: un `Record<TaskStatus, number>` se rompe en silencio si las dos
+definiciones no coinciden **en los valores**. Coinciden una a una las tres
+—`TaskStatus`, `TaskPriority`, `EmailStatus`— entre `packages/shared/src/index.ts`
+y `apps/api/prisma/schema.prisma`. Las cuatro decisiones que documentaba el
+docblock borrado siguen escritas, en el docblock del compartido.
+
+`7dd3152` es la coleta: `TaskStatus` se sigue usando en `MetricsSummary`,
+`EmailStatus` y `TaskPriority` ya no. **Un commit de una línea porque el anterior
+no compilaba** — la lección que dejé escrita al cerrar §49 (`npx tsc --noEmit`
+antes de commitear) todavía no se está aplicando.
+
+### ⚠️ `8453d3f` — reabrió §49.11 durante dieciséis minutos
+
+Movió el latido de `/health/ready` a `/health` para tapar la fuga de Upstash. El
+motivo era bueno y el efecto no: `/health` contesta 200 con la base caída **por
+diseño**, así que el semáforo volvió a no poder ponerse en rojo — que es el
+hallazgo §49.11, cerrado esa misma tarde en `f65ca20`.
+
+Vivió en `master` de 18:12:45 a 18:28:58. **No he comprobado si Vercel llegó a
+servirlo** en esa ventana.
+
+Lo anoto no para señalar el commit, que se corrigió solo en el siguiente, sino
+por la forma: **un cambio que baja profundidad para bajar coste está reabriendo
+un hallazgo, y debería decir cuál.** Aquí los dos hallazgos —la fuga de cuota y
+el semáforo ciego— viven en el mismo `useEffect` y tiran en direcciones
+opuestas; sin nombrarlo, cada arreglo parece completo por su lado.
+
+### ✅ `c36d84e` — el cron de coste, cada hora
+
+Correcto, y comprobado en producción: `pmo-coste-ia` está en `0 * * * *`,
+`ENABLED`, con último intento hoy a las 21:00:35Z. Era mi hallazgo del hueco más
+ancho de los seis disparadores, y está cerrado.
+
+Lo que había que auditar de verdad era el freno, porque acelerar una cadencia es
+como se rompen: `FRENO_S` sigue en 23 h contra una cita horaria, que está
+veintitrés veces al lado seguro. **La regla es «igual o menor que la cadencia», y
+23 h > 1 h.** Correcto.
+
+Y los dos supuestos que colgaban de la hora del cron también:
+
+- `cubiertos` es fraccionario y se mide con `instanteLocal()`, así que el día en
+  curso pesa por las horas vividas y el ritmo no salta a cada medianoche.
+- La ventana se corta por días locales —hoy y los seis anteriores— en vez de
+  restar 168 h, así que no cambia de tamaño veinticuatro veces al día.
+
+Queda un sesgo residual y **va en dirección segura**: `primerDia` es el primer
+día **con fila**, no el principio de la ventana, así que un parón de varios días
+se descuenta del divisor y el ritmo sale **inflado** → el aviso llega antes. Está
+declarado en el docblock. No es un defecto.
+
+### ⚠️ `ba609aa` — el semáforo ya puede ponerse en rojo, pero dice la causa equivocada
+
+Cierra bien lo que reabrió `8453d3f`: `/health/ready` siempre, cada 300 s, con
+`/health` detrás solo para pintar `version` y `uptimeSec` sin gastar cuota. De
+~2.900 comandos de Upstash al día por pestaña a ~288. Eso está bien.
+
+**Y quedan dos cosas, las dos comprobadas en el código:**
+
+1. **La rama roja de `health.status` es inalcanzable.** `health` solo se puebla
+   desde `/health`, que por diseño contesta `ok` siempre. En `App.tsx:179`,
+   `health.status === 'ok' ? verde : rojo` **nunca toma la rama roja**, y
+   `health.status.toUpperCase()` siempre imprime `OK`. El único rojo que llega a
+   pintarse es el del ramal `error`.
+
+2. **Una caída de dependencias se anuncia como «Sin conexión con la API», y es
+   falso.** Con Postgres o Redis caídos, `/health/ready` devuelve **503**;
+   `apiFetch` lanza ante cualquier `!ok` (`api.ts:59-72`) y el cuerpo de Terminus
+   no trae `message`, así que el texto se queda en el de por defecto. La tarjeta
+   pinta: *«Sin conexión con la API (GET /health/ready → 503)»*. **Un 503 es la
+   prueba de que la API sí contestó.** El mensaje se contradice con la evidencia
+   que lleva dentro, y manda a mirar la API cuando lo que está caído es Redis.
+
+   Y esto no es un descubrimiento: **es la consecuencia que declaré en la
+   revisión del plan de §49**, antes de que se ejecutara. Se arregló la
+   profundidad de la sonda y no se trató el 503.
+
+*Menor, de la misma familia:* la tarjeta se titula `Estado del backend
+(/health/ready)` y los dos datos que enseña salen de `/health`.
+
+### ✅ `de1a6ed` — `precioDelDia`, y es mejor que mi hallazgo
+
+Yo marqué §49.10 parte 3 como **decisión, no arreglo**: mover el umbral a hora
+local vuelve la estimación menos conservadora, y eso no lo decido yo.
+
+**La solución no elige huso: parte la función en dos escalas.** `precioDe` para
+instantes, `precioDelDia` para fechas de calendario, comparando `YYYY-MM-DD`
+como texto —que en ISO ordena igual que el calendario— sin convertir nada a
+instante. Comprobada la premisa: `diaLocal` (`ai-cost.service.ts:373-381`)
+guarda el día local como medianoche UTC, así que `toISOString().slice(0,10)`
+recupera exactamente el día que se quiere. Y **los dos únicos sitios que reciben
+un `fila.dia` ya llaman a `precioDelDia`**; el `precioDe` que queda es para leer
+`revisadoEl`, que no depende de la fecha.
+
+De paso cierra **§49.4**: `PRECIO_DESCONOCIDO` sube a $10/$50 —ahora sí cumple su
+propio principio de estimar por arriba— y entran `claude-fable-5`,
+`claude-opus-4-7` y `claude-opus-4-6`.
+
+Es el commit que mejor sale de los seis: cogió un hallazgo que yo di por ambiguo
+y encontró el defecto real que había debajo.
+
+---
+
+## 50.1 Y lo que vi mirando producción, que no está en ningún commit
+
+### 🔴 El único vigilante del crédito no puede dispararse
+
+El cron de coste corre cada hora y escribe esto, medido hoy a las 21:00:35Z:
+
+```
+Coste IA · $0.53 de $20 (3%) · ritmo $0.32/dia · quedan 60 dia(s) · precios de 2026-08-25
+```
+
+Tres cosas, y las tres comprobadas:
+
+1. **`PRESUPUESTO_IA_USD` no está en Cloud Run.** Comprobado en
+   `gcloud run services describe pmo-api`: no aparece entre las variables del
+   contenedor. Así que corre con `PRESUPUESTO_POR_DEFECTO = 20`.
+2. **El umbral es inalcanzable al ritmo real.** `UMBRALES = [0.75, 0.9]`, así que
+   el primer aviso pide **$15 de gasto dentro del mes en curso** —`estimar` corta
+   en `desdeMes` (`ai-cost.service.ts:148-152`), o sea gasto mensual, que se
+   reinicia el día 1—. A $0.32/día, un mes entero suma **$9.92**. El 75 % no se
+   cruza nunca.
+3. **«Quedan 60 días» se mide contra los $20, no contra el saldo.** El saldo real
+   de Anthropic eran **$8.14** el 24-08 (§46.1), no lo conoce ninguna línea de
+   este código, y **no se reinicia el día 1**. El número que sale del log es unas
+   tres veces el que importa, y va en la dirección de «queda más de lo que
+   queda» — la misma que este módulo declara peligrosa dos veces en sus propios
+   docblocks, una para el modelo desconocido y otra para el divisor del ritmo.
+
+O sea: **se construyó el vigilante que pedía §46.1 y quedó midiendo otra cosa.**
+Vigila *gasto mensual contra un presupuesto de ejemplo*; lo que se acaba es *un
+saldo prepagado*. Y el 31 de agosto —dentro de cinco días— Sonnet 5 sube un 50 %,
+que es el modelo que hace toda la clasificación.
+
+*Lo que no afirmo:* si el presupuesto **debe** seguir al saldo de Anthropic o ser
+un tope de gasto propio es decisión de producto, no mía. Lo que sí es defecto,
+decida lo que decida el Jefe: **hoy no hay ningún valor de `PRESUPUESTO_IA_USD`
+configurado, y con el que hay por defecto la alarma no puede sonar.**
+
+### ⚠️ El freno sigue sin registrarse, y ahora calla veinticuatro veces al día
+
+`alert.service.ts:84` escribe `ALERTA · …` **antes** de consultar
+`debeMandarse()`. Es el hallazgo que dejé en §47 —*un freno cuyo efecto no se
+registra no se puede auditar*— y sigue abierto.
+
+Lo que cambia es el precio. Con la cita diaria era una línea ciega al día; desde
+que el cron es horario son veinticuatro. Hoy, de 16:01Z a 21:00Z, seis líneas
+`WARNING` idénticas anunciando la subida del 31. `FRENO_SUBIDA_S` son 7 días, así
+que a Google Chat le habrá llegado **una** — pero eso lo deduzco leyendo el
+código, no el log, que es justo el problema.
+
+---
+
+**No cierro nada.** Cuatro cosas para repartir: los dos defectos de `ba609aa`, el
+presupuesto sin configurar y el freno sin instrumentar.
+
+---
+
+## 51. Sesión de uso real con el Jefe, en el navegador (2026-08-26)
+
+Primera vez que audito **usando la aplicación** en vez de leerla. El Jefe abrió la
+suya, trabajó, y me pidió que interactuara y le dijera qué siento. Todo lo de
+abajo está medido en producción.
+
+> **Sin nombres ni contenido, por orden del Jefe.** Aquí van mecánicas: endpoints,
+> códigos, tiempos y números. Los correos son de clientes reales y este cuaderno
+> viaja a GitHub.
+
+### Mecánicas medidas
+
+**Arranque en frío — cinco llamadas, todas 200:**
+
+```
+GET /auth/me
+GET /tags
+GET /emails?status=PENDING&take=20
+GET /health/ready      ← toca Postgres y Redis
+GET /health            ← solo para pintar version y uptime
+```
+
+**Latido:** ese par de salud se repite cada 5 min mientras la pestaña siga
+abierta (~288 comandos de Upstash al día por pestaña). Las métricas no se piden
+hasta entrar en su pestaña.
+
+**Mover una tarjeta:** `PATCH /tasks/{id}/move` → 200. **Una sola petición**,
+interfaz optimista, arrastre fluido. Funciona bien.
+
+**El socket:** su vida es **lo que le quede al access token**, no quince minutos.
+`programarCaducidad` (`tasks.gateway.ts:258`) programa contra la caducidad
+absoluta, así que un socket que nace tarde vive poco. Ciclos medidos: **2m38s** y
+**2m32s**. El cierre y la vuelta, con refresco de cookie y reingreso a la sala,
+tardaron **434 ms**. La alternancia en el log del backend es estricta: **nunca
+hubo dos sockets vivos**, así que la invariante que el propio hook documenta se
+cumple. La revalidación de §47.4 queda **comprobada viva en producción**, que era
+lo que faltaba.
+
+### Lo que el Jefe reporta, comprobado en el código
+
+**1. Las tareas se crean solas.** `EmailDetailModal.tsx:127` enseña
+`🪄 Generar Tareas (IA)` **solo si `!isProcessed`**. Todo lo que la tubería ya
+procesó llega con las tarjetas hechas: no hay paso donde una persona diga cuáles
+sí. El botón manual existe únicamente para lo que la IA no tocó.
+
+**2. Del correo no hay salida hacia sus tareas.** Ese mismo botón, una vez
+procesado, queda `disabled` con `cursor-not-allowed` y el texto
+`✅ Convertido a Tareas`. Es la única pista, y es un cartel, no un enlace.
+
+**Y el vínculo sí existe en la base:** `model Email` declara `tasks Task[]`. **No
+falta el dato, falta el enlace.** De todo lo del día es lo que más me llama la
+atención: el trabajo caro está hecho y lo que sobra es una línea de interfaz.
+
+**3. Los adjuntos no existen en el sistema.** `model Email` no tiene campo ni
+relación de adjuntos. Y `gmail.service.ts:330-347` dice por escrito que cuando
+Gmail manda `attachmentId` en vez de `data` **no se descarga**, y que en esos
+casos *«el cuerpo se pierde»*. No es que falte el botón de descargar: **el
+archivo nunca entra**. Por eso el Copiloto no puede analizarlo — no está ciego,
+es que no hay nada que mirar. _Y el mismo comentario admite que hay correos cuyo
+cuerpo también se pierde por esa causa._
+
+**4. El Copiloto tiene dos herramientas.** `tool-runner.service.ts:59-60`
+despacha exactamente `SEARCH_EMAILS` y `GET_METRICS`; cualquier otra cosa cae en
+`Herramienta desconocida`. Lo que el Jefe cita de su respuesta —que solo ve el
+agregado del tablero y no el origen de cada tarea— **es literalmente cierto**.
+No se resiste: no tiene por dónde. Conviene decirlo, porque un modelo que declara
+bien sus límites es lo contrario de un problema.
+
+**5. El número, dicho por la propia aplicación:** *333 tareas — 300 en TODO, 3 en
+curso, 1 pospuesta, 1 hecha, 28 vencidas.* Sobre una bandeja de veinte correos
+cargados. Eso es la saturación que reporta, cuantificada.
+
+**6. Los hilos se deciden por mensaje.** Un hilo del día traía **doce mensajes**,
+cada uno una fila `Email` propia (`gmailMessageId @unique`), cada una clasificada
+por separado. La agrupación por `threadId` es **solo de pintado**: los botones de
+triaje viven en la cabecera y los mensajes anidados solo ofrecen «Copiloto».
+Responder dentro del hilo crea un mensaje nuevo, que entra, se clasifica y vuelve
+a marcar. El esquema **tiene `threadId` indexado** y la decisión no lo usa.
+
+### 🆕 7. El cronómetro y la columna no se hablan
+
+Hallazgo mío, de mover cosas:
+
+- Arrastré una tarjeta de *Por Hacer* a *En Progreso*. El `PATCH .../move`
+  devolvió 200 y la tarjeta se movió. **Su reloj siguió en `0s`, con el botón en
+  `▶ INICIAR`.**
+- Y la primera tarjeta del tablero lleva **167 h 55 m corriendo** —siete días—
+  **sentada en *Por Hacer***, con su botón en `⏹ DETENER`.
+
+Hay una columna que se llama «En Progreso» y un cronómetro por tarjeta, y ninguno
+de los dos sabe del otro. Se puede estar «en progreso» con cero segundos y se
+puede acumular una semana de reloj sin haber empezado. **Y el efecto en las métricas es el contrario del que supuse al escribirlo:**
+comprobado en la pantalla de Métricas, *Tiempo Registrado* marca **0.0 hrs** en la
+ventana del 20 al 26 de agosto, con ese reloj corriendo desde hace siete días. Un
+cronómetro que nunca se detiene **no cierra su `TimeEntry`**, así que no suma: no
+envenena la métrica, **desaparece de ella**. Siete días de trabajo que el tablero
+cree que son cero.
+
+### Lo que enseña la sesión
+
+Las siete cosas de arriba no son siete defectos: son **dos**, repetidos.
+
+**El primero es que falta la capa de decisión.** La tubería clasifica, propone y
+**ejecuta** de un tirón. En ningún punto hay un sitio donde una persona diga
+«esta sí, esta no». De ahí salen las tareas que nadie pidió, las tres tarjetas por
+correo y las 300 en TODO. No es un fallo de la IA: la IA hace bien su parte. Es
+que **entre proponer y crear no hay nadie**.
+
+**El segundo es que la unidad está equivocada.** El sistema decide sobre
+**mensajes**; el Jefe trabaja sobre **asuntos**. Doce mensajes de una misma
+conversación son un asunto, y para el sistema son doce entradas, doce
+clasificaciones y doce oportunidades de crear tarjetas. Los adjuntos, el hilo que
+se vuelve a marcar y el «no sé qué tareas salieron de este correo» son la misma
+grieta vista desde tres lados.
+
+Y una cosa que conviene decir porque es la buena noticia: **la fontanería está
+por encima del producto.** El arrastre es instantáneo, el movimiento cuesta una
+sola petición, el socket se revalida solo en 434 ms, el Copiloto declara sus
+límites con honestidad y el backend contesta en décimas. Lo que falta no es
+capacidad: es **dónde se decide y sobre qué se decide**.
+
+**No cierro nada.**
+
+---
+
+## 51.1 El correo de prueba del Jefe, cronometrado de punta a punta
+
+A mitad de la sesión el Jefe mandó un correo de prueba **diseñado**: un cuerpo con
+**seis tareas numeradas**, una de ellas *«lee el archivo adjunto»*, y un adjunto de
+verdad. Luego respondió al hilo con una línea. Quedó grabado entero.
+
+### La tubería, con reloj
+
+```
+22:53:04.015  Webhook de Gmail recibido (historyId 6612163)
+22:53:04.128  POST /webhooks/gmail 200
+22:53:04.521  Sync incremental: 1 encolado, 1 guardado
+22:53:04.599  Procesando clasificación de email …owg8s001z
+22:53:12.318  Resultado de IA: isActionable=true, 6 tareas creadas   ← 8,3 s
+
+22:54:05.796  Webhook de Gmail recibido (historyId 6612237)
+22:54:10.681  Sync incremental: 0 encolados
+22:54:12.560  Resultado de IA: isActionable=true, 6 tareas creadas   ← 6,7 s
+```
+
+**De correo recibido a tarjetas en el tablero: menos de nueve segundos.** Eso
+funciona, y funciona bien.
+
+### 🔴 Y aquí está la duplicación, probada con entrada controlada
+
+El cuerpo del primer mensaje pedía **seis** tareas. Se crearon **seis**: la
+clasificación es exacta.
+
+Después el Jefe **respondió al hilo** con una sola línea —*«anotado procedo a
+trabajar en ello»*— y ese mensaje, cuyo cuerpo es su línea **más las seis tareas
+citadas debajo**, se clasificó otra vez y creó **otras seis**.
+
+**Doce tarjetas de seis tareas reales.** No es una estimación ni una inferencia:
+son dos líneas de log con el mismo número, sobre una prueba que el Jefe diseñó.
+
+Y el mecanismo generaliza mal: **cada respuesta arrastra el hilo citado**, así que
+un hilo de N mensajes reclasifica el mismo contenido N veces. El hilo que audité
+antes tenía **doce mensajes**. Eso es lo que hay detrás de las **300 tareas en
+TODO**: no son trescientas cosas que hacer, son unas pocas contadas muchas veces.
+
+_El sistema tiene `threadId` indexado y `gmailMessageId @unique`. Decide sobre el
+segundo e ignora el primero._
+
+### 📎 El adjunto: la prueba salió como estaba escrito
+
+El correo traía adjunto y una tarea que decía *«lee el archivo adjunto»*. En el
+detalle del correo **no aparece el adjunto por ningún lado**: ni nombre, ni icono,
+ni descarga. Concuerda con `model Email`, que no tiene campo ni relación para
+adjuntos, y con `gmail.service.ts:330-347`, que declara que las partes con
+`attachmentId` **no se descargan**.
+
+Así que la IA creó una tarea que **le pide a alguien leer un archivo que el
+sistema nunca guardó**. Es la mejor ilustración posible del hueco: no es que el
+Copiloto no sepa leerlo, es que el archivo no entró.
+
+### 🔴 Y una que sale de la pantalla de Métricas, y es de las gordas
+
+| Pantalla | Qué dice |
+|---|---|
+| **Bandeja** | «20 correos · 8 conversaciones» |
+| **Métricas → Bandeja Pendiente** | **329** · *«Total: 329 sin despachar»* |
+
+**La bandeja tiene 329 correos pendientes y la pantalla de la bandeja dice
+veinte.** Es mi hallazgo de esta sesión —`take=20` y `emails.length`— visto desde
+el otro lado, y con el factor puesto: **16 veces**. No es un contador impreciso;
+son dos pantallas de la misma aplicación dando dos verdades sobre lo mismo, y la
+que el Jefe mira todos los días es la que se queda corta.
+
+_Se ve además cómo muerde: al entrar el correo de prueba, el hilo que antes
+enseñaba doce mensajes pasó a enseñar **once**. Algo salió de la página cargada y
+**nada lo dijo**._
+
+### ✅ Lo que sí quedó cerrado, y conviene anotarlo
+
+- **§49.12 está cerrado, y mejor de lo que pedí.** La nota del gráfico ya no dice
+  «antes del último despliegue»: dice *«las tareas completadas antes de que se
+  empezara a registrar la fecha (`completedAt`) no aparecerán aquí»*. Eso es
+  exacto y no asusta con algo falso.
+- **§49.13 sigue abierto**, tal cual: *Bandeja Pendiente* repite `329` en el valor
+  y en el subtítulo.
+
+### 💸 Y el precio de una pregunta al Copiloto, medido
+
+```
+Copiloto (claude-opus-5): 13672 entrada / 871 salida
+```
+
+A tarifa de Opus 5 ($5/$25 por millón): **≈ $0.09 la pregunta**. Con los ~$8.14 de
+saldo eso son **unas noventa preguntas**, y el nivel `Pro` viene seleccionado por
+defecto en el cajón. Es el dato que le faltaba a §50.1 para que la decisión de
+`PRESUPUESTO_IA_USD` se tome con un número delante.
+
+### 🟡 Menor, del mismo log: dos avisos vacíos por cada correo
+
+Por cada correo real llegaron **tres** webhooks de Gmail, y **dos sincronizaron
+cero correos** (22:53:56 y 22:54:10). Cada uno cuesta un webhook, un trabajo en
+la cola, una llamada al historial de Gmail y su ida y vuelta a Redis. No rompe
+nada; multiplica por tres el tráfico de la ingesta.
+
+---
+
+## 52. Despertar del 2026-09-07: máquina nueva, y una rotación a medias
+
+> ## ⚠️ LEER ANTES QUE NADA — la premisa de §52.1 era falsa
+>
+> Escribí toda esta sección creyendo que **la máquina se había formateado y
+> saneado por seguridad**. **No ocurrió.** Es un portátil nuevo y la información
+> se recuperó íntegra desde un respaldo de disco. No hubo incidente.
+>
+> **La corrección entera, con lo que cae y lo que sobrevive, está en §52.10 al
+> final.** Se resume así: la medición del `.env.txt` sigue en pie tal cual; lo que
+> deduje de ella, no. Y **mi recomendación se invierte** — véase §52.10.
+
+Doce días desde §51. Portátil nuevo, restauración íntegra desde respaldo de
+disco. Este barrido es completo pero **cojo, y hay que decirlo antes que nada**:
+no hay credenciales de nube en esta máquina, así que `gcloud` y `gh` no han
+contestado ni una vez. Todo lo que digo de producción sale de sondas HTTP sin
+sesión.
+
+### Chequeo estándar
+
+| Qué | Resultado |
+|---|---|
+| `git log` | HEAD `a31384e`, **el mismo que el 26-08**. Cero commits en doce días. |
+| `git status` | `ALANA.md` +408, `DOC.md` +18, `package-lock.json` ±1 — **sin commitear** |
+| Herramientas | node 24.19.0 · npm 11.17.0 · git 2.55.0 · gh 2.100.0 · gcloud 583.0.0 · docker 29.7.2 — todas reinstaladas |
+| **Credenciales** | `gh auth status` → *not logged into any host*. `gcloud auth list` → *No credentialed accounts* |
+| `core.hooksPath` | `.githooks` — **sobrevivió al restore**, el portero pre-commit sigue armado |
+| `npm ci --dry-run` | exit 0 con el lock de HEAD |
+| Lint | 0 en los tres espacios de trabajo |
+| Pruebas | **712 en 36 suites, todas en verde** |
+| `tsc --noEmit` | limpio en `apps/api` y en `apps/web` |
+| API en producción | `/health` 200 → `7a85831` · uptime **215.946 s (≈2,5 días)** |
+| `/health/ready` | 200 · database up (189 ms) · schema 11 aplicadas / 0 a medias / 0 revertidas · redis up (140 ms) |
+| Frontend | `pmo-frontend-ten.vercel.app` sirve `259c91f`, construido `2026-08-25T23:30:05Z` |
+
+Nada se ha movido en doce días, y el sistema **sigue en pie solo**: la base, el
+esquema y Redis responden, y el servicio lleva dos días y medio sin reiniciarse.
+
+**Dos apuntes del chequeo que no son rutina:**
+
+- **`pmo-frontend.vercel.app` sigue sirviendo otra aplicación entera** —
+  `<title>Vite + React</title>` contra el `PMO Dashboard` de `apps/web/index.html`.
+  Es §13, y cumple hoy **veintiocho días abierto**.
+- **Un uptime de 2,5 días significa que Cloud Run no ha escalado a cero en 2,5
+  días.** Con `--no-cpu-throttling` eso es CPU asignada todo ese tiempo. Es la
+  consecuencia esperada del barrido cada 15 min, pero es la primera vez que la
+  mido: la decisión de §37.7 se tomó cuando esto era gratis, y sigue sin revisarse
+  con la factura delante.
+
+---
+
+### 🔴 52.1 La rotación de credenciales se generó y **no se aplicó**
+
+En la raíz hay un `.env.txt` **creado hoy a las 12:04**, con los mismos 24 campos
+que `.env` (del 25-08, restaurado del respaldo). Comparados campo a campo por
+hash, sin mirar ni un valor:
+
+```text
+CLAVE                        .env       .env.txt   ¿igual?
+ANTHROPIC_API_KEY            521ab37b   11a875bb   >>> NO <<<
+GEMINI_API_KEY               98db66ca   eb8ce2c1   >>> NO <<<
+GOOGLE_CLIENT_SECRET         27f49213   4c279b6d   >>> NO <<<
+JWT_SECRET                   cab228ab   9200086e   >>> NO <<<
+TOKEN_ENCRYPTION_KEY         c0df944d   f74df9ae   >>> NO <<<
+DATABASE_URL · REDIS_URL · API_URL · WEB_URL · GOOGLE_REDIRECT_URI
+GMAIL_PUBSUB_TOPIC · los tres CLAUDE_MODEL_* · NODE_ENV · …    todos iguales
+```
+
+**Cambian los cinco secretos y ni una sola pieza de configuración.** Eso no es
+una edición: es una rotación. Y las formas lo confirman — `JWT_SECRET` pasa de 32
+caracteres a 64, y `GEMINI_API_KEY` **cambia de familia entera**, de `AIzaSy…`
+(39) al formato nuevo `AQ.Ab8R…` (53).
+
+**Confirmado por el Jefe: las claves se generaron y no se han aplicado en ningún
+sitio.** De ahí sale el hallazgo, y es el más grave del día:
+
+> **Se formateó la máquina para sanearla, y las credenciales que vivían en esa
+> máquina siguen vivas en producción.** El disco se limpió; lo que el disco
+> contenía, no.
+
+Un formateo cierra el acceso al equipo. No cierra una `sk-ant-…`, una
+`GOCSPX-…` ni una clave de Gemini: valen desde cualquier sitio del mundo y no
+saben en qué máquina estuvieron. **Mientras el juego viejo no se revoque, el
+saneamiento está a medias, y la mitad que falta es la que protege.**
+
+*Lo que no afirmo:* si hubo compromiso real, cuál fue el vector, ni si alguien
+llegó a copiarlas. No lo puedo ver desde aquí y no me hace falta para el
+hallazgo: **una credencial que estuvo en una máquina que hubo que formatear se
+rota, se sepa o no lo que pasó.**
+
+### 🟠 52.2 Y la aplicación lee el fichero viejo, no el nuevo
+
+`app.module.ts:48` fija `envFilePath: ["../../.env", ".env"]`.
+
+**`.env.txt` no lo lee nadie, ni ahora ni nunca.** No es un fichero de
+configuración: es una nota. Hoy conviven dos juegos de secretos en la raíz, **el
+que manda es el viejo**, y nada en el árbol dice cuál es cuál.
+
+Los dos están cubiertos por `.gitignore` — `.env.*` alcanza a `.env.txt`, lo
+comprobé con `git check-ignore` — así que **ninguno ha viajado a git**. Eso está
+bien, y es mérito de la regla que se escribió el 18-08.
+
+*Detalle de forma:* `.env.txt` trae además tres líneas pegadas de la consola de
+Google (`ID del proyecto`, `Nombre del proyecto`, `Número del proyecto`) que no
+son variables. Está montado a mano, y se nota.
+
+### 🟡 52.3 El `.env` local apunta a la base de **producción**
+
+```text
+.env          DATABASE_URL = postgresql://<cred>@34.59.49.175:5432/pmo
+.env.txt      DATABASE_URL = postgresql://<cred>@34.59.49.175:5432/pmo   (igual)
+.env.example  DATABASE_URL = postgresql://<cred>@localhost:5432/pmo      ← lo correcto
+```
+
+Con `NODE_ENV=development`. Un `prisma migrate reset` o un `db push` desde esta
+terminal apunta ahí.
+
+**Hoy no muerde, y lo comprobé en vez de suponerlo:** abrí un socket contra
+`34.59.49.175:5432` y no contesta. Las redes autorizadas de Cloud SQL siguen
+vacías desde el 19-08. El riesgo es **latente**, no activo — vive del día en que
+alguien reabra la IP para un rato y se olvide de este fichero.
+
+*Menor, de la misma familia:* el `JWT_SECRET` de `.env` es literalmente el
+marcador de posición de `.env.example` (`cambia-…`, 32 caracteres). El entorno
+local nunca tuvo un secreto propio. No es explotable — es local — pero explica
+por qué el de `.env.txt` sí está bien generado.
+
+### ✅ 52.4 Si la rotación se aplica, `TOKEN_ENCRYPTION_KEY` tiene consecuencia — y está prevista
+
+La miré porque es la única de las cinco que **cifra datos en reposo**: cambiarla
+no invalida una sesión, deja ilegible lo guardado.
+
+Rastreada entera, y el código lo tenía escrito antes que yo:
+
+```text
+crypto.service.ts:78    decryptJson → lanza si la etiqueta no cuadra
+users.service.ts:56-62  getGoogleCredentials → captura, registra
+                        «TOKEN_ENCRYPTION_KEY cambió», devuelve null
+auth.service.ts:99-104  getAuthorizedClient → convierte ese null en 401
+                        «debe volver a autorizar»
+```
+
+Y el trabajo de fondo tampoco se queda mudo: `renovarWatchDeTodos`
+(`gmail.service.ts:1179`) cuenta los fallos y, si `renovados < usuarios`,
+**dispara `avisar()` a Google Chat con el motivo dentro**, no un contador a secas.
+
+**O sea: aplicar la clave nueva no rompe nada en silencio.** El efecto es que
+todo usuario con Google conectado tiene que volver a autorizar, y el sistema lo
+dice. Lo anoto como cosa que hay que saber **antes** de aplicarla, no como
+defecto.
+
+*Lo único que le pondría:* ese aviso llega por el cron de las 02:30, así que
+entre aplicar la clave y enterarse pueden pasar hasta 24 h. Si se aplica,
+conviene disparar `/cron/gmail-watch` a mano justo después en vez de esperar al
+reloj.
+
+### 🟠 52.5 `npm audit` no se ha ejecutado **nunca** en este proyecto
+
+Cero menciones en los 426 KB de este cuaderno. Lo ejecuté hoy:
+
+```text
+todas las dependencias        29 vulnerabilidades (4 bajas, 14 medias, 11 altas)
+solo produccion --omit=dev    15 vulnerabilidades (1 baja,   9 medias,  5 altas)
+```
+
+**El número que importa es el segundo**, y por eso lo separo: casi todas las
+altas del primero son herramienta de construcción — `webpack`, `@nestjs/cli`,
+`inquirer`, `tmp` — que no viaja al contenedor.
+
+De las que sí llegan a producción, dos merecen nombre:
+
+- **`qs`** (media, DoS remoto) — **es alcanzable**: Express analiza la cadena de
+  consulta con `qs` en cada petición y la API está en internet abierto.
+  `npm audit fix` lo cubre **sin cambio de ruptura**.
+- **`multer`** (alta, cinco avisos de DoS) — entra de arrastre por
+  `@nestjs/platform-express`. **No hay subida de ficheros en el producto** (§51.1:
+  los adjuntos ni siquiera existen en el modelo), así que no hay ruta que lo
+  alcance. Su arreglo **sí** es de ruptura. Yo no lo tocaría todavía.
+
+Lo que va al registro no es la lista: es que **un proyecto que construyó tres
+capas de vigilancia y probó su bóveda con fuego real nunca le preguntó a sus
+dependencias**. Es el hueco de §46 visto desde otro lado — vigilamos lo que el
+sistema hace, no de qué está hecho.
+
+### 🟡 52.6 Un volcado de producción de hace 19 días sigue en la raíz
+
+`pmo-2026-08-19T083205Z.dump` — 227.573 bytes, formato `PGDMP` (pg_dump custom),
+del 19-08. Comprobé su **forma**, no su contenido: dentro están las tablas
+`User`, `Email`, `Task`, `Tag` y `TimeEntry`. Es el volcado del simulacro de
+restauración, el de las 394 filas reales.
+
+Está en `.gitignore` (`*.dump`) y **nunca ha viajado a git** — lo verifiqué
+recorriendo las 413 revisiones. Pero **sobrevivió intacto a un formateo hecho por
+seguridad**, porque volvió dentro del respaldo del código: un volcado de correo
+de clientes reales, sin cifrar, en un directorio de trabajo, diecinueve días
+después de haber cumplido su función.
+
+Es la regla que este proyecto ya escribió en otro sitio: *«el código con fecha de
+caducidad se retira el día que caduca»*. Esto también.
+
+### 🟡 52.7 Dos directorios sin ignorar que un `git add` masivo se llevaría
+
+| Qué | Tamaño | Estado |
+|---|---|---|
+| `.venv-auditors/` | **229 MB** | creado hoy 13:23 por Antigravity (`google_antigravity 0.1.16`, `google_genai`) · **NO ignorado** |
+| `.claude/` | pequeño | `settings.local.json` · **NO ignorado** |
+
+Ninguno de los dos debe viajar. Hoy la casa se salva por una regla de conducta
+— *«añadir por ruta, nunca `git add -A`»* — y no por el `.gitignore`. **Una regla
+que se sostiene sola vale más que una que hay que recordar**, y esta cuesta dos
+líneas.
+
+### ⚪ 52.8 El lock desincronizado, y **no** rompe — comprobado, no supuesto
+
+`package-lock.json` registra `apps/web` en `0.1.0`; el `package.json` de HEAD dice
+`0.1.1` desde `d2bb589`. Cualquier `npm install` local vuelve a ensuciar el
+fichero, que es por lo que sale en `git status` hoy.
+
+Iba a reportarlo como riesgo de CI. **Lo probé antes de escribirlo**: devolví el
+lock a HEAD y `npm ci --dry-run` sale **exit 0**. No rompe la construcción. Queda
+en cosmético — un fichero permanentemente sucio, que ya es de por sí una
+invitación a colarlo en un `add`.
+
+### 🔴 52.9 La evidencia de dos auditorías vivió doce días en un solo disco, y ese disco se formateó
+
+`ALANA.md` tenía al despertar **408 líneas sin commitear**: §50, §50.1, §51 y
+§51.1 — el barrido de los seis commits, el vigilante de crédito que no puede
+dispararse, la sesión de uso real con el Jefe y el correo de prueba cronometrado
+con la duplicación probada. `DOC.md` tenía otras 18.
+
+**Se salvaron por el respaldo, no por el proceso.** Y este cuaderno lleva escrito
+desde su primera línea que existe porque *«la evidencia es lo único que no se
+puede reconstruir después»*.
+
+No lo commiteo yo: mi alcance es escribir aquí. **Lo levanto como lo que es — el
+hallazgo con la ventana de pérdida más grande de todo el barrido — y con dueño:
+Doc.** El resto de la casa exige que el trabajo llegue a producción para contar;
+la auditoría tiene la misma regla, y hoy no la cumplió.
+
+---
+
+### Lo que sigue abierto de §50 y §51 — verificado hoy línea a línea
+
+Sin commits en doce días esperaba que siguieran todos. Lo comprobé igualmente en
+el archivo, porque un estado verificado caduca en cuanto alguien actúa:
+
+| Ref | Qué | Comprobación de hoy |
+|---|---|---|
+| §50.1 | `PRESUPUESTO_IA_USD` sin configurar; con los $20 por defecto y `UMBRALES=[0.75,0.9]` el aviso no puede sonar | `ai-cost.service.ts:10,37,362` — **abierto, idéntico** |
+| §50.1 | La rama roja de `health.status` es inalcanzable | `App.tsx:179-180` — **abierta**; `health` sigue poblándose solo desde `/health` |
+| §50.1 | La tarjeta se titula `/health/ready` y pinta datos de `/health` | `App.tsx:176,183` — **abierta** |
+| §47 | El freno de alertas no deja rastro cuando **calla** | `alert.service.ts:84` — matizado abajo |
+| §51 | Falta la capa de decisión; la unidad es el mensaje y no el hilo | sin cambios |
+| §51.1 | La bandeja dice 20 y Métricas dice 329 (§49.13) | sin cambios |
+| §13 | `pmo-frontend.vercel.app` sirve otra aplicación | **comprobado hoy: sigue** |
+
+**Y una corrección mía sobre §47, que es de las que este cuaderno debe hacerse a
+sí mismo.** Releí `alert.service.ts:78-84` y encima de esa línea hay un
+comentario que no cité en §50.1:
+
+> *«Se registra siempre, se mande o no: el log es la fuente de verdad y la alerta
+> solo una notificación. Si el webhook está caído, la información no se pierde.»*
+
+**Eso es una decisión deliberada, y es la correcta.** Registrar antes del freno no
+es el defecto; yo lo presenté como si lo fuera. El hueco real es más pequeño y
+más concreto: **no hay una segunda línea que diga que el freno silenció el
+aviso.** No sobra el log de arriba — falta el de abajo. Un `debug` de una línea
+en el `return` de `debeMandarse` cierra §47 entero.
+
+Lo dejo escrito porque es exactamente lo que me pide la regla del 21-08: lo que
+huela a decisión consciente se pregunta o se relee **antes** de afirmarse. Esta
+vez lo afirmé primero.
+
+---
+
+### Lo que NO he comprobado, y hoy es mucho
+
+Lo digo con más peso que otras veces, porque **medio barrido no se ha podido
+hacer**:
+
+- **Nada en Google Cloud.** Sin `gcloud` autenticado: ni Cloud Logging, ni las
+  variables reales de Cloud Run, ni los seis disparadores de Scheduler, ni las
+  políticas de alerta, ni la facturación. En §50 los miré todos; hoy, ninguno.
+- **Nada en GitHub.** Sin `gh`: ni `gh run list`, ni `gh variable list`, ni los
+  estados de despliegue. **No sé si el último CI quedó en verde**; lo doy por
+  bueno porque el árbol no se ha movido, que es un argumento débil.
+- **Si producción tiene o no las claves nuevas** lo sé por el Jefe, no por haberlo
+  visto. Es lo primero que verificaré en cuanto haya credenciales.
+- **Nada en navegador todavía.** Esta terminal despertó sin la integración de
+  Chrome cargada.
+- **Nada de carga**, como siempre.
+- **El contenido del volcado**: comprobé su forma y sus tablas; no lo descomprimí
+  ni lo abrí, y no pienso hacerlo — es correo de clientes.
+
+**No cierro nada.** Nueve cosas para repartir, y la primera — revocar el juego de
+credenciales viejo — no es de @Claude ni de @Gravity: es del Jefe, en las
+consolas.
+
+---
+
+## 52.10 Corrección de premisa: no hubo formateo, y me corrige entera (2026-09-07)
+
+**Del Jefe, vía Doc, el mismo día.** No hubo formateo ni saneamiento por
+seguridad: es **un portátil nuevo** y la información se recuperó **íntegra desde
+un respaldo de disco**. Ningún incidente.
+
+Y explica de paso las tres cosas que yo había atribuido a un formateo: `gh` y
+`gcloud` sin sesión —las credenciales viven en el sistema operativo, no en la
+imagen del proyecto—, y la supervivencia de las 408 líneas sin commitear y del
+volcado del 19-08.
+
+### De dónde salió el error, porque el sitio importa
+
+La instrucción con la que desperté decía, literal, *«la máquina fue formateada y
+saneada por seguridad»*. **No me lo inventé; lo heredé.** Pero tampoco lo traté
+como lo que era —una frase de un encargo, sin comprobar— sino como un hecho, y
+construí §52.1 encima: una vez dentro, cada dato que encontraba se leía a su luz.
+El `.env.txt` con cinco secretos distintos, que es una observación neutra, se
+convirtió en «las credenciales de la máquina comprometida siguen vivas».
+
+**Y ahí está lo que hay que anotar.** La regla del 21-08 me cerró las tres
+bitácoras para que no heredara el relato del que ejecuta. Hoy heredé un relato
+igual de decisivo **por el único canal que esa regla deja abierto: el encargo**.
+Cerrar las bitácoras y no mirar la premisa del encargo es proteger una puerta y
+dejar la otra de par en par.
+
+Lo que debí hacer no era desconfiar del Jefe: era **darme cuenta de que estaba
+razonando sobre un suceso del que no tenía ni una prueba en la máquina**. Nunca
+busqué una. Un formateo deja rastro —fechas de creación uniformes, perfiles
+recién hechos, historiales vacíos— y yo tenía delante lo contrario: `.env` con
+mtime del 25-08 y el `.git` entero con doce días de polvo intacto. **La evidencia
+para desmentirlo estaba en el mismo barrido que escribí.**
+
+Es la misma forma que ya está dos veces en este cuaderno —los 27 huérfanos que no
+eran Redis, la alarma del parseo que no había mordido— pero al revés: aquellas las
+desmonté midiendo. Esta la sostuve porque venía de arriba.
+
+### Lo que cae
+
+- **La frase «se formateó la máquina para sanearla y las credenciales siguen
+  vivas en producción» está retirada.** No hubo saneamiento y no hay ni un indicio
+  de compromiso.
+- **Retiro la urgencia de revocar el juego de claves viejo.** Sin incidente, no
+  hay nada que cerrar. §52.1 baja de 🔴 a 🟠.
+- Y de §52.6 y §52.9 se cae el *«sobrevivió a un formateo»*. Los dos hallazgos
+  siguen en pie; lo que era falso es el mérito que les atribuí.
+
+### Lo que sobrevive, que es casi todo — y por qué
+
+**La medición no dependía de la premisa.** Los cinco hashes distintos, los 24
+campos idénticos, el `JWT_SECRET` de 32 a 64, la clave de Gemini cambiando de
+familia y el `envFilePath: ["../../.env", ".env"]` que hace que **la aplicación
+lea el fichero viejo** son hechos comprobados, y siguen exactamente igual. Lo que
+cambia es lo que significan.
+
+**El hallazgo reformulado, y ahora es el entero:**
+
+> Hay **dos juegos de credenciales en la raíz**, la aplicación lee uno, el otro no
+> lo lee nadie, y **nada en el árbol dice cuál es el bueno**. En una máquina
+> recién estrenada, eso no es un resto de una emergencia: es el estado normal en
+> el que quedó la mudanza, y es el que va a encontrar el siguiente que abra esta
+> carpeta.
+
+### 🔁 Y la recomendación se invierte, que es la parte útil
+
+Ayer, con un incidente detrás, aplicar `TOKEN_ENCRYPTION_KEY` costaba una
+reautorización de todos los usuarios **y compraba cerrar una exposición**.
+
+**Sin incidente, el mismo movimiento cuesta lo mismo y no compra nada.** Rotar la
+clave que cifra los tokens de Google en reposo obliga a volver a autorizar (§52.4)
+a cambio de cero.
+
+**Así que: no la apliquéis.** Ni esa ni las otras cuatro, mientras nadie ponga
+encima un motivo que yo no conozca. Y si el motivo existe, que se escriba: hoy
+hay un juego de claves nuevo, generado, sin aplicar y sin nota que diga por qué se
+generó — que es justo la clase de cosa que dentro de dos meses nadie se atreve a
+borrar ni a usar.
+
+**La pregunta que sustituye a mi alarma, y es para el Jefe:** ¿por qué se creó
+`.env.txt`? Si fue por dar por perdidas las claves al estrenar portátil y luego
+aparecieron en el respaldo, entonces **lo correcto es borrar el fichero nuevo y
+revocar las claves nuevas**, no las viejas — al revés de lo que dije esta mañana.
+
+### Lo que empeora, no mejora
+
+Dos cosas cambian de signo al quitar el formateo, y en la dirección mala:
+
+1. **§52.6, el volcado.** Escribí que *«sobrevivió a un formateo hecho por
+   seguridad»*. Lo que pasó es peor para un hallazgo de datos en reposo: **un
+   volcado de correo de clientes reales se copió, íntegro, a una segunda máquina
+   física.** No sobrevivió a nada — **se propagó**. Sigue sin cifrar, sigue sin
+   motivo para existir, y ahora ha estado en dos discos.
+
+2. **§52.9, la evidencia sin commitear.** Escribí *«se salvó por el respaldo, no
+   por el proceso»*. Con la corrección aguanta mejor, no peor: **no la salvó una
+   restauración cuidadosa, la salvó que alguien copiara un disco entero.** Una
+   imagen de disco no es un proceso, es una casualidad con buen tiempo. Y el
+   recuento de hoy es peor que el de esta mañana:
+
+   ```text
+   ALANA.md          698 lineas sin commitear
+   CLAUDE_MEMORY.md  102
+   DOC.md             18
+   .gitignore          4
+   ---------------------------------------------
+   822 lineas de bitacora y configuracion, en un solo disco
+   ```
+
+   **Son las tres bitácoras a la vez, no la mía sola.**
+
+### ✅ Y §52.7 queda cerrado — comprobado por mí, no por el reporte
+
+Doc informa de haber añadido `.claude/` y `.venv-auditors/` al `.gitignore`. Lo
+verifiqué en vez de creerlo, que es la regla de la casa:
+
+```text
+git check-ignore  .claude                       → IGNORADO
+git check-ignore  .claude/settings.local.json   → IGNORADO
+git check-ignore  .venv-auditors                → IGNORADO
+git check-ignore  .venv-auditors/pyvenv.cfg     → IGNORADO
+git status --short                              → sin un solo fichero sin rastrear
+```
+
+Cerrado de verdad, y **con la regla sostenida por el fichero y no por la
+conducta**, que era el punto.
+
+### Estado
+
+Sin cambios en lo demás. Sigo **sin poder auditar la nube**: `gh` y `gcloud`
+esperan a que el Jefe inicie sesión, y hasta entonces §52 vale la mitad de lo que
+debería. El siguiente paso de infraestructura arranca ahí.
+
+---
+
+## 53. Revisión de páginas, solo por HTTP (2026-09-07)
+
+**Sin navegador.** La integración de Chrome no llegó a conectarse: la sesión se
+relanzó con `--chrome` (comprobado en la línea de órdenes del proceso 14924) y la
+extensión *Claude in Chrome* v1.0.91 está instalada en el perfil `Default`, pero
+**no me llegó ni una herramienta de navegador**. Así que **no he visto la
+interfaz, no he pulsado nada y no he entrado con sesión.** Lo de abajo es lo que
+se puede medir desde fuera con `curl`, que resultó no ser poco.
+
+### ✅ Lo que está bien, y conviene decirlo primero
+
+**La superficie de autenticación de la API no filtra nada.** Las seis rutas de
+datos, sin sesión:
+
+```text
+/auth/me · /tags · /emails · /tasks · /dashboard/metrics · /time/report
+  → 401 {"message":"No hay sesión activa","error":"Unauthorized","statusCode":401}
+/cron/overdue · /webhooks/gmail · /copilot   → 404 (son POST)
+```
+
+Mismo mensaje en las seis, sin traza, sin nombre de tabla, sin decir si el
+usuario existe. Es lo correcto.
+
+**El CORS es lista blanca, no espejo** — y lo comprobé falsificando el origen:
+
+```text
+Origin: https://atacante.example   → access-control-allow-origin: https://pmo-frontend-ten.vercel.app
+Origin: (el legitimo)              → access-control-allow-origin: https://pmo-frontend-ten.vercel.app
+```
+
+Devuelve **siempre el mismo**, así que el navegador del atacante bloquea la
+respuesta. Con `access-control-allow-credentials: true` esto era justo lo que
+había que mirar, porque un CORS que refleja el origen con credenciales activadas
+es un agujero de libro. No lo es.
+
+**No hay mapas de fuente publicados:** `/assets/index-JNoC7SoZ.js.map` → 404, y el
+paquete de 847 KB no lleva `sourceMappingURL` al final.
+
+**Y la API va vestida entera** (Helmet): `x-content-type-options: nosniff`,
+`referrer-policy: no-referrer`, `x-frame-options: SAMEORIGIN`,
+`cross-origin-opener-policy: same-origin`, HSTS a un año.
+
+### 🟠 53.1 El tablero se puede meter en un marco ajeno, y la cookie va dentro
+
+Aquí está el hallazgo, y sale de cruzar dos cosas que por separado parecen bien.
+
+**Uno.** El frontend en Vercel se sirve **sin una sola cabecera de protección**:
+
+```text
+content-security-policy   >>> AUSENTE <<<
+x-frame-options           >>> AUSENTE <<<
+x-content-type-options    >>> AUSENTE <<<
+referrer-policy           >>> AUSENTE <<<
+permissions-policy        >>> AUSENTE <<<
+```
+
+**Dos.** En producción la cookie de sesión es `sameSite: "none"`
+(`session.service.ts:98`), y **tiene que serlo**: la SPA vive en Vercel y la API
+en Cloud Run, son sitios distintos, y con `lax` el navegador descarta la cookie en
+silencio. El docblock que hay encima explica esto muy bien, incluso nombra el
+arreglo de fondo — un dominio propio que ponga las dos mitades en el mismo sitio.
+
+**Lo que ese docblock no dice es la otra mitad de `None`:** una cookie
+`SameSite=None` **también viaja cuando la página está dentro de un `iframe`
+ajeno**. Sin `X-Frame-Options` ni `frame-ancestors`, cualquiera puede empotrar el
+tablero en su propia página con la sesión del Jefe viva dentro. Y este tablero se
+maneja **arrastrando y con botones de un solo clic** —mover, borrar, triar—, que
+es exactamente el tipo de interfaz sobre el que un secuestro de clic funciona.
+
+**Y la asimetría, que es lo que lo hace fácil de pasar por alto:**
+
+| | Protección de marco | ¿Alguien la enmarcaría? |
+|---|---|---|
+| **API** (Cloud Run, Helmet) | `x-frame-options: SAMEORIGIN` ✅ | No: devuelve JSON |
+| **Frontend** (Vercel) | **ninguna** | **Sí: es la interfaz** |
+
+**La mitad protegida es la que nadie enmarca, y la desprotegida es el tablero.**
+Helmet cubre lo que pasa por Nest; lo que sirve Vercel no pasa por Nest, y nadie
+puso ahí el equivalente.
+
+*Lo que no afirmo:* no he podido montar el `iframe` y probarlo — eso necesita
+navegador. Afirmo las dos piezas, que sí están medidas: cabeceras ausentes en la
+respuesta real, y `sameSite: "none"` en la línea de código.
+
+**Y el arreglo ya tiene sitio hecho:** `vercel.json` **ya lleva un bloque
+`headers`** —lo usa para el `Cache-Control` de `/version.json`—. No hay que
+inventar mecanismo ni tocar el panel, solo añadir entradas al bloque que existe.
+
+### Lo que queda pendiente del navegador
+
+Lo que iba a mirar y no he podido, para que no se pierda la lista:
+
+- Los dos defectos del semáforo (§50.1): la rama roja inalcanzable de
+  `App.tsx:179` y el 503 que se anuncia como *«Sin conexión con la API»*.
+- El desfase de §51.1: la bandeja dice 20, Métricas dice 329.
+- El correo sin salida hacia sus tareas, y el cronómetro que corre siete días en
+  *Por Hacer* sin sumar una hora.
+- Y ahora, además, **montar el `iframe` de §53.1** y ver si el secuestro de clic
+  se completa de verdad.
+
+**No cierro nada.**
+
+---
+
+## 54. La ingesta de correo lleva cuatro días muerta, y todo está en verde (2026-09-07)
+
+**Esta vez sí hubo navegador.** Lo primero que miré con él no fue la interfaz:
+fue el espacio **«Alertas PMO» de Google Chat**, que es donde el sistema pide
+ayuda. Llevaba once días pidiéndola.
+
+### La secuencia, con fechas
+
+| Cuándo | Qué dice el canal |
+|---|---|
+| **28 ago, 02:30** | Primer `Watch de Gmail sin renovar: 0 de 1` · `invalid_grant` · *«Token has been expired or revoked»* |
+| **28 ago – 3 sept** | Decenas de `Correo entrante perdido: un job agotó sus reintentos`, **todos** con `invalid_grant` |
+| **3 sept, 20:26** | El **último** «Correo entrante perdido». Desde ahí, silencio |
+| **4 sept, 20:06** | Cloud Monitoring, Capa 2: *push requests for `gmail-ingest-push` has not been seen for over **1410 minutes*** |
+| **5, 6 y hoy 7 sept, 02:30** | Solo queda una línea al día: `Watch de Gmail sin renovar: 0 de 1`, mismo `invalid_grant`, mismo usuario `cmsntcsn80000jn4jlxt18qag` |
+
+1410 minutos son 23 h 30 min: el último push cayó el **3 de septiembre sobre las
+20:30**, que es la misma hora del último aviso de correo perdido. Las dos
+mitades, medidas por sistemas distintos, apuntan al mismo minuto.
+
+### Lo que esto significa, y es lo contrario de lo que parece
+
+Hay **dos fases**, y confundirlas es el error que quiero evitar:
+
+1. **Del 28 de agosto al 3 de septiembre.** El token está revocado, pero el
+   `watch` sigue vivo. **El correo llega, el job falla, el correo se pierde —
+   y el canal avisa.** Ruidoso, pero honesto.
+2. **Del 3 de septiembre a hoy.** El `watch` caducó a los 7 días. Ya no llega
+   push, ya no hay job, ya no hay job que falle. **El correo se sigue perdiendo
+   y el canal ya no dice nada.**
+
+**El canal se calló justo cuando la pérdida se volvió total.** Quien mire hoy
+«Alertas PMO» ve una línea tranquila al día donde hace una semana había un
+aguacero, y la lectura natural —*se arregló*— es exactamente la contraria a la
+verdad. Esto no es una hipótesis sobre el diseño: es lo que el canal enseña.
+
+### El código hizo su trabajo. Los tres avisos son correctos
+
+Y hay que decirlo antes de nada, porque el defecto **no está en el código**:
+
+- `gmail.service.ts:1211` avisa con **la causa y el plazo dentro**: *«se apagará
+  cuando caduque el watch vigente (7 días)»*. Su docblock ya explica por qué el
+  contador sin motivo no servía. Avisó **6 días y 18 horas antes** del apagón.
+- `dead-letter.listener.ts:38` avisa de cada job que se rinde, con su `jobId` y
+  su motivo.
+- La Capa 2 de Cloud Monitoring detectó el apagón **sin depender del proceso**,
+  que es justo para lo que existe.
+
+**Los tres funcionaron. El apagón ocurrió igual.** Once mañanas seguidas con el
+aviso puesto, y en `git log` desde el 27 de agosto hay **un solo commit**, de
+documentación (`4430f1a`). Nada tocó el token.
+
+### 54.1 Lo que el canal no puede decirte: cuánto correo se perdió
+
+`alert.service.ts:9` frena por clave a **900 s**, y la clave de los correos
+perdidos es una sola: `dlq-gmail-sync`. En Chat los avisos van separados 16, 20,
+30 minutos — el freno estaba trabajando.
+
+Así que **cada mensaje no es un correo perdido: es una ventana de 15 minutos con
+al menos uno**. Lo que se ve en el canal es el suelo, no la cuenta. **El número
+real de correos perdidos no está en ningún sitio** — habrá que sacarlo de la cola
+`dead-letter`, que sí los guarda enteros.
+
+El freno no está mal puesto: sin él serían cientos de mensajes. Pero conviene
+saber qué se está leyendo.
+
+### 54.2 Y el dato que lo cierra: la sonda dice que todo está bien
+
+Ahora mismo, con la ingesta muerta desde hace cuatro días:
+
+```text
+GET /health/ready → 200
+{"status":"ok","info":{"database":{"status":"up"},
+                       "schema":{"status":"up","aplicadas":11},
+                       "redis":{"status":"up"}}}
+```
+
+`health.controller.ts:98` comprueba **Postgres, su esquema y Redis**. Nada más.
+Y su propio docblock dice por qué entra Redis: *«sin él no hay ingesta de correo
+ni clasificación»*. La intención estaba: querían que la sonda hablara de la
+ingesta. **Lo que mide es que la tubería existe, no que pase agua por ella.**
+
+Cuatro días sin un solo correo entrante y la sonda de producción responde `ok`.
+No es un fallo de la sonda —hace exactamente lo que dice su código—, es que
+**nadie le pidió nunca la pregunta que importa**: *¿cuándo entró el último
+correo?* Es un dato que la base ya tiene.
+
+### Lo que no afirmo
+
+- **No he mirado la base de datos.** No sé cuántos correos hay en `dead-letter`
+  ni cuál fue el último ingerido. Todo lo de arriba sale del canal de alertas,
+  del código y de la sonda pública.
+- **No sé por qué se revocó el token.** `invalid_grant` con *«expired or
+  revoked»* admite varias causas —contraseña cambiada, permiso retirado desde la
+  cuenta de Google, app en modo prueba con refresh token de 7 días—. Distinguirlas
+  necesita el panel de Google Cloud, y ahí sigo sin sesión.
+- **No sé si el `0 de 1` es el Jefe u otra cuenta.** Solo sé que hay **un** usuario
+  con credenciales de Google, así que la ingesta entera del producto cuelga de
+  **un solo refresh token**.
+
+### Lo que no he hecho, y no voy a hacer
+
+**No he tocado nada.** Reconectar la cuenta de Google es una acción sobre
+producción y sobre la sesión del Jefe; es suya, no mía. Lo dejo dicho y con
+fecha.
+
+**No cierro nada.**
+
+---
+
+## 55. Cierre de jornada: lo que queda abierto (2026-09-07)
+
+Cierro con el navegador ya conectado —lo que no tenía en §53— y con un hallazgo
+grande encima de la mesa. **Nada de esto está resuelto**; lo dejo listado para
+que la próxima sesión no tenga que reconstruirlo.
+
+### Lo urgente, y no es mío
+
+1. **La cuenta de Google del único usuario con credenciales está revocada**
+   (§54). Hasta que alguien vuelva a conectarla, **no entra un solo correo**.
+   Es acción del Jefe sobre producción; yo no la toco.
+2. **Por qué se revocó.** `invalid_grant` admite varias causas y una de ellas
+   —app OAuth en modo prueba, con refresh token de 7 días— **volvería a pasar
+   sola**. Se distingue en el panel de Google Cloud, y ahí sigo sin sesión.
+
+### Lo que puedo medir en cuanto vuelva
+
+3. **Cuántos correos se perdieron de verdad.** El canal solo enseña el suelo
+   (§54.1). La cuenta entera está en la cola `dead-letter`, que los guarda.
+4. **El `iframe` de §53.1.** Las dos piezas están medidas —frontend de Vercel
+   sin `X-Frame-Options` ni CSP, cookie `sameSite: "none"`—; falta montar el
+   marco y ver si el secuestro de clic se completa. **Ahora ya tengo con qué.**
+5. **Los dos defectos del semáforo de §50.1**: la rama roja inalcanzable de
+   `App.tsx:179` y el 503 que se anuncia como *«Sin conexión con la API»*.
+6. **El desfase de §51.1**: la bandeja dice 20 y Métricas dice 329.
+7. **El correo sin salida hacia sus tareas**, y el cronómetro que corre siete
+   días en *Por Hacer* sin sumar una hora.
+
+### Lo que sigue bloqueado por sesión
+
+8. **`gh` y `gcloud` esperan a que el Jefe inicie sesión** (§52). Sin eso, la
+   auditoría de nube vale la mitad: ni logs, ni Scheduler, ni el panel de OAuth
+   que hace falta para el punto 2.
+
+### Lo que nadie ha reclamado todavía
+
+9. **`/health/ready` no mira la ingesta** (§54.2). Cuatro días en verde con el
+   producto muerto. La pregunta que falta —*¿cuándo entró el último correo?*—
+   sale de un dato que la base ya tiene. **Es un hallazgo, no un encargo**: el
+   arreglo no me toca.
+10. **La sonda de frescura del frontend** falló el 30 y el 31 de agosto
+    (`No se puede comprobar si el frontend esta al dia`). No ha vuelto a
+    aparecer en el canal, pero **no lo he verificado**: no sé si se arregló o
+    si dejó de mirar.
+
+**No cierro nada.**
+
+---
+
+## 56. Despertar del 2026-09-08: la API entera responde 503, y esta vez no es la ingesta
+
+**Chequeo estándar, primero, porque el hallazgo sale de él.**
+
+`HEAD` = `4430f1a` (ayer 17:31, hora local), y **`master` va 1 por delante de
+`origin/master`**, que sigue en `a31384e` del 25 de agosto: el commit de ayer
+—*«entorno local restaurado tras el formateo…»*— **no está empujado**. De ahí
+que `gh run list` no tenga ni una ejecución posterior al **2026-08-25 23:32 UTC**;
+la última fue `success`. No hay CI parado: no hay nada que ejecutar.
+
+En el árbol, cuatro archivos sin commitear: `.gitignore` (+4, las dos reglas de
+§52.7), `ALANA.md` (+1108, que son **mis §50 a §55**, catorce días ya —§52.9
+sigue sin contestar—), `DOC.md` (+18, que no leo) y `package-lock.json`, cuyo
+único cambio es `apps/web` de `0.1.0` a `0.1.1` — **el `package.json` ya decía
+`0.1.1` en `HEAD`**, así que el bloqueo iba atrasado y alguien lo puso al día sin
+querer, al instalar. `git diff --stat` y `git diff --ignore-cr-at-eol --stat` dan
+la **misma** cifra: ningún cambio escondido en finales de línea esta vez.
+
+`TASKS.md` sin tocar desde el 25 de agosto, `AI_ROLES.md` sin excepciones nuevas,
+`docs/` sin sesión nueva desde el 07-31, `gh variable list` con las trece de
+siempre y `WEB_URL` todavía en `https://pmo-frontend-ten.vercel.app`.
+
+**Y una buena, que levanta medio §55.8:** `gh auth status` ya devuelve sesión
+(`Antonio-Sanchez-Navarro`, con `repo` y `workflow`). **La otra mitad sigue
+bloqueada:** `gcloud auth list` sí lista la cuenta, pero cualquier comando muere
+con `Reauthentication failed. cannot prompt during non-interactive execution`.
+Tengo el nombre de la cuenta y no tengo el token.
+
+### 🔴 El hallazgo: el servicio de Cloud Run no atiende ninguna ruta
+
+Ayer, en §54, dejé escrito `GET /health/ready → 200`. Hoy, a las **15:27–15:29
+UTC**, las seis rutas que probé devuelven **503**:
+
+```
+/health/live       HTTP 503   0.47 s
+/health            HTTP 503   0.81 s
+/health/ready      HTTP 503   0.26 s
+/auth/me           HTTP 503   0.68 s
+/webhooks/gmail    HTTP 503   0.51 s
+/                  HTTP 503   0.25 s
+```
+
+**No es un arranque en frío y esto es lo que lo demuestra.** El cuerpo es la
+página de error de Google —*«The service you requested is not available yet»*—,
+la cabecera dice `server: Google Frontend`, no hay `x-cloud-trace-context`, y las
+respuestas llegan **en menos de un segundo**. Un contenedor dormido tarda
+segundos en levantar y responde él; aquí **la petición no llega al contenedor**.
+Repetido nueve veces en dos minutos, siempre igual.
+
+**Y alcanza al producto, no solo a mis sondas.** El frontend de Vercel responde
+`200` con `<title>PMO Dashboard</title>` —es el nuestro, no el de §13—, pero su
+bundle desplegado (`/assets/index-JNoC7SoZ.js`) lleva dentro **exactamente ese
+host**: `https://pmo-api-mlpuuasqka-uc.a.run.app`. Quien entre hoy carga la
+página y no obtiene un solo dato.
+
+**El alcance cambia respecto a ayer, y conviene no mezclarlos.** §54 era la
+ingesta: entraba nadie, pero lo demás funcionaba. Esto es **todo** —login,
+tablero, copiloto, crones, el webhook de Gmail—. Los dos crones de Scheduler
+llevan desde entonces golpeando una puerta cerrada, y el `watch` de Gmail no se
+puede renovar aunque alguien reconecte la cuenta de Google.
+
+### Lo que **no** sé, y no lo voy a deducir
+
+**No puedo decir por qué.** Sin `gcloud` no veo revisiones, ni logs, ni
+facturación, y la diferencia entre las causas posibles está justo ahí: un
+servicio borrado, una revisión que dejó de arrancar tras una expulsión, la
+facturación del proyecto suspendida o una cuota agotada **dan todas este mismo
+503 desde el borde**. Elegir una desde fuera sería inventar.
+
+Lo único que sí acota: **no hubo despliegue** desde el 25 de agosto y **no hubo
+commit** que lo provocara. Cambió algo **fuera de git**, como en §14 y como en
+§31 — el patrón de esta casa.
+
+**Los tres comandos que lo resuelven en un minuto, en cuanto haya sesión:**
+
+```
+gcloud run services describe pmo-api --region us-central1 --project pmo-dashboard-503418
+gcloud run revisions list --service pmo-api --region us-central1 --project pmo-dashboard-503418
+gcloud beta billing projects describe pmo-dashboard-503418
+```
+
+### Lo que este corte deja dicho
+
+1. **La API caída es lo primero de la lista**, por delante de la cuenta de Google
+   revocada de §54: reconectar la ingesta no sirve de nada contra un servicio que
+   no responde.
+2. **`gcloud auth login` es ahora la pieza que bloquea el diagnóstico**, no un
+   pendiente de comodidad. Es la tercera sesión seguida que lo escribo.
+3. **Y una lección que se repite y ya toca nombrarla:** §54 fue *«todo en verde y
+   el producto muerto»*; hoy es el escalón siguiente —**el producto entero caído
+   y ningún aviso que lo diga aquí**—. La Capa 2 vigila los push de Gmail; nadie
+   vigila que el servicio conteste. La sonda más barata del proyecto,
+   `/health/live`, **no la mira nadie desde fuera**.
+
+**No cierro nada.**
+
+---
+
+## 56.1 La causa, encontrada: la cuenta de facturación está cerrada (2026-09-08)
+
+Con la sesión de `gcloud` puesta, la causa sale en cinco comandos y **no es
+ninguna de mis cuatro hipótesis de §56 tal como las escribí**. Es la cuarta, pero
+con una vuelta de tuerca que me habría hecho descartarla mal.
+
+### La prueba, en el orden en que apareció
+
+**1. El plano de control dice que todo está bien.** El servicio `pmo-api` existe,
+`Ready: True`, y la revisión **`pmo-api-00113-92g`** —del 25-08, la misma del
+último despliegue— tiene el **100 % del tráfico** y sus cinco condiciones en
+verde, con *«Containers became healthy in 7.03s»*. Nadie ha borrado ni tocado
+nada: **no hay una sola entrada de auditoría de `run.googleapis.com`** en siete
+días que no sea el job de respaldo.
+
+**2. Y sin embargo el borde no atiende, por las dos URLs.** Probé también la
+forma nueva, `https://pmo-api-614812477499.us-central1.run.app`: **503 igual**.
+No es un cambio de dominio.
+
+**3. La hora exacta del corte, medida por dos sistemas.**
+
+| Cuándo (UTC) | Qué |
+|---|---|
+| **11:05:21** | `POST /cron/overdue` → **200**. Última petición servida, y la última línea del contenedor |
+| **11:15:07** | `pmo-reconciliar-clasificacion` → **`UNAVAILABLE`**. Primer fallo |
+| 11:15 → ahora | **Todos** los Scheduler en `UNAVAILABLE`, cada quince minutos |
+
+**La API se cayó entre las 11:05:21 y las 11:15:07 de hoy.** Diez minutos de
+ventana, y dentro de ellos **no hay ninguna acción humana ni automática** en el
+registro de auditoría.
+
+**4. Y el comando que lo destapó no iba a eso.** Fui a Artifact Registry a
+comprobar si la imagen del contenedor seguía existiendo —mi mejor hipótesis— y
+lo que devolvió no fue *«no existe»*:
+
+```
+ERROR: (gcloud.artifacts.repositories.list) … This API method requires billing
+to be enabled. Please enable billing on project #pmo-dashboard-503418
+```
+
+**5. La contradicción, que es justo donde estaba la trampa.** Media hora antes yo
+había preguntado por la facturación y me había dado esto:
+
+```json
+{ "projectId": "pmo-dashboard-503418",
+  "billingAccountName": "billingAccounts/015493-A5F85A-D7B488",
+  "billingEnabled": true }
+```
+
+**Lo leí como «la facturación está bien». No lo dice.** `billingEnabled: true`
+significa **que el proyecto está enlazado a una cuenta**, no que esa cuenta
+pueda pagar. Hay que ir a preguntar por la cuenta, y entonces sale:
+
+```json
+{ "name": "billingAccounts/015493-A5F85A-D7B488",
+  "open": false,
+  "displayName": "Mi cuenta de facturación",
+  "currencyCode": "MXN" }
+```
+
+**`"open": false`. La cuenta de facturación del proyecto está cerrada.**
+
+**6. Y hay una segunda cuenta, abierta, en la misma organización:**
+
+```json
+{ "name": "billingAccounts/015607-DFA49A-B3BAC3",
+  "open": true,
+  "displayName": "My Billing Account" }
+```
+
+### Qué significa, en una frase
+
+**El proyecto sigue enlazado a una cuenta que ya no paga.** Por eso el plano de
+control contesta —listar y describir es gratis— y el plano de datos no: Cloud Run
+no puede arrancar una instancia, Artifact Registry rechaza, y **el 503 llega
+desde el borde de Google sin tocar nunca el contenedor**, que es exactamente lo
+que medí en §56 sin saber por qué.
+
+Explica también los diez minutos de ventana: **no hizo falta que nadie hiciera
+nada**. La última instancia estaba caliente a las 11:05, sirvió su petición, se
+apagó por escala a cero —el servicio no tiene mínimo de instancias— y **la
+siguiente ya no pudo nacer**. El corte no tiene autor porque no es un cambio: es
+una capacidad que se retiró debajo.
+
+### Lo que **no** está roto, y conviene saberlo antes de tocar nada
+
+- **La base de datos está viva.** `pmo-postgres-db`, `POSTGRES_16`, estado
+  **`RUNNABLE`**.
+- **Y respaldada, hoy mismo, por los dos caminos.** El respaldo **automático** de
+  Cloud SQL corrió a las **05:00 UTC** con `SUCCESSFUL`, y los cinco últimos días
+  también — **lo que cierra el 🔴 de §31**, donde `backupConfiguration.enabled`
+  estaba en `false`; alguien lo encendió y funciona. Y el job de `pg_dump`
+  completó a las **08:32 UTC** de hoy.
+- **El código no tiene nada que ver.** Ni un commit, ni un despliegue, ni una
+  variable. La revisión que falla es la misma que llevaba catorce días sirviendo.
+
+### El arreglo, que es de una línea y **no es mío**
+
+```
+gcloud billing projects link pmo-dashboard-503418 \
+  --billing-account=015607-DFA49A-B3BAC3
+```
+
+**No lo ejecuto**, y no solo por la regla de §0 —encuentro y compruebo, no
+arreglo—: esto mueve dinero de una cuenta a otra en producción y **la decisión
+tiene dueño, que es el Jefe**. Antes de ejecutarlo hay que saber **por qué se
+cerró** la cuenta `015493`, porque si fue impago o fin de crédito, enlazar la
+otra traslada el problema en vez de resolverlo.
+
+### La pregunta que dejo abierta, y tiene reloj
+
+**¿Qué pasa con la base si esto no se restablece?** Una cuenta de facturación
+cerrada no deja los recursos ahí para siempre. La instancia está `RUNNABLE`
+hoy; el respaldo automático de mañana ya no lo doy por hecho. **No sé el plazo
+exacto y no lo voy a inventar** — pero el respaldo de hoy existe por los dos
+caminos, y ese es el suelo que hay debajo mientras se decide.
+
+### Y una corrección a mí misma, que es la lección del corte
+
+En §56 escribí *«la facturación suspendida»* entre las cuatro hipótesis. Media
+hora después consulté la facturación, leí `billingEnabled: true` y **la taché**.
+Seguí buscando por otro lado y la causa apareció **de rebote**, en el mensaje de
+error de un comando que preguntaba por otra cosa.
+
+El fallo no fue de método: fue **leer un campo por su nombre en vez de por lo que
+mide**. `billingEnabled` mide un enlace, no una capacidad de pago, y las dos cosas
+se llaman igual en castellano. Es la misma familia que el 🔴 de §31 —*«nada de lo
+que se mira dice que falte algo, hay que ir a buscar el booleano»*—, y esta vez
+el booleano estaba **un nivel más arriba**: no en el proyecto, en la cuenta.
+
+**Regla que me llevo:** cuando un campo de estado dice que sí y el sistema dice
+que no, **el que miente es mi lectura del campo**, no el sistema.
+
+**No cierro nada.**
+
+---
+
+## 56.2 La caída, cerrada: seis horas y seis minutos (2026-09-08)
+
+**Restablecido.** A las **17:19 UTC** volví a sondar y la API contesta:
+
+```json
+{"status":"ok","info":{"database":{"status":"up","responseTimeMs":51},
+"schema":{"status":"up","aplicadas":11,"aMedias":0,"revertidas":0},
+"redis":{"status":"up","responseTimeMs":57}}}
+```
+
+**Y la cuenta `015493` está `"open": true`.** No se movió el proyecto a la otra
+cuenta: **se reabrió la que ya tenía**. El enlace nunca cambió.
+
+### La cronología completa, con la hora de cada cosa
+
+| Hora (UTC) | Qué pasó | De dónde lo saco |
+|---|---|---|
+| **11:05:21** | Última petición servida: `POST /cron/overdue` → **200** | log del contenedor |
+| **11:15:07** | Primer `UNAVAILABLE` de Scheduler | log de Scheduler |
+| 11:15 → 16:15 | **503 en el borde y ni una línea de registro.** Cinco horas sin que el sistema diga nada | ausencia en el log |
+| **16:15:10** | Aparece por fin el motivo, y lo dice entero | log del contenedor |
+| **17:11:54** | `Default STARTUP TCP probe succeeded` — el contenedor arranca | log del contenedor |
+| **17:11:44 / 17:12** | Primeros **200** | log del contenedor |
+
+**Duración: 6 h 06 min.**
+
+### La frase que lo confirma todo, literal
+
+A partir de las 16:15:10, Cloud Run **escribe la causa en el registro**:
+
+```
+The request failed because billing is disabled for this project.
+```
+
+Ocho líneas hoy, con `Google-Cloud-Scheduler` de agente en la mayoría. **No hubo
+que deducir nada:** mi §56.1 dedujo la causa a las 15:30 y una hora después el
+propio sistema la escribió con esas palabras.
+
+### 🟠 Y aquí está el hallazgo de verdad, que sobrevive a la caída
+
+**Durante las cinco primeras horas Cloud Run no registró absolutamente nada.**
+Ni la petición, ni el 503, ni el motivo. El único rastro en todo el proyecto era
+`UNAVAILABLE` en el log de Scheduler — un sistema **distinto**, que se queja
+porque no le contestan, no porque sepa qué pasa.
+
+El motivo solo apareció **en la última hora**, cuando el borde ya enrutaba y era
+el contenedor el que no arrancaba. **Si esto se hubiera arreglado a las 16:00,
+no existiría ni una línea que dijera por qué se cayó el producto.**
+
+### 🔴 Y nadie avisó, y ahora está medido
+
+Miré el sistema de alertas entero. Hay **dos políticas**, las dos activas:
+
+1. `[Capa 2] Fallo Critico: Apagon del Watcher de Gmail` — ausencia de
+   `push_request_count`, 84 600 s.
+2. `[Capa 2] Fallo Critico: El respaldo de la base de datos`.
+
+**Y hay cero comprobaciones de disponibilidad:** `uptimeCheckConfigs` devuelve
+`{}`. Un solo canal, `Alertas PMO` de Google Chat, activo.
+
+**Conclusión, y no es una opinión:** el producto estuvo caído seis horas y
+**ninguna alerta podía dispararse**, porque ninguna mira si la API contesta. Las
+dos que existen vigilan *dentro* del producto —la ingesta y el respaldo—; **nadie
+vigila que el producto exista**. Peor: la Capa 1 vive **dentro** de la API, así
+que cuando la API es lo que se cae, el que avisa se cae con ella.
+
+Es §54 un escalón más arriba. Allí escribí *«todo en verde y el producto
+muerto»*. Hoy: **el producto entero caído, seis horas, y el tablero de alertas
+sin una línea.**
+
+**Lo barato que falta**, y lo digo sin cerrarlo: una comprobación de
+disponibilidad de Monitoring contra `/health/live`, que es GET, sin credenciales
+y ya existe. El canal de Chat ya está montado. Es configuración, no código.
+
+---
+
+## 57. La auditoría de nube, por fin hecha (2026-09-08)
+
+Llevaba **tres despertares** escribiendo que sin `gcloud` mis informes valían la
+mitad (§52, §55.8, §56). Con la sesión puesta, esto es lo que faltaba.
+
+### 57.1 Los seis Scheduler: correctos, y hay que decirlo
+
+| Job | Ritmo | Estado |
+|---|---|---|
+| `pmo-reconciliar-clasificacion` | `*/15 * * * *` | ENABLED |
+| `pmo-frontend-al-dia` | `*/30 * * * *` | ENABLED |
+| `pmo-coste-ia` | `0 * * * *` | ENABLED |
+| `pmo-overdue-sweep` | `5 * * * *` | ENABLED |
+| `pmo-gmail-watch-renew` | `30 2 * * *` | ENABLED |
+| `pmo-respaldo-db-diario` | `30 3,15 * * *` | ENABLED |
+
+Los seis en `America/Cancun`. **Los cinco que apuntan a la API llevan la misma
+audiencia OIDC**, `https://pmo-api-mlpuuasqka-uc.a.run.app/cron`, **idéntica a
+la variable `CRON_OIDC_AUDIENCE` de la revisión viva**, y firman con
+`pmo-scheduler@…`. El del respaldo llama a la API de Run, no a la nuestra.
+**Nada que objetar**: es la primera vez que compruebo esta pieza entera y sale
+limpia.
+
+### 57.2 Las variables de la revisión viva, comprobadas una a una
+
+Veintiuna. Doce en claro y **nueve por referencia a Secret Manager** —
+`DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`,
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY` y `ALERT_WEBHOOK_URL`—. **Ninguna credencial va en claro en la
+definición del servicio.** `CLAUDE_MODEL_CLASSIFY` = `claude-sonnet-5`,
+`WEB_URL` y `GOOGLE_REDIRECT_URI` coinciden con `gh variable list`, y
+`SERVICE_VERSION` = `7a85831…`, que es lo que ya sabía.
+
+### 57.3 🟠 Trece versiones de secreto, y **todas** habilitadas
+
+| Secreto | Versiones habilitadas |
+|---|---|
+| `pmo-database-url` | **5** (1, 2, 3 del 05-08 · 4 y 5 del 18-08) |
+| `pmo-redis-url` | 2 |
+| `ALERT_WEBHOOK_URL` | 2 (la **1** es la del `TO_BE_FILLED_BY_USER` de §29) |
+| `pmo-anthropic-api-key` | 2 |
+| Los otros cinco | 1 cada uno |
+
+**Ninguna versión superseded se ha deshabilitado nunca.** Las tres primeras de
+`pmo-database-url` son de antes de la migración a Cloud SQL: **son cadenas de
+conexión de Neon, con su contraseña, vivas y legibles hoy**. Y la versión 1 de
+`ALERT_WEBHOOK_URL` es la que tenía el texto de relleno que dejó el canal mudo
+tres días (§29): sigue ahí, y quien la pida por número la recibe.
+
+Esto cierra en medida lo que en §27.5 dejé como apunte suelto —*«la versión 1
+del secreto sigue enabled»*—: **no era ese secreto, es la política de la casa.**
+Deshabilitar una versión no borra nada y se revierte en un clic.
+
+✅ **Y una buena que sale del mismo sitio:** `pmo-token-encryption-key` tiene
+**una sola versión, del 05-08**. La clave nueva de §52.4 **no se aplicó**, que
+es exactamente lo que recomendé en §52.10. Nadie tuvo que volver a autorizar
+nada.
+
+### 57.4 🟠 Los presupuestos: uno vigila 20 pesos y el otro no avisa a nadie
+
+| Cuenta | Presupuesto | Importe | Avisos |
+|---|---|---|---|
+| `015493` (la del proyecto) | «PMO · gasto mensual» | **20 MXN/mes** | 50 %, 75 %, 90 % y 75 % previsto → **topic `pmo-presupuesto`** |
+| `015607` (la otra) | «pmo» | 2 000 MXN/mes | 50 %, 90 %, 100 % previsto → **`notificationsRule` vacío** |
+
+**Y el topic `pmo-presupuesto` no tiene ni una suscripción.** Lo comprobé:
+las únicas del proyecto son `gmail-ingest-push` y `gmail-ingest-dlq-sub`. **El
+presupuesto publica avisos que no lee nadie** — una pieza puesta y desconectada,
+igual que el job de respaldo de §31.
+
+Los veinte pesos mensuales tampoco los interpreto como error: **es el orden de
+magnitud que decidió alguien**, y con esa cifra el aviso del 90 % salta casi
+cualquier mes. Lo dejo dicho, no lo llamo defecto.
+
+**Lo que sí conviene saber:** la cuenta cerrada tenía **dos** proyectos colgando
+—`pmo-dashboard-503418` y `continual-loop-496922-h9`—, así que la caída de hoy
+alcanzó a los dos. Y la otra cuenta, la abierta, solo tiene
+`gen-lang-client-0325947422`.
+
+### 57.5 Pub/Sub, y la medida que §55.3 pedía
+
+Tres topics —`gmail-ingest`, `gmail-ingest-dlq`, `pmo-presupuesto`— y dos
+suscripciones. `gmail-ingest-push` empuja a `/webhooks/gmail`, con `ack` de 60 s,
+**retención de 7 días** y **cola de fallidos configurada** hacia
+`gmail-ingest-dlq`. Está bien montado.
+
+**Y la medida:** `num_undelivered_messages` en las dos suscripciones vale **0**,
+sin excepción, en las últimas 48 horas.
+
+**Eso responde §55.3, y la respuesta no es la que esperaba.** No hay correo
+atrapado en ninguna cola: **no está llegando ninguno**. Cuando el `watch` caducó
+el 3 de septiembre, Gmail dejó de publicar. Lo que se pierde no está guardado en
+ninguna parte esperando — **no existe**. La recuperación, cuando la ingesta
+vuelva, tendrá que ser una sincronización contra Gmail, no un vaciado de cola.
+
+### 57.6 Lo que sigue sin poderse mirar desde aquí
+
+**La pantalla de consentimiento de OAuth** —la pregunta de §55.2, la que decide
+si esto se repite solo cada siete días— **no se puede leer con `gcloud`**: la API
+de IAP está deshabilitada en el proyecto y **no la habilito yo**, que sería
+cambiar producción. Queda para el panel, con navegador.
+
+---
+
+## 58. 🔴 El secreto de cliente de Google está caducado en producción — y me corrige §54 (2026-09-08)
+
+**Este es el hallazgo grande del día, más que la caída**, porque la caída ya está
+resuelta y esto no.
+
+### Lo que dice el sistema hoy, y no es lo que dije yo el 7
+
+En §54 escribí que la ingesta murió porque **la cuenta de Google del usuario
+estaba revocada**, con `invalid_grant` — *«Token has been expired or revoked»*—
+como prueba. **Eso valía el 7. Hoy ya no.** El cron de las 07:30 UTC de hoy dejó
+esto:
+
+```
+07:30:27 WARNING  Watch de Gmail renovado solo para 0 de 1 usuario(s)
+                  [cmsntcsn80000jn4jlxt18qag: code=401 → HTTP 401 → invalid_client
+                  → respuesta={"error":"invalid_client",
+                     "error_description":"The provided client secret is invalid."}]
+```
+
+**`invalid_client`, no `invalid_grant`.** No es que el usuario haya retirado el
+permiso: **es la aplicación la que ya no sabe identificarse ante Google.**
+
+### La fecha exacta del cambio, contada por el registro
+
+Busqué las dos cadenas en treinta días de log:
+
+| Cadena | Primera | Última | Líneas |
+|---|---|---|---|
+| `invalid_grant` | (antes del rango) | **2026-09-07 07:30** | 400 (tope) |
+| `invalid_client` | **2026-09-08 07:30** | 2026-09-08 07:30 | 4 |
+
+**El error cambió entre el cron del 7 y el del 8.** En esa ventana, ayer por la
+tarde, se tocó el entorno local: el commit `4430f1a` de las 22:31 UTC se titula
+*«entorno local restaurado… y el `.env` que apuntaba a produccion»*.
+
+### Y lo comprobé antes de escribirlo, que es mi parte
+
+**Primero, la comparación**, sin sacar ningún valor a la luz — solo los doce
+primeros caracteres de su SHA-256:
+
+| | `GOOGLE_CLIENT_ID` | `GOOGLE_CLIENT_SECRET` |
+|---|---|---|
+| Secret Manager (lo que usa producción) | `5e0eb4a1ff59` | `27f49213f0ca` |
+| `.env` local | `5e0eb4a1ff59` | **`86240094497b`** |
+
+**Mismo cliente, secreto distinto.** No son dos aplicaciones: es la misma, con la
+credencial regenerada en un lado y no en el otro.
+
+**Segundo, y esto es lo que convierte la sospecha en hecho.** Pregunté a Google
+por los dos, con un `refresh_token` **inventado a propósito** contra
+`https://oauth2.googleapis.com/token`. El truco está en que Google contesta
+distinto según **qué** esté mal:
+
+```
+secreto de Secret Manager → invalid_client · "The provided client secret is invalid."
+secreto del .env local    → invalid_grant  · "Bad Request"
+```
+
+**`invalid_grant` en el segundo caso es la respuesta buena**: significa que
+Google **aceptó las credenciales del cliente** y rechazó únicamente el token
+falso que yo le pasé. Es decir:
+
+> **El `.env` local tiene el secreto válido. Producción tiene el muerto.**
+
+Sin exponer ni un carácter de ninguno de los dos, y sin tocar nada.
+
+### El alcance, que es mayor que la ingesta
+
+El secreto de cliente no se usa solo para renovar el `watch`. **Se usa en cada
+intercambio de código por token.** Con él inválido:
+
+- **Nadie puede entrar con Google.** `/auth/google` sigue devolviendo `302`
+  —comprobado— porque ese redirigir solo lleva el `client_id`; **el fallo está
+  después, en el callback**, donde sí hace falta el secreto. La puerta se abre y
+  la llave no gira.
+- **Ningún usuario existente puede refrescar su token.** Toda la integración con
+  Google está parada, no solo el correo.
+- **`/health/ready` sigue en verde**, porque mira base, esquema y Redis. Otra vez
+  §54.2: la sonda no pregunta lo que importa.
+
+### El arreglo, que **no** ejecuto, y el orden importa
+
+1. Añadir el valor bueno como **versión nueva** de `pmo-google-client-secret`.
+   El servicio lo lee por `key: latest`, así que hace falta una revisión nueva
+   —o al menos instancias nuevas— para que lo tome.
+2. **Después**, disparar `/cron/gmail-watch` a mano y **leer el error que
+   queda**. Ahí está la pregunta que hoy no se puede contestar: regenerar un
+   secreto de cliente **no** invalida los `refresh_token` ya emitidos, así que si
+   tras el arreglo vuelve `invalid_grant`, entonces §54 tenía razón y **además**
+   hay que reconectar la cuenta. Si en cambio renueva, el `invalid_grant` de
+   agosto tenía otra causa y **se acabó solo**.
+
+**No lo hago yo.** Escribe un secreto de producción y reinicia el servicio.
+
+### La corrección a §54, escrita sin adornos
+
+§54 sigue siendo cierta **en lo que midió**: la ingesta lleva muerta desde el 3
+de septiembre y el canal se calló justo cuando la pérdida se volvió total. Eso no
+cambia.
+
+**Lo que corrijo es la causa vigente.** Escribí *«la cuenta de Google del único
+usuario está revocada»* y dejé en §55.1 que la acción era del Jefe, reconectando.
+**Hoy esa acción no serviría de nada**: con el secreto de cliente inválido, el
+consentimiento nuevo también fallaría en el intercambio. Habría reconectado, y
+habría seguido sin entrar un correo, sin entender por qué.
+
+**Y la lección es la de ayer, otra vez:** una causa comprobada tiene fecha de
+caducidad. La medí el 7 y la di por buena para el 8. Entre medias alguien tocó
+una credencial, y mi diagnóstico —correcto cuando lo escribí— **habría mandado al
+Jefe a arreglar lo que no estaba roto.** El registro cambió de palabra; solo hacía
+falta volver a mirarlo.
+
+**No cierro nada.**
+
+---
+
+## 59. Fase 6 — tomo nota del esquema, y la nota no cuadra con el árbol (2026-09-08)
+
+Doc anuncia el backend de la **Fase 6: Capa de Decisión y Unidad Atómica** y me
+pide tomar nota del esquema para auditorías futuras. **La nota es para mis
+auditorías, así que la comprobé antes de escribirla**, que es justo lo que
+distingue una nota de un rumor. Los cinco puntos están en el código. **Y el
+código no compila.**
+
+### 59.1 Lo que anota, comprobado uno a uno
+
+**1. Esquema.** ✅ Cierto y verificado en `schema.prisma`:
+
+```prisma
+/// Tareas propuestas por la IA, pendientes de revisión humana.
+proposedTasks  Json?
+/// Indica si el correo trae archivos adjuntos (cuyo contenido no bajamos).
+hasAttachments Boolean @default(false)
+```
+
+Con migración `20260908183006_phase6_human_in_loop`, que añade `JSONB` nulable y
+un booleano con defecto. **No destruye nada** y no toca filas existentes.
+Producción tiene hoy **11** migraciones aplicadas (`/health/ready`); con esta
+serán 12.
+
+**2. Adjuntos.** ✅ `gmail.service.ts` recorre las partes y marca
+`hasAttachments` a partir de `p.body?.attachmentId != null`, y lo persiste en
+`create` y en `update`. **Ojo con lo que esto es y lo que no es:** marca que
+**existen** adjuntos; **sigue sin descargarlos**. El punto 4 del Jefe —*«no me
+permite leer documentos anexos»*— **no queda resuelto**, queda **declarado**. Y
+el aviso al modelo (`ai.service.ts`) es exactamente eso: le prohíbe proponer
+tareas sobre lo que no puede ver. Es la decisión honesta, pero que nadie la lea
+como «ya se leen los adjuntos».
+
+**3. Contexto de hilo.** ✅ `email-classification.service.ts` busca los correos
+anteriores del mismo `threadId` y **del mismo `userId`** —bien acotado—, los une
+con un separador y los manda bajo `Historial del hilo (citado)` con la
+instrucción `Analiza SOLO esto y no repitas tareas del historial`.
+
+**4. Human-in-the-loop.** ✅ En la vía de ingesta, sí. `classifyAndPersist` ya
+**no crea filas en `Task`**: escribe `proposedTasks` y actualiza el correo. El
+bloque de `task.create` desapareció. Esa era la queja 1 y 2 del Jefe y **está
+atacada en la raíz**.
+
+**5. Métricas.** ✅ `inbox.pending` existe en `packages/shared` y lo calcula
+`metrics.service.ts`. **No cambió nada en esta fase** —ni falta—: el desfase de
+§51 se cierra en el frontend leyendo esa cifra en vez de `emails.length`. La nota
+dice «conceptualmente» y es la palabra correcta.
+
+### 59.2 🔴 Ejecutado, no leído: no compila y fallan 16 pruebas
+
+`npx tsc -p apps/api/tsconfig.json --noEmit`:
+
+```
+__fixtures__/emails.fixture.ts(10,7)  TS2739  falta 'proposedTasks' y 'hasAttachments'
+emails.service.ts(307,7)              TS2353  'proposedTasks' no existe en el tipo 'EmailDetail'
+emails.service.ts(537,75)             TS2345  'description: string | null' no es asignable
+                                              a 'string | undefined' de ConfirmedTaskDto
+```
+
+`npx jest`: **712 pruebas, 696 pasan, 16 fallan** en 2 suites de 36 —
+`email-classification.service.spec.ts` (11) y `emails.service.spec.ts` (5)—,
+que son exactamente las dos que cubren lo que cambió.
+
+**No lo llamo «trabajo mal hecho», lo llamo trabajo sin terminar**, y la
+diferencia importa porque de eso depende quién lo recoge. Pero el anuncio dice
+*«el backend está listo»* y **@Gravity tiene luz verde para construir encima**.
+Lo que hay en el árbol no arranca.
+
+### 59.3 🔴 El bloqueo concreto de @Gravity, y es el error de compilación del medio
+
+`emails.service.ts(307)` no es un detalle de tipos: dice que **`EmailDetail` no
+declara `proposedTasks`**. Y hay algo peor detrás:
+
+- **`packages/shared` no menciona `proposedTasks` ni `hasAttachments`.** Ni una
+  vez.
+- Hay **dos** `EmailDetail` distintos, uno en `apps/api/src/modules/emails/` y
+  otro en `apps/web/src/features/inbox/api/` — **el contrato copiado a mano** que
+  ya está anotado desde §7 y que `8219b96` acababa de arreglar para
+  `DashboardMetrics`.
+
+Es decir: a @Gravity se le pide consumir un campo que **el contrato compartido no
+declara y el del frontend tampoco**. Va a tener que inventarse el tipo o tocar el
+contrato — y esa segunda es la buena, pero conviene decirlo antes y no después.
+
+### 59.4 🟠 El rastro de la prioridad y la confianza del modelo se pierden al materializar
+
+Esto no lo cazan las pruebas: lo vi comparando las dos rutas.
+
+El mapeo viejo, el que se borró, escribía en cada tarea `aiConfidence`,
+`position`, `source`, `priorityReason`, `priorityAdjustedAt` y
+`priorityAdjustedFrom`.
+
+La ruta nueva pasa por `toConfirm`, que mapea **cinco campos** —`title`,
+`description`, `priority`, `tags`, `dueDate`— y de ahí a `persistConfirmed`, que
+crea la fila con `position`, `source: MANUAL` y nada más.
+
+**Lo que sobrevive:** el título, la descripción, las etiquetas, la fecha y **la
+prioridad ya escalada** (la capa determinista corre antes, sobre el borrador).
+
+**Lo que se pierde:** `aiConfidence` y **las tres columnas del rastro de
+prioridad**. Y esas tres son la razón de existir de la migración
+`add_priority_audit`: están para contestar *«¿por qué el sistema subió esto a
+alta?»*. A partir de ahora la tarjeta sube de prioridad **y ya no puede decir por
+qué**.
+
+El `source: MANUAL` sí está razonado en un comentario y **estoy de acuerdo**: lo
+aprobó una persona y así el reproceso no lo borra. No es eso lo que señalo.
+
+### 59.5 🟠 El historial del hilo va sin techo, y el hilo es justo lo que crece
+
+`findMany` sobre el hilo, sin `take`, sin recorte, y los cuerpos se concatenan
+enteros. **No hay truncado en ninguna parte de la ruta**: lo comprobé,
+`textToAnalyze` es el cuerpo entero y ahora se le antepone todo el hilo.
+
+Y el hilo es lo que crece: §51.1 midió **un hilo del Jefe de doce mensajes**,
+cada respuesta arrastrando las citadas. El contexto que se manda crece con el
+cuadrado de la conversación, **y cada mensaje nuevo lo vuelve a pagar entero**.
+`max_tokens: 2000` limita **la respuesta**, no la pregunta.
+
+Lo digo por dos motivos, y ninguno es teórico aquí: §51.7 midió el precio de una
+pregunta, y §48 fue un bloqueo por **$8.14** de saldo.
+
+### 59.6 🟡 Tres cosas menores, para el registro
+
+1. **`aiConfidence: 1` inventado.** La caché de `EmailsService.classify` devuelve
+   `aiConfidence: 1` con el comentario *«o guardarlo también en la fila si fuera
+   necesario»*. Es un valor de relleno que dice **«el modelo estuvo seguro del
+   todo»** sin que nadie lo haya dicho, y viaja a la interfaz.
+2. **Cuatro `as any` en el backend.** §12 registró **cero**. Son los cuatro de
+   esta fase, todos alrededor del JSON.
+3. **Se borró un docblock que explicaba un porqué**: el de `receivedAt` en
+   `analyzeEmail` —*«ancla temporal… sin ella el modelo adivina el año»*—. El
+   parámetro sigue, la razón ya no. En esta casa eso se paga: `a31384e` se tituló
+   *«por que una fecha no es un instante»*.
+
+### 59.7 ❓ Y una que **no** afirmo, porque huele a decisión
+
+`EmailsService.classify` ahora **devuelve la caché si `proposedTasks` existe** y
+no vuelve a llamar al modelo nunca. El comentario nuevo dice que
+`replaceExisting` *«da igual ahora»*, así que el reproceso, tal como estaba, ya
+no reprocesa.
+
+**Puede ser exactamente lo que se quiere** —ahorra dinero, y §51.7 midió lo que
+cuesta cada pregunta—. Pero entonces no hay forma de pedir una segunda opinión
+sobre un correo mal clasificado. **Pregunto en vez de marcarlo:** ¿es deliberado,
+y el reproceso se recupera de otra manera?
+
+### 59.8 Lo que me llevo, que es de método
+
+Doc me pidió **tomar nota**. Si la tomo tal cual, mañana audito contra un esquema
+que creo aplicado y no lo está, contra un backend que creo listo y no compila, y
+contra una tabla `Task` que creo que ya no recibe nada de la IA. **Las tres
+serían falsas de una manera que no se nota**, porque la nota vendría de quien
+tiene autoridad para dármela.
+
+**Una nota para auditar el futuro se comprueba en el presente**, y cuesta cinco
+minutos: un `tsc`, un `jest` y leer el diff. Es la misma regla del 21-08 vista
+desde el otro lado — entonces dejé de heredar el relato del ejecutor leyendo su
+bitácora; hoy habría heredado el mismo relato **en forma de encargo**.
+
+**No cierro nada.**
+
+---
+
+## 60. Recta final: qué impide salir a producción, y qué no (2026-09-08)
+
+Encargo de Doc: revisión rápida desde mi ángulo —auditoría, seguridad, QA—,
+diagnóstico y propuesta, **sin reparar**, y con el pragmatismo por delante.
+
+**Mi criterio para ordenar esto, que es el que me pidieron:** no pregunto *«¿está
+bien?»* sino **«¿impide que un usuario use el sistema, o que nos enteremos si
+deja de funcionar?»**. Todo lo demás baja de nivel, por grave que se vea en una
+lista. Llevo cuarenta secciones acumulando hallazgos; hoy la entrega útil es
+**decir cuáles no toca arreglar todavía**.
+
+### 60.1 🔴 Bloquean la salida. Son cuatro y solo cuatro
+
+| # | Qué | Por qué bloquea | Coste |
+|---|---|---|---|
+| **B1** | **El secreto de cliente de Google es inválido en producción** (§58) | **Nadie puede entrar.** Sin login no hay producto, y no hay forma de rodearlo | 10 min, consola |
+| **B2** | **La Fase 6 no compila: 3 errores de `tsc`** (§59.2) | El CI no la deja pasar. No hay despliegue posible | Pequeño |
+| **B3** | **16 pruebas rojas de 712**, en las 2 suites de lo que cambió (§59.2) | Mismo motivo, y son las que cubren la pieza nueva | Medio |
+| **B4** | **`proposedTasks` no está en ningún contrato** (§59.3) | @Gravity no puede empezar la Cuarentena sin inventarse el tipo | Pequeño |
+
+**B1 es independiente de las otras tres** y se puede hacer ya: no toca código,
+reutiliza la misma imagen. **B2, B3 y B4 son el mismo trabajo** y conviene que
+las haga una sola mano en una sola pasada.
+
+**Y una consecuencia de B1 que hay que mirar después, no antes:** la ingesta
+lleva muerta desde el 3 de septiembre (§54). Arreglado el secreto, el cron dirá
+si además hay que reconectar la cuenta de Google. **No se puede saber antes**, y
+por eso el paso a paso de §58 termina en «lee qué error queda».
+
+### 60.2 🟠 No bloquean, pero yo no saldría sin ellas. Las tres son de minutos
+
+**C1 · Que alguien avise si esto se cae.** Hoy estuvo caído **6 h 06 min** y no
+saltó nada: `uptimeCheckConfigs` está vacío (§56.2). Un check de Monitoring
+contra `/health/live` —`GET`, sin credenciales— al canal `Alertas PMO` que ya
+existe. **Es un formulario, no código.** Salir a producción sin esto significa
+que el próximo corte lo descubre el Jefe usándolo.
+
+**C2 · Techo al historial del hilo** (§59.5). La pieza nueva manda el hilo entero
+sin `take` y sin recorte, y el hilo es justo lo que crece. Un `take` de los 3–5
+últimos y un corte de caracteres. **Lo pongo aquí y no en la deuda porque es
+código recién escrito que nadie ha visto correr con un hilo de doce mensajes** —
+y §48 ya fue un bloqueo por saldo.
+
+**C3 · La cabecera que impide meter la aplicación en un `iframe`** (§53.1).
+Comprobado hoy: el frontend sirve **solo `Strict-Transport-Security`**; no hay
+`X-Frame-Options` ni CSP, y la cookie va `sameSite: none`. **Y `vercel.json` ya
+tiene un bloque `headers`**: son tres líneas dentro de algo que existe. No he
+montado el ataque completo, así que no lo llamo agujero probado — lo llamo
+**la puerta más barata que queda abierta**.
+
+### 60.3 🟢 Lo que **no** tocaría antes de salir, y lo digo firmando
+
+Esto es la mitad del encargo. Todo lo de aquí abajo está verificado y escrito, y
+**aun así recomiendo aplazarlo**:
+
+- **Los 15 avisos de `npm audit`** (1 bajo, 9 medios, 5 altos), §52.5. `qs` se
+  arregla sin ruptura; **`multer` es de ruptura y toca la subida de archivos**,
+  que es justo lo que la Fase 6 va a estrenar. **Tocar eso ahora es cambiar el
+  suelo mientras se construye encima.** Después de salir.
+- **El rastro de prioridad y `aiConfidence` perdidos** (§59.4). Es pérdida de
+  explicabilidad, no de función: la prioridad escalada **sí** llega bien. Duele
+  en la auditoría, no en el uso.
+- **Las versiones viejas de secretos habilitadas** (§57.3) — con cadenas de Neon
+  y su contraseña vivas. Es de seguridad y me molesta, pero **no es una brecha
+  abierta**: hay que tener ya permiso de lectura del proyecto para tocarlas.
+  `disable` no borra y se revierte en un clic: es de después, y de cinco minutos.
+- **Los cuatro `as any`, el `aiConfidence: 1` de relleno y el docblock borrado**
+  (§59.6). Deuda declarada. Que quede escrita, no que pare la salida.
+- **El presupuesto que publica a un topic sin suscriptor** (§57.4) y **§13**, el
+  dominio viejo sirviendo otra aplicación, que hoy cumple **veintinueve días**.
+  Ninguno de los dos afecta a un usuario del sistema nuevo.
+- **El volcado de correo de clientes sin cifrar** (§52.6). Es el que más me
+  incomoda de la lista, y aun así: no es del producto, es de una carpeta. Una
+  decisión de cinco minutos del Jefe cuando haya salido.
+
+### 60.4 Lo que le falta a esto para ser «robusto» y no solo «verde»
+
+Dos huecos de QA que no son hallazgos sino ausencias, y los digo por si Doc
+quiere meterlos en el reparto:
+
+1. **No hay una prueba de humo del camino nuevo entero.** Las 712 son unitarias.
+   Nadie ha visto un correo entrar → proponer → una persona aprobar → aparecer la
+   tarjeta. **Ese recorrido es el producto de la Fase 6** y hoy no lo cubre nada.
+   Con la ingesta muerta ni siquiera se puede hacer a mano todavía; depende de B1.
+2. **`/health/ready` sigue sin mirar lo que importa** (§54.2). Da verde con la
+   ingesta muerta y con el login roto. La pregunta que falta —*¿cuándo entró el
+   último correo?*— sale de un dato que la base ya tiene. **Lo dejo como
+   propuesta, no como bloqueo:** con C1 puesto, el agujero grande queda tapado.
+
+### 60.5 El orden que propongo, si sirve de algo
+
+**Hoy:** B1 (Jefe, consola) → B2+B3+B4 en una sola pasada → leer qué queda de la
+ingesta → C1.
+**Antes de anunciar que está en producción:** C2 y C3.
+**Después:** todo §60.3, empezando por `disable` de las versiones viejas.
+
+**No cierro nada, y no reparo nada.** Lo reparte Doc.
+
+---
+
+## 61. El panel de OAuth, por fin visto: tres desajustes y un miedo descartado (2026-09-08)
+
+El Jefe entra en `https://pmo-frontend-ten.vercel.app/`, pulsa entrar con Google
+y recibe:
+
+```
+Error 400: redirect_uri_mismatch
+redirect_uri=https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback
+```
+
+Me pide mirar el panel con el navegador. **Es exactamente la pantalla que en
+§57.6 dejé como «lo único que sigue sin poderse mirar»**, porque la API de IAP
+está deshabilitada y no la iba a habilitar yo. Con Chrome sí se ve, y ahí estaba
+todo.
+
+### 61.1 El cliente de OAuth, y lo que dice literalmente
+
+Proyecto `pmo-dashboard-503418` → Credenciales. **Hay un solo cliente**,
+`Cliente web PMO`, tipo *Aplicación web*, creado el **24 de julio de 2026**, con
+ID `614812477499-be837kem8i3v9gs1l9a0ag9kji08f4mm.apps.googleusercontent.com`.
+Es el mismo `client_id` que hay en `.env` y en Secret Manager (§58: los dos
+hashes coincidían). **No se creó un cliente nuevo: se reconfiguró este.**
+
+**URIs de redireccionamiento autorizados — hay exactamente uno:**
+
+```
+https://pmo-api-614812477499.us-central1.run.app/auth/google/ca…
+```
+
+**Y producción manda el otro.** `GOOGLE_REDIRECT_URI`, tanto en la revisión viva
+de Cloud Run como en `gh variable list`, vale
+`https://pmo-api-mlpuuasqka-uc.a.run.app/auth/google/callback`.
+
+Son **los dos nombres del mismo servicio** —Cloud Run da una URL con
+identificador opaco y otra con el número de proyecto; comprobé en §56.1 que las
+dos responden—, pero **para Google son cadenas distintas**, y la comparación es
+literal. De ahí el 400.
+
+### 61.2 Y en la misma pantalla, la confirmación de §58 con hora exacta
+
+**Secretos del cliente: uno solo.**
+
+| Campo | Valor |
+|---|---|
+| Secreto del cliente | `****qh5U` |
+| Fecha de creación | **7 de septiembre de 2026, 5:24:11 p.m. GMT-5** |
+| Estado | Habilitada |
+
+**Eso es ayer a las 22:24 UTC**, y encaja al minuto con lo que deduje en §58 del
+registro: `invalid_grant` hasta el cron del 7 a las 07:30, `invalid_client` desde
+el del 8 a las 07:30. **El secreto se rotó en la consola en esa ventana y Secret
+Manager se quedó con el viejo.** Ya no era una inferencia: está fechado en la
+fuente.
+
+Y el panel añade un detalle que importa para el arreglo: *«Ya no se pueden ver ni
+descargar los secretos del cliente»*. **El único sitio donde vive el valor bueno
+es el `.env` local** — que es justo donde lo encontré, y por eso la prueba contra
+`oauth2.googleapis.com` dio `invalid_grant` con él y `invalid_client` con el de
+producción.
+
+### 61.3 El tercer desajuste, que todavía no ha dado la cara
+
+**Orígenes autorizados de JavaScript:**
+
+```
+URI 1: https://pmo-frontend-antoniosanchez-5466s-projects.vercel.app
+URI 2: http://localhost:3000
+```
+
+**Ninguno de los dos es el frontend de producción.** `WEB_URL` vale
+`https://pmo-frontend-ten.vercel.app`, que es el dominio que el Jefe abre y el
+que sirve `<title>PMO Dashboard</title>`. El de la lista es un dominio de
+despliegue de Vercel, de los que llevan el nombre de la cuenta.
+
+**No es lo que rompe el login de hoy** —el flujo es de servidor y ahí solo cuenta
+el `redirect_uri`—, así que no lo pongo al mismo nivel. Pero es la misma clase de
+deriva y va a morder el día que algo del navegador hable con Google directamente.
+Lo dejo señalado, no lo llamo urgente.
+
+### 61.4 ✅ Y una que se cierra a favor: la pantalla es **Interna**
+
+`Google Auth Platform → Público → Tipo de usuario:` **Interno**.
+
+**Esto contesta §55.2 y descarta el miedo que llevaba encima desde el 7.** Allí
+escribí que una de las causas posibles del `invalid_grant` —app en modo prueba,
+con `refresh token` de siete días— **«volvería a pasar sola»**, y lo dejé como
+lo urgente que había que distinguir en el panel.
+
+**No es el caso.** Una app Interna del Workspace no caduca los `refresh token` a
+los siete días. **La ingesta no se va a volver a apagar sola por ese motivo**, y
+eso cambia la urgencia de todo el bloque de §54.
+
+*(De paso cierra también la comprobación de un minuto que dejé pendiente en §21,
+el despertar 11: «si la pantalla de consentimiento puede ser Interna en el
+Workspace de `zepto.com.mx`». Puede, y lo es.)*
+
+### 61.5 Los dos fallos son el mismo suceso, y por eso hay que arreglarlos juntos
+
+Ayer, entre las 17:24 y las 22:31 hora local, alguien **reconfiguró este cliente
+de OAuth**: rotó el secreto y dejó registrada la URL nueva de Cloud Run. De ahí
+salen las dos averías, y **se ven en este orden si se intenta entrar**:
+
+1. **Primero muere en la redirección** — `redirect_uri_mismatch`, que es lo que
+   el Jefe ve hoy. Ni siquiera llega a pedir el token.
+2. **Y si eso se arregla solo, moriría en el intercambio** — `invalid_client`,
+   §58, porque producción sigue con el secreto viejo.
+
+**Arreglar uno sin el otro no devuelve el login.** Es la trampa clásica de esta
+casa: se corrige el error que se ve, se prueba, falla igual, y parece que la
+corrección no sirvió.
+
+### 61.6 Lo que propongo, y por qué esta vía y no la otra
+
+Hay dos formas de cerrar el desajuste de la redirección:
+
+- **A — añadir la URL vieja al cliente.** Un campo, un `Guardar`. **No toca
+  producción**, no despliega nada, y es aditivo: lo que ya funciona sigue
+  funcionando.
+- **B — cambiar `GOOGLE_REDIRECT_URI` a la URL nueva** en Cloud Run y en las
+  variables de GitHub. Obliga a revisión nueva, toca dos sitios y deja el
+  proyecto a medio camino entre dos nombres.
+
+**Recomiendo A, y con las dos URLs registradas**, no una. El servicio responde
+por los dos nombres y así deja de importar cuál se use. B es más «limpio» sobre
+el papel y **más caro y más frágil hoy**, que es justo lo que la recta final pide
+evitar.
+
+**No lo ejecuto yo:** es la consola de producción del Jefe y yo no reparo. El
+paso a paso va al buzón.
+
+**No cierro nada.**
+
+---
+
+## 62. Recorrido de humo en producción, con navegador (2026-09-08, tarde)
+
+Encargo: entrar en producción, completar el login de Google, verificar la
+interfaz de la Fase 6 y buscar errores de consola. **El login pasa. La interfaz
+no se puede verificar porque no está desplegada. Y por el camino salieron tres
+averías vivas que no estaban en ninguna lista.**
+
+### 62.1 ✅ El login de Google funciona, probado de verdad
+
+No me valía entrar y encontrarme la sesión puesta —eso prueba que hay una cookie,
+no que el flujo funcione—, así que **cerré sesión y volví a entrar**:
+
+1. `Cerrar sesión` → la pantalla de acceso.
+2. `Continuar con Google`.
+3. Vuelta a `https://pmo-frontend-ten.vercel.app/?login=success`, con la sesión
+   de José Antonio Sánchez Navarro restablecida.
+
+**Ni `redirect_uri_mismatch` ni `invalid_client`.** Las dos mitades de §61 están
+cerradas, y esta vez el flujo entero se recorrió, no se dedujo.
+
+### 62.2 ✅ Red, consola y socket: limpios
+
+| Llamada | Código |
+|---|---|
+| `GET /auth/me` | 200 |
+| `GET /tags` | 200 |
+| `GET /emails?status=PENDING&take=20` | 200 |
+| `GET /health/ready` | 200 |
+| `GET /health` | 200 |
+
+**Cero errores de consola.** Lo único que se registra es
+`🔗 Conectado a WebSocket …`, tres veces en tres cargas, cada una con su
+identificador distinto. **Ningún 4xx, ningún 5xx, ningún fallo de socket.** El
+backend responde `OK` con `SERVICE_VERSION = a31384e…` y la revisión viva es
+`pmo-api-00117-jm7`.
+
+### 62.3 ⛔ Los tres requisitos de Fase 6 no se pueden validar: no están desplegados
+
+Buscaba el distintivo ámbar `🕒 N propuestas`, el clip de adjuntos y el botón
+`Reanalizar`. **No aparece ninguno**, y antes de llamarlo defecto fui a por la
+causa. Tres comprobaciones independientes, y las tres dicen lo mismo:
+
+1. **`/version.json` de Vercel:**
+   ```json
+   { "commit": "259c91f572694bc410fe9d0ac2a1e0c34854e4dc",
+     "construido": "2026-08-25T23:30:05.148Z" }
+   ```
+   **El frontend desplegado es del 25 de agosto.**
+2. **El bundle servido es `index-JNoC7SoZ.js`** — el mismo hash que medí ayer al
+   buscar la URL de la API. No se ha reconstruido.
+3. **Grep sobre el bundle que sirve Vercel ahora mismo:**
+
+   | Cadena | En el bundle desplegado | En el código local |
+   |---|---|---|
+   | `Reanalizar` | **0** | `kanban/components/AiValidationModal.tsx` |
+   | `proposedTasks` | **0** | `inbox/api/emails.api.ts`, `EmailDetailModal.tsx` |
+   | `hasAttachments` | **0** | `EmailDetailModal.tsx`, `InboxPage.tsx`, `types.ts` |
+   | `force=true` | — | `kanban/api/tasks.api.ts` |
+
+   *(El único `propuestas` del bundle viejo es un `Tareas Propuestas (N)` que ya
+   existía en otro componente. No es el distintivo de Fase 6.)*
+
+**La causa, en una línea:** `master` va **5 commits por delante de
+`origin/master`**. Los cuatro de @Gravity —`96be13b`, `2b0e61c`, `f2dcd66`,
+`c20685d`, todos de hoy a las 14:33–14:38— **están en local y sin empujar**, así
+que Vercel nunca los construyó.
+
+**Y el backend de Fase 6 tampoco está:** la API sirve `a31384e`, del 25 de
+agosto, y los cambios de Fase 6 siguen sin commitear en el árbol.
+
+**Lo digo con cuidado porque importa para el reparto: el trabajo existe y se ve
+bien escrito. Lo que falla es la entrega, no la programación.** Pedirme validar
+esta interfaz en producción era pedir que mirara algo que nunca salió del
+portátil.
+
+### 62.4 🔴 Hallazgo nuevo: la clave de Anthropic es inválida en producción
+
+Salió del canal de Chat, y lo comprobé antes de escribirlo **con el mismo método
+de §58**, sin exponer ningún valor:
+
+| | SHA-256 (12) | Largo | `GET api.anthropic.com/v1/models` |
+|---|---|---|---|
+| Secret Manager (lo que usa producción) | `229fa05ed3f0` | 108 | **HTTP 401** |
+| `.env` local | `6467295d1ea5` | 108 | **HTTP 200** |
+
+**Es el mismo patrón exacto del secreto de Google:** se rotó la credencial, el
+`.env` recibió la buena y **Secret Manager se quedó con la muerta**.
+
+**Y está pasando ahora mismo.** En el canal:
+
+```
+Error 500 en POST /emails/…/classify
+HTTP 401 · {"type":"authentication_error","message":"API key is invalid."}
+```
+
+y detrás, lo que de verdad duele:
+
+```
+Clasificación perdida: un job agotó sus reintentos
+cola=classify-email job=cmtt9buu8005s1qvmv5p4j3ud · 401 API key is invalid
+```
+
+**Más de 500 líneas con `API key is invalid` en la última hora** (500 es el tope
+que pedí, así que son *al menos* 500). La ingesta volvió, los correos entran —
+**y ninguno se clasifica. Cada uno agota sus reintentos y se pierde.**
+
+### 62.5 🔴 Hallazgo nuevo: Gmail está devolviendo 403 por cuota, en bucle
+
+```
+Error obteniendo detalle del mensaje …: code=403 · HTTP 403 ·
+Quota exceeded for quota metric 'Total Query Cost' and limit
+'Units per minute per user' of service 'gmail.googleapis.com'
+```
+
+**Más de 500 en la última hora**, también con el tope tocado. Y no es una cuota
+diaria agotada: es **«unidades por minuto y usuario»**, o sea **ritmo**.
+
+**Y se muerde la cola, que es lo grave.** El aviso de Capa 1 lo cuenta solo:
+
+```
+Sincronizacion de Gmail incompleta: el marcador no avanza
+299 sin descargar … El marcador se queda en 6613794 y se reintentara el mismo tramo
+```
+
+Lo vi moverse en vivo: **299 → 294 → 291 sin descargar** en unos minutos. La
+sincronización pide el tramo entero de golpe, revienta la cuota por minuto, casi
+todo falla, **el marcador no avanza y se reintenta el mismo tramo** — que vuelve
+a reventar la cuota. Avanza a razón de puñados, quemando cuota en cada vuelta.
+
+**Y tiene reloj**, y lo dice el propio mensaje: *«los `historyId` caducan a la
+semana»*. Si el marcador no llega al presente antes de eso, **la recuperación
+deja de ser posible por esta vía** y habrá que resincronizar de otra forma.
+
+Cuatro alertas de «el marcador no avanza» en la última hora.
+
+### 62.6 ✅ Y una a favor, que hay que decir: hoy el canal de alertas hizo su trabajo
+
+Contrasta con §56.2, donde el producto estuvo seis horas caído sin que saltara
+nada. Hoy, en el mismo canal:
+
+- **Capa 1** avisó del `invalid_client` a las 2:30, del `invalid_grant` a la
+  1:07 —el cambio de error entre los dos **es la traza de que el arreglo del
+  secreto funcionó**—, de la sincronización atascada, del barrido de
+  reconciliación y de cada clasificación perdida.
+- **Capa 2** avisó del apagón *y también de la recuperación*:
+  *«Push requests … has started to come in again»*.
+
+**El diseño de alertas de este proyecto es bueno.** Lo que falta no es más
+alertas: es la que vigila que el servicio conteste (C1 de §60), que es
+precisamente el hueco por el que se coló la caída de esta mañana.
+
+### 62.7 Y de paso, dos viejas medidas otra vez, en vivo
+
+- **§51.1 ha empeorado.** La bandeja dice **«20 correos · 18 conversaciones»** y
+  Métricas dice **«549 · Total: 549 sin despachar»**. Era un factor de 16 cuando
+  lo medí el 26 de agosto; hoy es **27**. La llamada sigue siendo
+  `GET /emails?status=PENDING&take=20`.
+- **§51.6 sigue igual.** *Tiempo Registrado: 0.0 hrs* con **3 tareas en WIP** y
+  **59 atrasadas**. El cronómetro sigue sin cerrar su `TimeEntry`.
+
+### 62.8 El veredicto de QA, en tres frases
+
+**Lo que funciona:** el acceso, la API, el socket, la ingesta y el canal de
+avisos. **Lo que no se pudo probar:** toda la Fase 6, porque no está desplegada
+ni en frontend ni en backend. **Lo que está roto ahora mismo y no lo estaba esta
+mañana:** la clasificación entera, por una clave inválida, y la sincronización,
+atascada contra la cuota de Gmail.
+
+**No cierro nada, y no reparé nada.**
+
+---
+
+## 63. El canal, releído: el error cambió de madrugada y son dos averías apiladas (2026-09-09)
+
+El Jefe pregunta por qué siguen llegando mensajes de error. **Siguen llegando,
+pero no son los mismos**, y esa es toda la historia.
+
+### 63.1 La cronología, del canal
+
+**Fase 1 — de ayer 17:55 a hoy 02:11.** `Clasificación perdida: un job agotó sus
+reintentos`, con `401 · "API key is invalid."`, **una cada quince minutos, toda
+la noche**: 18:00, 18:23, 18:44, 18:59, 19:14, 19:29, 19:44, 19:59, 20:14,
+20:29, 20:44, 21:00, 21:15, 21:30, 21:45, 22:00, 22:25, 22:40, 22:55, 23:10,
+23:25, 23:40, 23:55, 00:10, 00:25, 00:40, 00:55, 01:10, 01:25, 01:41, 01:56 y
+02:11. **Treinta y tres clasificaciones perdidas** mientras nadie miraba.
+
+**Fase 2 — desde las 02:25 de hoy, y sigue.** El mensaje cambia por completo:
+
+```
+No se pudo encolar un correo entrante
+ERR max requests limit exceeded. Limit: 500000, Usage: 500051
+```
+
+02:25, 02:30, 05:48, 08:49, luego una ráfaga a las 10:00–10:02, otra a las
+10:32–10:37, otra a las 10:52–10:57, y otra hace menos de una hora. **Ahora
+mismo sigue.**
+
+**Upstash agotó la cuota mensual: 500.000 comandos, uso 500.051.**
+
+### 63.2 🔴 Y lo que no hay que leer mal, que es la parte importante
+
+**El `API key is invalid` no desapareció porque se arreglara.** Desapareció a las
+**02:11**, y el error de Upstash empezó a las **02:25**. Catorce minutos.
+
+**Con Redis rechazando comandos no se encola nada; sin cola no corre ningún job
+de clasificación; y sin job no puede aparecer el 401.** La avería de la clave de
+Anthropic **puede seguir viva, tapada por la de debajo**.
+
+No lo afirmo en ninguna dirección porque **no lo puedo comprobar ahora**: la
+sesión de `gcloud` volvió a caducar (`Reauthentication failed`), así que no puedo
+leer la versión viva del secreto ni repetir la prueba de §62.4. **Es lo primero
+que hay que mirar cuando se arregle Upstash**, y si no se mira, reaparecerá en
+cuanto la cola vuelva a moverse.
+
+### 63.3 🔴 Y la sonda vuelve a mentir, por tercera vez
+
+`/health/ready`, ahora mismo, con Upstash rechazando todos los comandos:
+
+```json
+{"status":"ok","info":{"database":{"status":"up"},
+ "schema":{"status":"up","aplicadas":11},
+ "redis":{"status":"up","responseTimeMs":38}}}
+```
+
+**`redis: "up"`.** Es §54.2 otra vez —dio verde con la ingesta muerta, dio verde
+con el login roto, y hoy da verde con la cola incapaz de aceptar un trabajo—.
+Y esta vez toca la pieza que decide si entra correo.
+
+Que responda no es raro ni es un fallo de la sonda en sí: comprobar que Redis
+contesta y comprobar que **acepta trabajo** no son la misma pregunta. **El
+defecto es que la sonda solo hace la primera y el semáforo dice «listo».**
+
+### 63.4 Lo que significa para el producto, sin adornos
+
+`No se pudo encolar un correo entrante`: **el correo llega y no entra**. No es
+que se clasifique mal ni que se retrase — **no se guarda trabajo ninguno**. La
+ingesta está muerta otra vez, por tercera causa distinta en tres días: primero el
+`watch` caducado (§54), después la credencial (§58, §62.4), ahora la cuota.
+
+### 63.5 Y el fondo, que no es una fuga: es que el plan no alcanza
+
+Esto no es el escape de §20 volviendo. Aquello se midió y se cerró —`5b8df3a` lo
+dio por resuelto—. **Lo de hoy es aritmética.**
+
+En §20 medí el consumo en reposo: **~19 comandos por minuto ≈ 1.140 por hora**,
+con el contenedor despierto y sin nadie usando el producto. A ese ritmo:
+
+```
+500.000 ÷ 1.140 por hora ≈ 439 horas ≈ 18 días
+```
+
+**El plan gratuito de 500.000 comandos al mes no da para este sistema
+funcionando de continuo.** Aquella cifra es de agosto y desde entonces se bajó el
+sondeo —`stalledInterval` a 10 min, el latido a 5, el cron a horario—, así que el
+ritmo de hoy será menor. **Pero el hecho empírico manda: la cuota se agotó.**
+
+Y conviene decirlo con la fecha delante: es **día 9 del mes**. Si el ciclo de
+facturación empieza el día 1, se gastaron 500.000 comandos en ocho días.
+
+**No es un defecto que arreglar en el código de hoy para mañana. Es una decisión
+de plan**, y tiene tres salidas —subir de plan, esperar al reinicio del ciclo, o
+cambiar de proveedor— que **no puedo evaluar desde aquí**: el panel de Upstash
+pide sesión y **no meto credenciales en ningún sitio**. Es del Jefe.
+
+### 63.6 Lo que me llevo, y ya van tres veces en tres días
+
+**Cada avería tapó a la anterior.** El `watch` caducado escondía que la
+credencial de Google estaba mal; la credencial escondía que la de Anthropic
+también; y la de Anthropic ha quedado escondida detrás de la cuota de Redis.
+Cada vez, el síntoma nuevo hizo desaparecer el mensaje del anterior — **y un
+mensaje que deja de aparecer se lee como un problema resuelto**.
+
+Es el mismo patrón que nombré en §54 —*«el canal se calló justo cuando la pérdida
+se volvió total»*— pero una capa más arriba: aquí el canal **no** se calló, cambió
+de tema. **Y eso engaña igual, o más.**
+
+La regla que me llevo: **cuando un error deja de aparecer y otro empieza, no se
+da el primero por cerrado hasta comprobarlo aparte.** El silencio de un aviso
+nunca es una prueba.
+
+**No cierro nada.**

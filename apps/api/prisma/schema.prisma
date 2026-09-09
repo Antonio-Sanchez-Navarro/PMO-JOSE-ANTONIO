@@ -149,6 +149,10 @@ model Email {
   /// Valores en `SKIP_REASON` (`ai.processor.ts`).
   skipReason     String?
   tasks          Task[]
+  /// Tareas propuestas por la IA, pendientes de revisión humana.
+  proposedTasks  Json?
+  /// Indica si el correo trae archivos adjuntos (cuyo contenido no bajamos).
+  hasAttachments Boolean @default(false)
 
   @@index([threadId])
   /// La bandeja pregunta siempre por "lo mío que sigue pendiente".

@@ -13,6 +13,7 @@ import type { ClassifyEmailJob, ClassifyEmailResult } from './classify-email.job
 import { AJUSTE_WORKER } from '../../common/bullmq/polling.config';
 import { AlertService } from '../../common/alerts/alert.service';
 import { describirError, stackDe } from '../../common/observability/describir-error';
+import { TasksGateway } from '../tasks/tasks.gateway';
 
 /**
  * Cuántas clasificaciones van a la vez y cuántas por minuto.
@@ -80,6 +81,7 @@ export class AiProcessor extends WorkerHost {
     private readonly classification: EmailClassificationService,
     private readonly prisma: PrismaService,
     private readonly alertas: AlertService,
+    private readonly gateway: TasksGateway,
   ) {
     super();
   }
@@ -101,7 +103,16 @@ export class AiProcessor extends WorkerHost {
 
     const email = await this.prisma.email.findUnique({
       where: { id: emailId },
-      select: { id: true, processedAt: true, bodyText: true, snippet: true, labels: true },
+      select: {
+        id: true,
+        // Hace falta para encaminar el aviso por socket: los eventos van al
+        // usuario dueño del correo, no a todas las pestañas del sistema.
+        userId: true,
+        processedAt: true,
+        bodyText: true,
+        snippet: true,
+        labels: true,
+      },
     });
 
     if (!email) {
@@ -158,8 +169,18 @@ export class AiProcessor extends WorkerHost {
 
       this.logger.log(
         `Resultado de IA para ${emailId}: isActionable=${result.isActionable}` +
-          (result.tasks.length ? `, ${result.tasks.length} tareas creadas` : ''),
+          (result.tasks.length ? `, ${result.tasks.length} tarea(s) propuesta(s)` : ''),
       );
+
+      // La clasificación es asíncrona: cuando termina, quien tenga la bandeja
+      // abierta lleva un rato mirando una fila que ya no dice la verdad —le
+      // faltan la categoría, el `isActionable` y el contador de la cuarentena.
+      // Sin este aviso, la propuesta no aparece hasta que alguien recarga, y el
+      // producto se siente roto justo en el momento en que acaba de funcionar.
+      //
+      // Sin `exceptSocketId`: aquí no hay una pestaña que originara la acción
+      // —lo disparó la cola—, así que se anuncia a todas las del usuario.
+      this.gateway.emitEmailUpdated({ id: emailId, userId: email.userId });
     } catch (error) {
       // ─── Saldo agotado: la causa, dicha con su nombre ──────────────────
       //

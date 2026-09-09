@@ -40,6 +40,16 @@ describe('EmailClassificationService', () => {
     tasks: [],
   };
 
+  /**
+   * Fase 6: lo que la IA propone ya no son filas de `Task`, es el JSON
+   * `proposedTasks` que se escribe en el `Email` y espera aprobación humana.
+   * Todo lo que antes se leía de `tx.task.create` se lee ahora de aquí.
+   */
+  const propuestas = () => tx.email.update.mock.calls[0][0].data.proposedTasks;
+
+  /** El cuarto argumento de `analyzeEmail`, nuevo en la Fase 6. */
+  const sinHiloNiAdjuntos = { hasAttachments: false, threadContext: undefined };
+
   beforeEach(() => {
     tx = {
       task: {
@@ -49,7 +59,10 @@ describe('EmailClassificationService', () => {
       email: { update: jest.fn().mockResolvedValue({}) },
     };
     prisma = {
-      email: { findUniqueOrThrow: jest.fn().mockResolvedValue(emailConFechaRelativa) },
+      email: { 
+        findUniqueOrThrow: jest.fn().mockResolvedValue(emailConFechaRelativa),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
     ai = { analyzeEmail: jest.fn().mockResolvedValue(analisisConTarea) };
@@ -142,6 +155,7 @@ describe('EmailClassificationService', () => {
       emailNoAccionable.subject,
       emailNoAccionable.snippet,
       emailNoAccionable.receivedAt,
+      sinHiloNiAdjuntos,
     );
   });
 
@@ -155,29 +169,165 @@ describe('EmailClassificationService', () => {
       expect.any(String),
       expect.any(String),
       emailConFechaRelativa.receivedAt,
+      sinHiloNiAdjuntos,
     );
   });
 
-  describe('replaceExisting', () => {
-    it('borra las tareas previas del correo cuando es un reproceso', async () => {
-      await service.classifyAndPersist(emailConFechaRelativa.id, {
-        replaceExisting: true,
-        forceActionable: false,
-      });
+  it('pasa el contexto del hilo y la bandera de adjuntos (Fase 6)', async () => {
+    prisma.email.findUniqueOrThrow.mockResolvedValue({
+      ...emailConFechaRelativa,
+      hasAttachments: true,
+    });
+    prisma.email.findMany.mockResolvedValue([
+      { bodyText: 'Mensaje anterior del hilo', snippet: null },
+    ]);
 
-      expect(tx.task.deleteMany).toHaveBeenCalledWith({
-        where: { sourceEmailId: emailConFechaRelativa.id, source: TaskSource.EMAIL },
-      });
+    await service.classifyAndPersist(emailConFechaRelativa.id, {
+      replaceExisting: true,
+      forceActionable: false,
     });
 
-    it('acota el borrado al origen EMAIL: lo manual sobrevive al reproceso', async () => {
+    // El hilo se busca por `threadId` y solo hacia atrás: un mensaje posterior
+    // no es contexto de este, es una respuesta que aún no existía.
+    const where = prisma.email.findMany.mock.calls[0][0].where;
+    expect(where.threadId).toBe(emailConFechaRelativa.threadId);
+    expect(where.receivedAt).toEqual({ lt: emailConFechaRelativa.receivedAt });
+
+    expect(ai.analyzeEmail).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.any(Date),
+      { hasAttachments: true, threadContext: 'Mensaje anterior del hilo' },
+    );
+  });
+
+  /**
+   * C2 — el hilo entra acotado.
+   *
+   * Sin techo, un hilo largo se manda entero en **cada** clasificación de la
+   * tanda: son tokens de entrada que se pagan una y otra vez, y `max_tokens`
+   * solo acota la respuesta. La factura aparecería después, en `pmo-coste-ia`,
+   * sin nada que la explicara.
+   */
+  describe('C2 · techo del contexto del hilo', () => {
+    const audiencia = () => ai.analyzeEmail.mock.calls[0][3].threadContext as string;
+
+    it('pide como mucho 10 mensajes anteriores, y los más recientes', async () => {
+      prisma.email.findMany.mockResolvedValue([{ bodyText: 'uno', snippet: null }]);
+
       await service.classifyAndPersist(emailConFechaRelativa.id, {
         replaceExisting: true,
         forceActionable: false,
       });
 
-      const where = tx.task.deleteMany.mock.calls[0][0].where;
-      expect(where.source).toBe(TaskSource.EMAIL);
+      const consulta = prisma.email.findMany.mock.calls[0][0];
+      expect(consulta.take).toBe(10);
+      // Descendente y no ascendente: se piden los últimos para que el recorte
+      // sacrifique lo más antiguo, que es lo menos relevante.
+      expect(consulta.orderBy).toEqual({ receivedAt: 'desc' });
+    });
+
+    it('los devuelve en el orden en que ocurrieron, no en el que se pidieron', async () => {
+      // La base los da del más nuevo al más viejo…
+      prisma.email.findMany.mockResolvedValue([
+        { bodyText: 'el ultimo', snippet: null },
+        { bodyText: 'el primero', snippet: null },
+      ]);
+
+      await service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: true,
+        forceActionable: false,
+      });
+
+      // …y el modelo tiene que leerlos al revés, o la conversación no se
+      // entiende y las fechas relativas del hilo salen del revés.
+      expect(audiencia()).toBe(['el primero', 'el ultimo'].join('\n---\n'));
+    });
+
+    it('recorta por caracteres cuando un solo mensaje se pasa de largo', async () => {
+      prisma.email.findMany.mockResolvedValue([
+        { bodyText: 'x'.repeat(20_000), snippet: null },
+        { bodyText: 'este ya no cabe', snippet: null },
+      ]);
+
+      await service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: true,
+        forceActionable: false,
+      });
+
+      // El tope es 12.000: entra el recorte del más reciente y el viejo se cae
+      // entero. Lo que no puede pasar es que se mande el hilo completo.
+      expect(audiencia()).toHaveLength(12_000);
+      expect(audiencia()).not.toContain('este ya no cabe');
+    });
+
+    it('sin mensajes anteriores no inventa contexto', async () => {
+      prisma.email.findMany.mockResolvedValue([]);
+
+      await service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: true,
+        forceActionable: false,
+      });
+
+      // `undefined` y no cadena vacía: el prompt no debe llevar una sección de
+      // historial vacía, que el modelo leería como «aquí no hubo nada».
+      expect(ai.analyzeEmail.mock.calls[0][3].threadContext).toBeUndefined();
+    });
+  });
+
+  /**
+   * Antes esto se llamaba `replaceExisting` y probaba un `deleteMany` acotado
+   * al origen `EMAIL`. Con la Fase 6 la IA no crea filas, así que no hay nada
+   * que borrar: el reproceso se resuelve **reemplazando el borrador entero**.
+   * El nombre del bloque cambia para no prometer un borrado que ya no ocurre.
+   */
+  describe('reproceso — el borrador se reemplaza, no se acumula', () => {
+    it('el reproceso no toca la tabla Task: la IA ya no escribe ahí', async () => {
+      await service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: true,
+        forceActionable: false,
+      });
+
+      expect(tx.task.deleteMany).not.toHaveBeenCalled();
+      expect(tx.task.create).not.toHaveBeenCalled();
+    });
+
+    it('cada pasada reescribe `proposedTasks` entero, sin duplicar', async () => {
+      await service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: true,
+        forceActionable: false,
+      });
+      await service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: true,
+        forceActionable: false,
+      });
+
+      // Dos pasadas, dos escrituras, y la segunda con **una** tarea: si el
+      // borrador se anexara en vez de sustituirse, aquí saldrían dos.
+      expect(tx.email.update).toHaveBeenCalledTimes(2);
+      expect(tx.email.update.mock.calls[1][0].data.proposedTasks).toHaveLength(1);
+    });
+
+    // ⚠️ `replaceExisting` sigue en la firma y `ai.processor.ts` lo pasa en
+    // `true`, pero desde la Fase 6 **no cambia nada**. Este test lo deja
+    // escrito para que no se lea como una opción viva: o se retira el
+    // parámetro, o se le devuelve un significado. Ver buzón del 2026-09-08.
+    it('hoy `replaceExisting` no cambia el comportamiento', async () => {
+      await service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: true,
+        forceActionable: false,
+      });
+      const conBorrado = tx.email.update.mock.calls[0][0].data.proposedTasks;
+
+      tx.email.update.mockClear();
+
+      await service.classifyAndPersist(emailConFechaRelativa.id, {
+        replaceExisting: false,
+        forceActionable: false,
+      });
+      const sinBorrado = tx.email.update.mock.calls[0][0].data.proposedTasks;
+
+      expect(sinBorrado).toEqual(conBorrado);
     });
 
     it('no borra nada en la vía manual', async () => {
@@ -215,15 +365,16 @@ describe('EmailClassificationService', () => {
 
       expect(result.usedFallback).toBe(true);
       expect(result.isActionable).toBe(true);
-      expect(tx.task.create).toHaveBeenCalledTimes(1);
+      // Fase 6: ni forzando se crea una fila. Se propone y espera aprobación.
+      expect(tx.task.create).not.toHaveBeenCalled();
 
-      const creada = tx.task.create.mock.calls[0][0].data;
+      const [propuesta] = propuestas();
       // El respaldo desde el asunto lleva el mismo prefijo que el resto.
-      expect(creada.title).toBe(`[Boletín F.] ${emailNoAccionable.subject}`);
-      expect(creada.priority).toBe('MEDIUM');
-      // El origen es lo que la protege del borrado en un reproceso posterior:
-      // la creó una persona forzando, no el criterio del modelo.
-      expect(creada.source).toBe(TaskSource.MANUAL);
+      expect(propuesta.title).toBe(`[Boletín F.] ${emailNoAccionable.subject}`);
+      expect(propuesta.priority).toBe('MEDIUM');
+      // El origen viaja en el borrador: la propuso una persona forzando, no el
+      // criterio del modelo, y eso hay que poder distinguirlo en la cuarentena.
+      expect(propuesta.source).toBe(TaskSource.MANUAL);
     });
 
     it('respeta las tareas del modelo cuando sí extrajo alguna', async () => {
@@ -233,9 +384,9 @@ describe('EmailClassificationService', () => {
       });
 
       expect(result.usedFallback).toBe(false);
-      // La tarea sigue siendo la del modelo; lo que cambia es que se persiste
+      // La tarea sigue siendo la del modelo; lo que cambia es que se propone
       // con el prefijo de contexto delante (Sprint 4).
-      expect(tx.task.create.mock.calls[0][0].data.title).toBe('[Elena R.] Enviar cotización');
+      expect(propuestas()[0].title).toBe('[Elena R.] Enviar cotización');
     });
   });
 
@@ -252,20 +403,47 @@ describe('EmailClassificationService', () => {
     expect(data.processedAt).toBeInstanceOf(Date);
   });
 
-  it('traslada dueDate y aiConfidence del análisis a la tarea', async () => {
+  it('el borrador traslada dueDate y marca el origen EMAIL', async () => {
     await service.classifyAndPersist(emailConFechaRelativa.id, {
       replaceExisting: true,
       forceActionable: false,
     });
 
-    const creada = tx.task.create.mock.calls[0][0].data;
-    expect(creada.dueDate).toEqual(new Date('2026-07-24'));
-    expect(creada.aiConfidence).toBe(0.9);
-    expect(creada.sourceEmailId).toBe(emailConFechaRelativa.id);
-    expect(creada.userId).toBe(emailConFechaRelativa.userId);
-    // Sin este marcado explícito el default del schema (MANUAL) blindaría las
-    // tareas de la IA y el reproceso dejaría de reemplazarlas.
-    expect(creada.source).toBe(TaskSource.EMAIL);
+    const [propuesta] = propuestas();
+    expect(propuesta.dueDate).toEqual(new Date('2026-07-24'));
+    // `sourceEmailId` y `userId` ya no viajan en cada tarea: el borrador vive
+    // dentro de la fila del correo, que es quien los tiene.
+    expect(propuesta.source).toBe(TaskSource.EMAIL);
+  });
+
+  /**
+   * Esto era un `it.todo`: `aiConfidence` se calculaba y se perdía. P2 lo
+   * resuelve metiéndolo **en el borrador**, que es lo único que sobrevive entre
+   * que la IA propone y una persona aprueba —pueden ser días—. Guardarlo solo
+   * en el resultado del análisis no habría servido: ese objeto muere con la
+   * petición.
+   */
+  it('la confianza del análisis viaja dentro de cada propuesta', async () => {
+    await service.classifyAndPersist(emailConFechaRelativa.id, {
+      replaceExisting: true,
+      forceActionable: false,
+    });
+
+    expect(propuestas()[0].aiConfidence).toBe(0.9);
+  });
+
+  it('el respaldo desde el asunto hereda la confianza del análisis, no una inventada', async () => {
+    ai.analyzeEmail.mockResolvedValue(analisisSinTareas);
+    prisma.email.findUniqueOrThrow.mockResolvedValue(emailNoAccionable);
+
+    await service.classifyAndPersist(emailNoAccionable.id, {
+      replaceExisting: false,
+      forceActionable: true,
+    });
+
+    // Forzar no mejora lo seguro que estaba el modelo: solo dice que una
+    // persona quiso una tarea igualmente.
+    expect(propuestas()[0].aiConfidence).toBe(0.95);
   });
 
   // El detalle de las reglas se prueba en `priority.rules.spec.ts`; aquí solo
@@ -276,7 +454,7 @@ describe('EmailClassificationService', () => {
       tasks: [{ ...analisisConTarea.tasks[0], priority, dueDate }],
     });
 
-    const priorityPersistida = () => tx.task.create.mock.calls[0][0].data.priority;
+    const priorityPersistida = () => propuestas()[0].priority;
 
     const clasificar = () =>
       service.classifyAndPersist(emailConFechaRelativa.id, {
@@ -348,6 +526,7 @@ describe('EmailClassificationService — prefijo de contexto en los títulos', (
           // El remitente del prefijo sale de aquí, no del modelo.
           from: 'Astrid Robles <astrid@example.test>',
         }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
@@ -390,13 +569,13 @@ describe('EmailClassificationService — prefijo de contexto en los títulos', (
     expect(draft.tasks[0].title).not.toContain('/');
   });
 
-  it('las tareas que se persisten llevan el prefijo, no solo las propuestas', async () => {
+  it('el borrador que se guarda lleva el prefijo, no solo el que se devuelve', async () => {
     await service.classifyAndPersist(emailConFechaRelativa.id, {
       replaceExisting: true,
       forceActionable: false,
     });
 
-    const filas = tx.task.create.mock.calls.map((c: any[]) => c[0].data);
+    const filas = tx.email.update.mock.calls[0][0].data.proposedTasks;
     expect(filas.map((f: { title: string }) => f.title)).toEqual([
       '[Astrid R. - Citrotarte 1/2] Solicitar inmueble en garantía',
       '[Astrid R. - Citrotarte 2/2] Confirmar tipo de cambio',
