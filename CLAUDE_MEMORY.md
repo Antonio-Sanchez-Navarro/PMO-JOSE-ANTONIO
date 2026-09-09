@@ -8,6 +8,275 @@
 > pagado.
 
 ---
+## Manda la persona: una prioridad puesta a mano es intocable (2026-09-09)
+
+Regla de negocio del Jefe: **si un usuario asigna o fuerza la prioridad, ningún
+proceso de fondo la sobrescribe ni la degrada.**
+
+### Lo que había debajo era peor que un escalado mal hecho
+
+**`UpdateTaskDto` no declaraba `priority`.** Y `main.ts` monta el
+`ValidationPipe` con `whitelist: true`, que **descarta en silencio** lo que no
+está declarado: el frontend podía mandar la subida a `URGENT`, recibir un **200**
+y no cambiar nada.
+
+Es el peor fallo posible —el que parece que funcionó—: la tarjeta se repinta con
+lo que el cliente ya tenía en memoria y solo se descubre al recargar. Una tarea
+nacía con su prioridad y **no había forma de cambiarla**: subir algo a urgente
+obligaba a borrarla y escribirla otra vez.
+
+### El candado vive en `priorityReason`, y no es por ahorrar una columna
+
+`MOTIVO_PRIORIDAD_MANUAL` se guarda en el campo que **ya viaja a la tarjeta**. El
+rastro y el candado son el mismo hecho —quién decidió esta prioridad— y separarlos
+en dos campos permitiría que dijeran cosas distintas: una fila marcada como
+manual con un motivo automático encima, y nadie sabría cuál manda.
+
+`esPrioridadManual` compara por **prefijo**, no por igualdad: así el texto puede
+crecer sin que el candado deje de reconocerse. Un candado que se abre al
+reescribir un mensaje no es un candado.
+
+### Los tres caminos de `update`, y el segundo es el que se olvida
+
+1. **Toca la prioridad** → se guarda tal cual, marcada, **sin escalar**. Subirle
+   la urgencia a lo que acaba de elegir es lo que la regla prohíbe, y da igual
+   que lo haga el barrido esta noche o esa misma llamada.
+2. **Solo cambia la fecha y la prioridad ya era manual** → se respeta igual. El
+   candado no se abre por mover una fecha.
+3. **Solo cambia la fecha y nadie la había fijado** → escala como en `create`.
+
+Y de paso se arregla una incoherencia que ya estaba: `create` escalaba por fecha
+y `update` no. La misma tarea, con la misma fecha, salía con prioridades
+distintas según si la fecha se puso al crearla o se cambió después.
+
+### En el barrido, que es a quien apunta la regla
+
+`overdue.service` corre cada hora y sube prioridades **a una hora en la que nadie
+mira**. Sin el candado, alguien bajaba una tarea a `MEDIUM` por la tarde y por la
+noche se la encontraba en `URGENT` otra vez sin haber tocado nada: **el sistema
+discutiendo con el usuario, y ganando siempre porque corre más veces.**
+
+⚠️ **El estado sí se sigue moviendo.** Mandar a «Atrasadas» lo que venció es un
+hecho del calendario, no una opinión sobre la urgencia. Hay una prueba que lo fija
+—manual, vencida: cambia `status`, no toca `priority`— porque es justo el matiz
+que se pierde al leer «no tocar lo manual» como «saltarse la fila entera».
+
+### Lo que queda decidido a medias, y lo digo
+
+**`create` sigue escalando por fecha aunque la persona pase una prioridad
+explícita.** Es comportamiento documentado y probado desde el Sprint 3, y la
+regla habla de *procesos de fondo*: al crear, el escalado ocurre en el mismo
+gesto y se ve al instante. Pero si el criterio es «manda la persona siempre»,
+`create` es el siguiente sitio donde mirar.
+
+---
+
+## §51.6 · el cronómetro corría siete días y la métrica decía 0.0 (2026-09-09)
+
+`fichajesPorDia` filtraba `durationSec IS NOT NULL`, y el motivo escrito era
+razonable: *«el que está corriendo no tiene duración, y estimarla haría que dos
+lecturas seguidas dieran números distintos»*.
+
+**La consecuencia era peor que el problema que evitaba.** @Alana midió *Tiempo
+Registrado: 0.0 hrs* con un cronómetro llevando **167 h** en marcha. Un tramo
+abierto **no envenenaba la métrica: desaparecía de ella**. Siete días de trabajo
+que el tablero daba por cero.
+
+Un número que se mueve entre dos lecturas es lo que hace un reloj en marcha. Un
+cero mientras alguien trabaja es sencillamente falso.
+
+Ahora se cuenta con `COALESCE("durationSec", …)`, y el tramo abierto se mide
+**hasta ahora o el final de la ventana, lo que llegue antes**: sin ese
+`LEAST(now(), hasta)`, consultar una semana pasada le sumaría el tiempo
+transcurrido *después* de esa semana, y el total de una ventana ya cerrada
+crecería solo cada vez que alguien la mirara.
+
+⚠️ **Y ahora `GET /time/report` y las métricas cuentan cosas distintas.** El
+comentario decía «igual que el informe» y ha dejado de ser verdad. Lo dejo así a
+propósito —un informe es una liquidación, y sumar horas que aún corren podría
+acabar facturado— pero es **exactamente la familia de §51.1**: dos pantallas que
+dicen dos números del mismo hecho. Queda como decisión, no como despiste.
+
+### Dos trampas del camino, por si vuelven
+
+- **Backticks dentro de `Prisma.sql\`…\``.** Escribí un comentario SQL con
+  `` `GREATEST(0, …)` `` entre acentos graves y cerré el template literal a
+  mitad. Los errores salieron como `Cannot find name 'GREATEST'` — TypeScript
+  leyendo SQL como código, que no se parece en nada a la causa.
+- El spec ya guardaba el SQL crudo en `crudas`, así que la regresión se puede
+  fijar sin base de datos: si vuelve `durationSec IS NOT NULL`, el test cae.
+
+---
+
+## El árbol no estaba commiteado, y yo dije que sí (2026-09-09)
+
+Corrección mía. Dije *«Doc ya commiteó lo anterior»* leyendo un `git status`
+cortado por un `head -2`. **No era cierto para casi nada.** Lo que sí subió y
+está en producción es `a839177` (la suite del frontend); el plan de mitigación
+entero seguía sin commitear:
+
+- La migración **`20260909222533_reconcile_backoff` nunca ha entrado en git** —
+  `git log --all` no la conoce—, así que el Job de `prisma migrate deploy` no
+  puede aplicarla: no existe en el repositorio que despliega.
+- Con ella, el `schema.prisma`, el retroceso del barrido, los `engines`, el
+  umbral en los `package.json`, `ProposedTask` y `Task` consolidados.
+
+**Regla:** `git status | head -n` es una forma estupenda de leer la mitad de la
+verdad. Para decir «está commiteado» se mira la salida entera, o se pregunta a
+`git log` por el archivo concreto.
+
+---
+
+## El frontend estrena pruebas, `Task` deja de estar duplicado, y `/gmail/labels` (2026-09-09)
+
+### El `push` no hacía falta: ya estaba subido
+
+`git rev-list --left-right --count origin/master...HEAD` → **0 0**. Los tres
+`fix(web)` —incluido el de `VITE_API_URL`— ya estaban en el remoto. Comprobarlo
+costó un `fetch`; darlo por hecho habría costado un despliegue esperado que nunca
+llegaba, buscando el fallo en Vercel.
+
+### H3 · el frontend no tenía ni una prueba, y el CI decía que sí
+
+`ci.yml` corre `npm test --if-present`. **Sin script `test`, «no hay pruebas» se
+informa como `success`**: cinco mil líneas de interfaz, la Fase 6 entera incluida,
+pasando por un CI que aprobaba. Lo que había que quitar era el aprobado
+automático, no la falta de cobertura.
+
+Las dependencias ya estaban instaladas —`vitest`, `jsdom`, `@testing-library/*`—
+y no había ni script, ni configuración, ni un solo archivo. Faltaba el andamio,
+no las tablas.
+
+⚠️ **Y el andamio tenía una trampa que costó dos fallos falsos.** Puse
+`globals: false` para que `tsc -b` type-checkee los tests sin nombres mágicos.
+Correcto — pero **Testing Library registra su `cleanup` automático solo si
+encuentra un `afterEach` global**, y con `globals: false` no lo encuentra y no
+registra nada. Cada `render` se **suma** al documento anterior en vez de
+reemplazarlo.
+
+Los síntomas no se parecían a la causa: una consulta encontraba dos elementos
+donde debía haber uno, y un `queryBy…` devolvía algo que había pintado la prueba
+anterior. Los dos apuntaban al componente y el problema estaba en la
+configuración. `afterEach(cleanup)` explícito en `setupTests.ts`.
+
+`vitest.config.ts` va aparte de `vite.config.ts` a propósito: la de Vite lleva el
+`versionPlugin`, que lee `VERCEL_GIT_COMMIT_SHA`. Un test que pasa o falla según
+dónde se corra no es una prueba.
+
+### H6 · `Task` duplicado, y el `Omit` que no omitía nada
+
+`apps/web` envolvía la de shared: `Omit<SharedTask, 'id'> & { id: string }` más
+`aiConfidence`. Las dos mitades sobraban por motivos distintos:
+
+- El `Omit` y el `id` de vuelta eran **un no-op** —shared ya lo declara `string`—.
+  Solo servían para que el tipo pareciera distinto del que ya había.
+- `aiConfidence` lo emite el **backend** desde P2. Su sitio es el contrato, no
+  una envoltura del frontend: declararlo ahí hacía que el campo existiera para el
+  tablero y para nadie más.
+
+Ahora el archivo solo reexporta, y los seis consumidores no cambian de import.
+
+### `GET /gmail/labels`
+
+⚠️ **Traduce las de usuario; las del sistema no.** Para `INBOX`, Gmail devuelve
+`name: "INBOX"` — el nombre **es** la constante. Que la pantalla ponga
+«Recibidos» es presentación y vive en el frontend, con su diccionario. Por eso
+cada etiqueta viaja con su `type`: para separarlas sin adivinar por el prefijo.
+Decir que la API «traduce las etiquetas» a secas habría hecho que @Gravity
+esperara algo que no llega.
+
+**Sin caché a propósito:** `labels.list` cuesta **una unidad** de cuota de Gmail,
+y meterlo en Redis cambiaría esa unidad por una operación de Upstash — el recurso
+que se agotó ayer. Si algún día pesa, el sitio de la caché es el navegador.
+
+Y una prueba encontró un fallo en mi propio filtro: `l.id` sobre una entrada
+nula reventaba **en la línea que existía para descartarla**. Un filtro defensivo
+que falla con lo que dice filtrar es peor que no tenerlo, porque el error sale
+del sitio que lo tenía que evitar.
+
+---
+
+## Plan de mitigación: cuatro barreras que no existían (2026-09-09)
+
+Las cuatro son de la misma familia — **cosas que el proyecto daba por vigiladas y
+nadie vigilaba**— pero solo una era un bucle en marcha.
+
+### H10 · el segundo bucle, y era el que yo puse de red
+
+El arreglo del P0 sacó `sinEncolar` de la retención del `historyId` apoyándose en
+que `reconciliarSinClasificar()` era la red debajo. @Alana fue a medir la red y
+tenía **la misma forma que la trampa**:
+
+`processedAt` solo se escribe cuando la clasificación **termina**. Con la
+clasificación caída, ninguno de los 100 candidatos lo conseguía, y quince minutos
+después el mismo `findMany` —ordenado por `receivedAt` ascendente— devolvía
+**exactamente los mismos 100**. 96 vueltas al día × 200 operaciones de Redis
+(`remove` + `add`), que es lo que agotó la cuota de Upstash.
+
+El canal lo tenía escrito y nadie lo leyó como lo que era: *«100 correo(s)
+nuevo(s) … (100 reencolado(s) en esta pasada)»* — **el tope exacto**, que es la
+firma de una cola que no avanza, no de cien correos perdidos.
+
+**Y el propio código lo había predicho:** *«un contador de intentos por correo
+sería la solución completa, y hoy sería complejidad especulativa para un problema
+que no existe; el chivato es lo que avisará el día que exista»*. El chivato avisó.
+
+Arreglo: `reconcileAttempts` y `reconcileAfter` en `Email`, con espera
+exponencial desde la ventana del cron (15 min → 24 h de techo).
+
+- **La base y no Redis a propósito.** El recurso agotado era Upstash; resolverlo
+  con más operaciones de Redis habría sido pagar la deuda con la misma tarjeta.
+- **`OR: [{ reconcileAfter: null }, { reconcileAfter: { lte: ahora } }]`.** En SQL
+  `NULL <= ahora` **no es cierto**, así que sin la rama explícita los candidatos
+  nuevos —que nunca se han intentado— no entrarían jamás. El filtro pensado para
+  frenar el bucle habría apagado el barrido entero.
+- **El intento se anota después de encolar y solo si salió bien.** Un tropiezo de
+  Redis no es una oportunidad gastada; penalizar ahí aparta al correo por algo
+  que no es suyo.
+- **Con techo y sin rendición.** Un correo que no se clasifica nunca pasa de 96
+  reintentos al día a uno, y **sigue reintentándose**: pararlo del todo sería
+  decidir en silencio que ese correo no existe.
+- Y se separan dos averías que se veían iguales: a partir de cinco intentos, el
+  log lo dice con otras palabras — ya no es «un correo perdido», es «uno que
+  falla siempre», y se mira en la DLQ, no aquí.
+
+### H5 · `ProposedTask` estaba declarado dos veces, con cinco diferencias
+
+El contrato compartido existía y alguien escribió una segunda copia al lado. El
+frontend leía `tagIds` de la de `@pmo/shared`; el backend emitía `aiConfidence` y
+`source` desde la suya. **Los dos compilaban**, cada uno contra su verdad sobre el
+mismo JSON.
+
+Ahora vive solo en `packages/shared` y el backend la reexporta.
+
+⚠️ **Y al unificar salió por qué la copia era cómoda:** `shared` declara
+`TaskPriority` y `TaskSource` como `enum` de TypeScript, que es **nominal**;
+Prisma los genera como **unión de literales**. Asignar uno al otro no compila
+aunque el texto coincida — así que escribir una copia local era más fácil que
+resolverlo, y por ahí entró la divergencia.
+
+Se resuelve con `` `${TaskPriority}` `` y `` `${TaskSource}` ``: la plantilla
+sobre un enum de cadenas da la unión de literales, que acepta las dos formas. Un
+miembro del enum sigue encajando, así que el frontend no cambia.
+
+### H1 y R7 · el umbral y `engines`
+
+- `--max-warnings 0` estaba **solo en `ci.yml`**. En local, `npm run lint` daba
+  verde con siete avisos y el CI tumbaba el despliegue: el termómetro estaba en
+  otra habitación. Ahora está en los tres `package.json`.
+- **`packages/shared` no venía en el encargo y también lo lleva.** Tiene su
+  propio `lint` y CI ya se lo arma; dejarlo fuera era repetir el mismo agujero
+  en el único sitio donde nadie lo miraría.
+- `engines: >=22.0.0` en los cuatro. Node 22 en CI, 22 en la imagen, 24 en local:
+  las tres cumplen, así que no rompe nada hoy — y el día que alguien traiga una
+  vieja, npm lo dirá en vez de dejar que se lea como un fallo del código.
+
+**Regla:** una barrera que solo existe en un sitio no es una barrera, es una
+casualidad. Y la que existe en la nube pero no en la máquina de quien escribe el
+código llega siempre tarde.
+
+---
+
 ## Los siete `any` que tumbaron el despliegue, y el error que escondían (2026-09-09)
 
 CI abortó la Fase 6 entera: `--max-warnings 0` y siete `no-explicit-any`. Todos
