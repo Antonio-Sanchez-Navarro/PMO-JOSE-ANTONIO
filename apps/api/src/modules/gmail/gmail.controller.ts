@@ -14,7 +14,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { GmailService, EmailSnippet } from './gmail.service';
+import { GmailService, EmailSnippet, type GmailLabel } from './gmail.service';
 import { describirError, stackDe } from '../../common/observability/describir-error';
 import { AlertService } from '../../common/alerts/alert.service';
 import { AuthGuard } from '../auth/auth.guard';
@@ -53,6 +53,26 @@ export class GmailController {
   ): Promise<EmailSnippet[]> {
     // `AuthGuard` expone el id como `userId` (ver auth.types.ts), no como `id`.
     return this.gmailService.getInbox(user.userId, maxResults, { includeBody });
+  }
+
+  /**
+   * Las etiquetas del buzón, para que la bandeja pueda enseñar nombres en vez
+   * de identificadores.
+   *
+   * `Email.labels` guarda lo que manda Gmail, y las de usuario llegan como
+   * `Label_8214…`: un identificador opaco donde la persona escribió un nombre.
+   *
+   * ⚠️ **Traduce las de usuario; las del sistema siguen siendo su constante.**
+   * Gmail devuelve `name: "INBOX"` para `INBOX`, así que poner «Recibidos» es
+   * una decisión de presentación y vive en el frontend. Cada etiqueta trae su
+   * `type` precisamente para poder separarlas sin adivinar por el prefijo.
+   *
+   * Respuestas: 200 con la lista · 401 si no hay sesión.
+   */
+  @Get('gmail/labels')
+  @UseGuards(AuthGuard)
+  async getLabels(@CurrentUser() user: CurrentUserContext): Promise<GmailLabel[]> {
+    return this.gmailService.listLabels(user.userId);
   }
 
   /**

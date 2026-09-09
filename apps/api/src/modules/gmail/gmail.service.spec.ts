@@ -464,11 +464,18 @@ describe('GmailService · barrido de reconciliación', () => {
       sinTexto?: number;
       /** Lo que vio la pasada anterior. `undefined` = no hay nada guardado. */
       vistos?: string[];
+      /** Reintentos ya anotados en cada candidato (P0 del 09-09). */
+      intentos?: number;
     } = {},
   ) {
     const findMany = jest
       .fn()
-      .mockResolvedValue((opciones.huerfanos ?? ['e1', 'e2']).map((id) => ({ id })));
+      .mockResolvedValue(
+        (opciones.huerfanos ?? ['e1', 'e2']).map((id) => ({
+          id,
+          reconcileAttempts: opciones.intentos ?? 0,
+        })),
+      );
     const add = opciones.add ?? jest.fn().mockResolvedValue({});
     const remove = opciones.remove ?? jest.fn().mockResolvedValue(undefined);
 
@@ -483,7 +490,11 @@ describe('GmailService · barrido de reconciliación', () => {
     // `count` cuenta los cerrados sin clasificar: es lo que convierte «cinco,
     // qué curioso» en «cincuenta, esto es una avería de la ingesta».
     const count = jest.fn().mockResolvedValue(opciones.sinTexto ?? 0);
-    const prisma = { email: { findMany, count } };
+    // El barrido anota el intento y la proxima fecha elegible en cada correo
+    // que consigue reencolar: es lo que impide que la pasada siguiente coja
+    // exactamente los mismos.
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { email: { findMany, count, update } };
     const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
 
     const service = new GmailService(
@@ -494,8 +505,85 @@ describe('GmailService · barrido de reconciliación', () => {
       alertas as never,
     );
 
-    return { service, findMany, add, remove, alertas, count, get, set };
+    return { service, findMany, add, remove, alertas, count, get, set, update };
   }
+
+  /**
+   * H10 de la auditoría · el segundo bucle, hermano del de Gmail.
+   *
+   * El arreglo del P0 sacó `sinEncolar` de la retención del `historyId`
+   * apoyándose en que este barrido era la red. La red tenía la misma forma que
+   * la trampa: `processedAt` solo se escribe cuando la clasificación **termina**,
+   * así que con la clasificación caída ninguno de los 100 candidatos la
+   * conseguía, y quince minutos después el mismo `findMany` ordenado por
+   * `receivedAt` ascendente devolvía **exactamente los mismos 100**. 96 vueltas
+   * al día de 200 operaciones de Redis, que es lo que agotó Upstash.
+   */
+  describe('retroceso: un correo reencolado no vuelve en la pasada siguiente', () => {
+    it('solo pide los que ya no tienen espera pendiente', async () => {
+      const { service, findMany } = crear();
+
+      await service.reconciliarSinClasificar();
+
+      // `null` es «nunca se intentó», y en SQL `NULL <= ahora` no es cierto:
+      // sin la rama explícita, los candidatos nuevos no entrarían nunca.
+      const where = findMany.mock.calls[0][0].where;
+      expect(where.OR).toEqual([
+        { reconcileAfter: null },
+        { reconcileAfter: { lte: expect.any(Date) } },
+      ]);
+    });
+
+    it('anota el intento y aparta el correo por la ventana del cron', async () => {
+      const { service, update } = crear({ huerfanos: ['e1'] });
+
+      const antes = Date.now();
+      await service.reconciliarSinClasificar();
+
+      const { where, data } = update.mock.calls[0][0];
+      expect(where).toEqual({ id: 'e1' });
+      expect(data.reconcileAttempts).toBe(1);
+      // 15 min es la ventana entera del cron: el primer reintento ya se salta
+      // la pasada siguiente, que era la repetición que había que cortar.
+      expect(data.reconcileAfter.getTime() - antes).toBeGreaterThanOrEqual(15 * 60_000);
+    });
+
+    it('la espera se dobla con cada intento', async () => {
+      const { service, update } = crear({ huerfanos: ['e1'], intentos: 3 });
+
+      const antes = Date.now();
+      await service.reconciliarSinClasificar();
+
+      const data = update.mock.calls[0][0].data;
+      expect(data.reconcileAttempts).toBe(4);
+      // 15 min · 2³ = 2 h
+      expect(data.reconcileAfter.getTime() - antes).toBeGreaterThanOrEqual(2 * 3_600_000);
+    });
+
+    it('la espera tiene techo de 24 h: nunca deja de reintentar del todo', async () => {
+      const { service, update } = crear({ huerfanos: ['e1'], intentos: 40 });
+
+      const antes = Date.now();
+      await service.reconciliarSinClasificar();
+
+      const espera = update.mock.calls[0][0].data.reconcileAfter.getTime() - antes;
+      // Sin techo, 2⁴⁰ ventanas son millones de años: parar del todo sería
+      // decidir en silencio que ese correo no existe.
+      expect(espera).toBeLessThanOrEqual(24 * 3_600_000 + 1_000);
+      expect(espera).toBeGreaterThanOrEqual(24 * 3_600_000 - 1_000);
+    });
+
+    it('si encolar falla, no se le cuenta el intento al correo', async () => {
+      const add = jest.fn().mockRejectedValue(new Error('Redis dijo que no'));
+      const { service, update } = crear({ huerfanos: ['e1'], add });
+
+      await service.reconciliarSinClasificar();
+
+      // Un tropiezo de Redis no es una oportunidad gastada. Penalizar aquí
+      // apartaría el correo por algo que no es suyo.
+      expect(update).not.toHaveBeenCalled();
+    });
+  });
 
   it('solo mira correos sin `processedAt` y con antigüedad: no toca los recién llegados', async () => {
     // Sin la ventana de gracia reencolaría correos que están en la cola ahora
@@ -700,5 +788,70 @@ describe('GmailService · la fecha del correo no se cree lo que le mandan', () =
     const fecha = fechaDe('basura', '');
 
     expect(Number.isNaN(new Date(fecha).getTime())).toBe(false);
+  });
+});
+
+/**
+ * `GET /gmail/labels` · traducir identificadores a nombres.
+ *
+ * `Email.labels` guarda lo que manda Gmail, y las de usuario llegan como
+ * `Label_8214…`. El frontend las pintaba tal cual (C8): un identificador opaco
+ * justo donde la persona había escrito un nombre.
+ */
+describe('GmailService · listLabels', () => {
+  function crear(labels: unknown[]) {
+    const list = jest.fn().mockResolvedValue({ data: { labels } });
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn() } as never,
+      { } as never,
+      { add: jest.fn() } as never,
+      { avisar: jest.fn() } as never,
+    );
+    (service as unknown as { getGmailClient: unknown }).getGmailClient = jest
+      .fn()
+      .mockResolvedValue({ users: { labels: { list } } });
+    return { service, list };
+  }
+
+  it('devuelve id, nombre y tipo de cada etiqueta', async () => {
+    const { service } = crear([
+      { id: 'Label_8214', name: 'Obra Citrotarte', type: 'user' },
+      { id: 'INBOX', name: 'INBOX', type: 'system' },
+    ]);
+
+    await expect(service.listLabels('user-1')).resolves.toEqual([
+      { id: 'Label_8214', name: 'Obra Citrotarte', type: 'user' },
+      { id: 'INBOX', name: 'INBOX', type: 'system' },
+    ]);
+  });
+
+  it('una etiqueta sin tipo declarado cuenta como de usuario', async () => {
+    // Tratarla como del sistema mandaria al frontend a buscar una traduccion
+    // que no existe, y la etiqueta acabaria pintada con su id otra vez.
+    const { service } = crear([{ id: 'Label_1', name: 'Notaria' }]);
+
+    const [etiqueta] = await service.listLabels('user-1');
+    expect(etiqueta.type).toBe('user');
+  });
+
+  it('descarta las que llegan sin id o sin nombre', async () => {
+    // Una etiqueta a medias no se puede traducir, y colarla dejaria un
+    // `undefined` en la tarjeta con cara de fallo de carga.
+    const { service } = crear([
+      { id: 'Label_1', name: 'Buena', type: 'user' },
+      { id: 'Label_2' },
+      { name: 'Sin id' },
+      null,
+    ]);
+
+    const etiquetas = await service.listLabels('user-1');
+    expect(etiquetas).toHaveLength(1);
+    expect(etiquetas[0].name).toBe('Buena');
+  });
+
+  it('un buzon sin etiquetas devuelve lista vacia, no revienta', async () => {
+    const { service } = crear([]);
+    await expect(service.listLabels('user-1')).resolves.toEqual([]);
   });
 });

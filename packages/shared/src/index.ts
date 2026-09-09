@@ -15,8 +15,13 @@ export enum TaskPriority {
   URGENT = "URGENT",
 }
 
-// De dónde salió la tarea. Solo las `EMAIL` las borra y recrea el reproceso
-// automático de la bandeja; las demás las puso una persona.
+// De dónde salió la tarea.
+//
+// ⚠️ Decía que «solo las `EMAIL` las borra y recrea el reproceso automático».
+// Eso dejó de ser cierto el 2026-09-09: el reproceso ya no borra nada —no
+// queda un `deleteMany` sobre `Task` en el backend— porque desde la Fase 6
+// la IA propone y una persona aprueba. Hoy el origen es trazabilidad: dice
+// quién tuvo la idea, no qué se puede destruir.
 export enum TaskSource {
   EMAIL = "EMAIL",
   WHATSAPP = "WHATSAPP",
@@ -94,6 +99,18 @@ export interface Task {
   priorityAdjustedAt?: string | null;
   /** De qué prioridad venía antes del ajuste. `null` si no hubo. */
   priorityAdjustedFrom?: TaskPriority | null;
+  /**
+   * Lo seguro que estaba el modelo del análisis del que salió esta tarea.
+   *
+   * `null` o ausente cuando no hubo modelo por medio —la escribió una persona—.
+   * El backend lo rellena al materializar una propuesta aprobada desde la
+   * cuarentena (Fase 6), así que la tarjeta puede decir de dónde viene.
+   *
+   * Vivía solo en `apps/web`, que envolvía `Task` para añadirlo. Esa envoltura
+   * era la segunda declaración del mismo tipo: el campo existía en la interfaz
+   * del frontend y no en el contrato, aunque el que lo emite es el backend.
+   */
+  aiConfidence?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -116,11 +133,39 @@ export interface TimeEntry {
 export interface ProposedTask {
   title: string;
   description: string;
-  priority: TaskPriority;
+  /**
+   * Igual que `source`: plantilla y no el `enum`, porque al otro lado del cable
+   * Prisma lo genera como unión de literales y un `enum` de TypeScript es
+   * nominal. Un miembro del enum sigue encajando aquí, así que el frontend no
+   * cambia; lo que se gana es que el backend deje de necesitar un `as`.
+   */
+  priority: `${TaskPriority}`;
+  /** Texto libre que propuso el modelo. */
   tags: string[];
+  /**
+   * Etiquetas curadas por la persona al aprobar, por id. Son otra cosa que
+   * `tags`: estas existen en la base y las valida el backend.
+   */
   tagIds?: string[];
   /** ISO 8601, o `null` si el correo no menciona fecha límite. */
   dueDate?: string | null;
+  /**
+   * Lo seguro que estaba el modelo del análisis del que salió la propuesta.
+   *
+   * Opcional porque los borradores escritos antes de la Fase 6 no lo traen: la
+   * cuarentena tiene que poder distinguir «no consta» de «cero confianza».
+   */
+  aiConfidence?: number;
+  /**
+   * `EMAIL` si la extrajo el modelo; `MANUAL` si es el respaldo desde el
+   * asunto, que propone una persona forzando la conversión.
+   *
+   * Es `` `${TaskSource}` `` y no `TaskSource` a propósito: Prisma genera su
+   * enum como una **unión de literales**, y un `enum` de TypeScript es nominal
+   * —no acepta un literal aunque el texto coincida—. Con la plantilla, el
+   * mismo campo vale a los dos lados del cable sin un `as` por medio.
+   */
+  source?: `${TaskSource}`;
 }
 
 /**

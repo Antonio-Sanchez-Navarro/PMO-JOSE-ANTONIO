@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { TasksGateway } from './tasks.gateway';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { MOTIVO_PRIORIDAD_MANUAL } from '../ai/priority.rules';
 
 const USER = 'user-1';
 
@@ -665,6 +666,77 @@ describe('TasksService — emisión de eventos realtime', () => {
 
     await expect(service.remove(USER, 'ajena')).rejects.toThrow(NotFoundException);
     expect(events.emitTaskDeleted).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Regla de negocio del 2026-09-09 · **manda la persona**.
+ *
+ * Y antes de esto ni siquiera se podía intentar: `UpdateTaskDto` no declaraba
+ * `priority`, y `main.ts` monta el `ValidationPipe` con `whitelist: true`, que
+ * **descarta en silencio** lo que no está declarado. El frontend mandaba la
+ * subida a URGENT, recibía un 200 y no cambiaba nada — el peor fallo posible,
+ * el que parece que funcionó.
+ */
+describe('TasksService — prioridad fijada a mano', () => {
+  const EN_TRES_HORAS = new Date(Date.now() + 3 * 3_600_000).toISOString();
+
+  const prismaCon = (fila: Record<string, unknown>) => ({
+    task: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'tarea-1', userId: USER, ...fila }),
+      update: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'tarea-1', ...data })),
+    },
+  });
+
+  const escrito = (prisma: any) => prisma.task.update.mock.calls[0][0].data;
+
+  it('guarda la prioridad elegida y la marca como manual', async () => {
+    const prisma: any = prismaCon({ status: 'TODO', priority: 'LOW', dueDate: null, aiConfidence: null, priorityReason: null });
+    const service = new TasksService(prisma as unknown as PrismaService, gateway(), tagsVacio());
+
+    await service.update(USER, 'tarea-1', { priority: 'URGENT' } as any);
+
+    expect(escrito(prisma).priority).toBe('URGENT');
+    expect(escrito(prisma).priorityReason).toBe(MOTIVO_PRIORIDAD_MANUAL);
+    // No viene de ningún ajuste: la puso una persona, no la subió el sistema.
+    expect(escrito(prisma).priorityAdjustedFrom).toBeNull();
+  });
+
+  it('no la escala aunque la fecha apriete: sería pisar lo que acaban de elegir', async () => {
+    const prisma: any = prismaCon({ status: 'TODO', priority: 'MEDIUM', dueDate: null, aiConfidence: null, priorityReason: null });
+    const service = new TasksService(prisma as unknown as PrismaService, gateway(), tagsVacio());
+
+    await service.update(USER, 'tarea-1', { priority: 'LOW', dueDate: EN_TRES_HORAS } as any);
+
+    // Tres horas para vencer subirían a URGENT si nadie hubiera elegido.
+    expect(escrito(prisma).priority).toBe('LOW');
+  });
+
+  it('mover la fecha no abre el candado de una prioridad ya manual', async () => {
+    const prisma: any = prismaCon({
+      status: 'TODO',
+      priority: 'LOW',
+      dueDate: null,
+      aiConfidence: null,
+      priorityReason: MOTIVO_PRIORIDAD_MANUAL,
+    });
+    const service = new TasksService(prisma as unknown as PrismaService, gateway(), tagsVacio());
+
+    await service.update(USER, 'tarea-1', { dueDate: EN_TRES_HORAS } as any);
+
+    expect(escrito(prisma).priority).toBeUndefined();
+    expect(escrito(prisma).priorityReason).toBeUndefined();
+  });
+
+  it('sin decisión humana previa, cambiar la fecha sí escala', async () => {
+    const prisma: any = prismaCon({ status: 'TODO', priority: 'LOW', dueDate: null, aiConfidence: null, priorityReason: null });
+    const service = new TasksService(prisma as unknown as PrismaService, gateway(), tagsVacio());
+
+    await service.update(USER, 'tarea-1', { dueDate: EN_TRES_HORAS } as any);
+
+    // Aquí no hay nada que respetar: la fecha es un dato duro.
+    expect(escrito(prisma).priority).toBe('URGENT');
+    expect(escrito(prisma).priorityAdjustedFrom).toBe('LOW');
   });
 });
 

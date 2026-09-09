@@ -1,5 +1,6 @@
 {
   "name": "@pmo/shared",
+  "engines": { "node": ">=22.0.0" },
   "version": "0.1.0",
   "private": true,
   "main": "dist/cjs/index.js",
@@ -18,7 +19,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "tsc -p tsconfig.esm.json --watch",
-    "lint": "eslint \"src/**/*.ts\""
+    "lint": "eslint \"src/**/*.ts\" --max-warnings 0"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

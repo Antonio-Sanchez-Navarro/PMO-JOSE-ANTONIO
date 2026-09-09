@@ -198,12 +198,29 @@ export class MetricsService {
   }
 
   /**
-   * Segundos fichados por día local.
+   * Segundos fichados por día local, **contando también el tramo que está
+   * corriendo ahora mismo**.
    *
-   * Solo tramos cerrados, igual que `GET /time/report`: el que está corriendo no
-   * tiene duración, y estimarla haría que dos lecturas seguidas dieran números
-   * distintos. Se agrupa por `startedAt`, así que un tramo que cruza la
-   * medianoche cuenta entero en el día en que empezó.
+   * ⚠️ Esto decía *«solo tramos cerrados: el que está corriendo no tiene
+   * duración, y estimarla haría que dos lecturas seguidas dieran números
+   * distintos»*. El razonamiento es correcto y la consecuencia era mala:
+   * @Alana midió **«Tiempo Registrado: 0.0 hrs»** con un cronómetro llevando
+   * **167 h** en marcha. Siete días de trabajo que el tablero daba por cero.
+   *
+   * Un tramo abierto **no envenenaba la métrica: desaparecía de ella**, que es
+   * peor. Un número que se mueve entre dos lecturas es lo que hace un reloj en
+   * marcha; un cero mientras alguien trabaja es sencillamente falso.
+   *
+   * El tramo abierto se cuenta desde que empezó hasta **ahora o el final de la
+   * ventana, lo que llegue antes**: sin ese tope, consultar una semana pasada
+   * le sumaría el tiempo transcurrido después de esa semana.
+   *
+   * Se agrupa por `startedAt`, así que un tramo que cruza la medianoche cuenta
+   * entero en el día en que empezó — igual que antes.
+   *
+   * ⚠️ **`GET /time/report` sigue contando solo lo cerrado.** Era «igual que
+   * el informe» y ya no lo es: el informe es una liquidación y sumar horas que
+   * aún corren podría facturarse. Está anotado como decisión pendiente.
    */
   private async fichajesPorDia(
     userId: string,
@@ -213,10 +230,21 @@ export class MetricsService {
   ): Promise<Map<string, number>> {
     const filas = await this.prisma.$queryRaw<{ dia: string; segundos: number }[]>(Prisma.sql`
       SELECT to_char(date_trunc('day', ${enHoraLocal('startedAt', tz)}), 'YYYY-MM-DD') AS dia,
-             SUM("durationSec")::int AS segundos
+             SUM(
+               COALESCE(
+                 "durationSec",
+                 -- Tramo abierto: lo corrido hasta ahora, sin pasarse del final
+                 -- de la ventana consultada. El GREATEST(0, ...) es por si un
+                 -- reloj desajustado dejara un startedAt en el futuro: sin el
+                 -- restaria tiempo a la suma del dia.
+                 GREATEST(
+                   0,
+                   EXTRACT(EPOCH FROM (LEAST(now(), ${hasta}) - "startedAt"))
+                 )::int
+               )
+             )::int AS segundos
       FROM "TimeEntry"
       WHERE "userId" = ${userId}
-        AND "durationSec" IS NOT NULL
         AND "startedAt" >= ${desde}
         AND "startedAt" < ${hasta}
       GROUP BY dia

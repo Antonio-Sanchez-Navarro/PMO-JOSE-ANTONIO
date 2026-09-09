@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, Task, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { adjustPriority, HIGH_WINDOW_HOURS } from '../ai/priority.rules';
+import { adjustPriority, esPrioridadManual, HIGH_WINDOW_HOURS } from '../ai/priority.rules';
 import { TasksGateway } from '../tasks/tasks.gateway';
 import { describirError, stackDe } from '../../common/observability/describir-error';
 
@@ -139,7 +139,7 @@ export class OverdueService {
       // usuario ha podido cerrar la tarea o aplazarle la fecha desde el tablero.
       const tasks = await tx.task.findMany({
         where: { id: { in: ids }, userId, status: { in: ADJUSTABLE }, dueDate: { lt: horizon } },
-        select: { id: true, title: true, status: true, priority: true, dueDate: true, aiConfidence: true },
+        select: { id: true, title: true, status: true, priority: true, dueDate: true, aiConfidence: true, priorityReason: true },
         // Las más vencidas primero: es el orden en que se apilan en la columna.
         orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }],
       });
@@ -170,11 +170,25 @@ export class OverdueService {
       for (const task of tasks) {
         const data: Prisma.TaskUpdateInput = {};
 
-        const decision = adjustPriority(
-          { priority: task.priority, dueDate: task.dueDate, aiConfidence: task.aiConfidence },
-          now,
-        );
-        if (decision.adjusted) {
+        // ⚠️ **Una prioridad puesta a mano no se toca.** Regla de negocio del
+        // 2026-09-09: ningún proceso de fondo sobrescribe ni degrada lo que
+        // decidió una persona.
+        //
+        // Este barrido corre cada hora y sube prioridades **a una hora en la
+        // que nadie mira**. Sin esta guarda, alguien bajaba una tarea a MEDIUM
+        // por la tarde con su motivo, y por la noche se la encontraba en
+        // URGENT otra vez sin haber hecho nada: el sistema discutiendo con el
+        // usuario, y ganando siempre porque corre más veces.
+        //
+        // El estado sí se sigue moviendo: mandar a «Atrasadas» lo que venció
+        // es un hecho del calendario, no una opinión sobre la urgencia.
+        const decision = esPrioridadManual(task.priorityReason)
+          ? null
+          : adjustPriority(
+              { priority: task.priority, dueDate: task.dueDate, aiConfidence: task.aiConfidence },
+              now,
+            );
+        if (decision?.adjusted) {
           data.priority = decision.priority;
           // El motivo se guarda con la tarjeta, no solo en el log: este barrido
           // sube prioridades solo, a una hora en la que nadie mira, y sin esto

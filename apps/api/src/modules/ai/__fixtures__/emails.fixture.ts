@@ -25,6 +25,8 @@ const BASE: Email = {
   skipReason: null,
   proposedTasks: null,
   hasAttachments: false,
+  reconcileAttempts: 0,
+  reconcileAfter: null,
 };
 
 export const makeEmail = (overrides: Partial<Email> = {}): Email => ({

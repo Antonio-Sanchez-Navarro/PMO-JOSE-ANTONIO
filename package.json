@@ -1,5 +1,6 @@
 {
   "name": "pmo-dashboard",
+  "engines": { "node": ">=22.0.0" },
   "version": "0.1.0",
   "private": true,
   "description": "Sistema PMO integrado con Gmail, WhatsApp y Copiloto de IA",

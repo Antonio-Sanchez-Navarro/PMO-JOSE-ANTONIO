@@ -65,6 +65,15 @@ export interface PersistResult {
 
 type GmailClient = gmail_v1.Gmail;
 
+/** Una etiqueta del buzón, tal como la necesita la bandeja para traducir ids. */
+export interface GmailLabel {
+  /** Lo que viene dentro de `Email.labels`. */
+  id: string;
+  /** Legible para las de usuario; la propia constante para las del sistema. */
+  name: string;
+  type: 'system' | 'user';
+}
+
 /** Cuántos correos trae la primera sincronización cuando no hay `historyId` previo. */
 const BACKFILL_SIZE = 25;
 
@@ -159,6 +168,49 @@ const GRACIA_RECONCILIACION_MS = 30 * 60_000;
  * corte a mitad, que es como se llega a un bucle de reintentos.
  */
 const MAX_RECONCILIADOS = 100;
+
+/**
+ * Espera base antes de que el barrido vuelva a reencolar un correo que ya
+ * reencoló. Se dobla en cada intento y se acota en {@link RECONCILIACION_ESPERA_MAX_MS}.
+ *
+ * Es el cron entero: si un correo acaba de reencolarse, la pasada siguiente no
+ * tiene nada nuevo que decirle. Sin esta espera, el barrido cogia los 100 mas
+ * antiguos con `processedAt: null`, los reencolaba, fallaban todos -con la
+ * clasificacion caida fallan todos- y quince minutos despues cogia
+ * **exactamente los mismos 100**. Para siempre y sin avanzar uno: 96 vueltas
+ * al dia de 200 operaciones de Redis en bucle cerrado, que es lo que agoto la
+ * cuota de Upstash la madrugada del 2026-09-09.
+ */
+const RECONCILIACION_ESPERA_BASE_MS = 15 * 60_000;
+
+/**
+ * Techo de la espera. Un correo que no se clasifica nunca acaba reintentandose
+ * una vez al dia en vez de noventa y seis, y **sigue reintentandose**: pararlo
+ * del todo seria decidir en silencio que ese correo no existe.
+ */
+const RECONCILIACION_ESPERA_MAX_MS = 24 * 3_600_000;
+
+/**
+ * A partir de aqui, un correo deja de ser «se perdio una vez» y pasa a ser
+ * «este no se clasifica». No cambia lo que hace el barrido -sigue
+ * reintentandolo, mas espaciado- pero **si lo que se cuenta**, porque son dos
+ * averias distintas y hasta ahora se veian iguales.
+ */
+const RECONCILIACION_INTENTOS_SOSPECHOSOS = 5;
+
+/**
+ * Cuanto esperar antes del siguiente reintento del barrido: exponencial desde
+ * la ventana del cron y con techo.
+ *
+ * Con `intentos = 1` sale la ventana entera, asi que un correo reencolado ahora
+ * no vuelve a entrar en la pasada de dentro de quince minutos -que es justo la
+ * repeticion que hubo que cortar-. A partir de ahi se dobla: 15 min, 30, 1 h,
+ * 2 h... hasta el tope de 24 h.
+ */
+function esperaReconciliacion(intentos: number): number {
+  const espera = RECONCILIACION_ESPERA_BASE_MS * 2 ** Math.max(0, intentos - 1);
+  return Math.min(espera, RECONCILIACION_ESPERA_MAX_MS);
+}
 
 /**
  * Silencio entre avisos del barrido.
@@ -531,6 +583,48 @@ export class GmailService {
       .replace(/[ \t]+/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+  }
+
+  /**
+   * Las etiquetas del buzón, para traducir los identificadores que vienen en
+   * cada correo a algo que se pueda leer.
+   *
+   * `Email.labels` guarda lo que manda Gmail —`INBOX`, `CATEGORY_PERSONAL`,
+   * `Label_8214…`— y el frontend estaba pintando eso tal cual. Los de usuario
+   * son los peores: `Label_8214` no significa nada para nadie, y es justo el
+   * que la persona creó y nombró.
+   *
+   * ⚠️ **Esto traduce los de usuario, no humaniza los del sistema.** Para
+   * `INBOX`, Gmail devuelve `name: "INBOX"` — el nombre *es* la constante. Que
+   * en la pantalla ponga «Recibidos» es cosa del frontend, con un diccionario
+   * suyo: la API no tiene una traducción que dar y fingir que sí sería inventar.
+   * Por eso viaja `type`, que es lo que permite distinguir cuáles hay que
+   * traducir a mano (`system`) y cuáles ya vienen con su nombre (`user`).
+   *
+   * Sin caché a propósito: `labels.list` cuesta **una unidad** de cuota, y
+   * meterlo en Redis cambiaría esa unidad por una operación de Upstash, que es
+   * justo el recurso que se agotó el 09-09. Si algún día pesa, el sitio donde
+   * cachear es el navegador, que ya tiene la sesión abierta.
+   */
+  async listLabels(userId: string): Promise<GmailLabel[]> {
+    const gmail = await this.getGmailClient(userId);
+    const res = await gmail.users.labels.list({ userId: 'me' });
+
+    return (res.data.labels ?? [])
+      // `l?.` y no `l.`: un filtro defensivo que revienta con lo que dice
+      // descartar es peor que no tenerlo — el fallo sale de la linea que
+      // existia para evitarlo, y buscarlo lleva al sitio equivocado.
+      .filter((l): l is { id: string; name: string; type?: string | null } =>
+        Boolean(l?.id && l?.name),
+      )
+      .map((l) => ({
+        id: l.id,
+        name: l.name,
+        // `system` o `user`. Se normaliza a `user` si Gmail no lo dice: una
+        // etiqueta sin tipo declarado no es del sistema, y tratarla como tal
+        // haría que el frontend buscara una traducción que no existe.
+        type: l.type === 'system' ? 'system' : 'user',
+      }));
   }
 
   // ─── Sincronización ────────────────────────────────────────────────────
@@ -988,12 +1082,30 @@ export class GmailService {
     // de la DLQ por su cuenta.
     //
     // Lo que **no** se acepta es que vuelva a pasar sin que nadie lo vea: si el
-    // tope se llena, se grita. Un contador de intentos por correo seria la
-    // solucion completa, y hoy seria complejidad especulativa para un problema
-    // que no existe; el chivato es lo que avisara el dia que exista.
+    // tope se llena, se grita.
+    //
+    // ⚠️ **Y el contador de intentos por correo, que aqui se llamaba
+    // «complejidad especulativa para un problema que no existe», ya existe.**
+    // El problema llego el 2026-09-08: con la clasificacion caida por una clave
+    // invalida, *todos* los candidatos fallaban, ninguno conseguia `processedAt`
+    // y este mismo `findMany` -ordenado por `receivedAt` ascendente- devolvia
+    // los mismos 100 cada quince minutos. El aviso del canal lo dejo escrito
+    // con el tope exacto: «100 correo(s) nuevo(s) ... (100 reencolado(s))».
+    //
+    // `reconcileAfter` es lo que rompe esa repeticion: un correo recien
+    // reencolado no vuelve a entrar hasta que su espera venza, y la espera se
+    // dobla en cada intento. Un correo sano lo cruza una vez; uno atascado se
+    // aparta solo.
+    const ahora = new Date();
     const huerfanos = await this.prisma.email.findMany({
-      where: { processedAt: null, receivedAt: { lt: limite } },
-      select: { id: true },
+      where: {
+        processedAt: null,
+        receivedAt: { lt: limite },
+        // `null` es «nunca se ha intentado», que es elegible. Prisma no lo
+        // incluiria en un `lte` a secas: en SQL, `NULL <= ahora` no es cierto.
+        OR: [{ reconcileAfter: null }, { reconcileAfter: { lte: ahora } }],
+      },
+      select: { id: true, reconcileAttempts: true },
       orderBy: { receivedAt: 'asc' },
       take: MAX_RECONCILIADOS,
     });
@@ -1009,7 +1121,9 @@ export class GmailService {
     let reencolados = 0;
     let fallidos = 0;
 
-    for (const { id } of huerfanos) {
+    let atascados = 0;
+
+    for (const { id, reconcileAttempts } of huerfanos) {
       try {
         // ⚠️ **El `remove` antes del `add` es lo que hace que esto funcione, y
         // el orden importa.**
@@ -1027,6 +1141,22 @@ export class GmailService {
         await this.classifyQueue.remove(id).catch(() => undefined);
         await this.classifyQueue.add('classify', { emailId: id }, { jobId: id });
         reencolados++;
+
+        // El intento se anota **despues** de encolar y solo si encolar salio
+        // bien: si el `add` falla no ha habido intento que contar, y penalizar
+        // al correo por un tropiezo de Redis lo apartaria por algo que no es
+        // suyo. El contador mide «cuantas veces le hemos dado su oportunidad»,
+        // no «cuantas veces hemos pasado por aqui».
+        const intentos = reconcileAttempts + 1;
+        if (intentos >= RECONCILIACION_INTENTOS_SOSPECHOSOS) atascados++;
+
+        await this.prisma.email.update({
+          where: { id },
+          data: {
+            reconcileAttempts: intentos,
+            reconcileAfter: new Date(Date.now() + esperaReconciliacion(intentos)),
+          },
+        });
       } catch (err) {
         fallidos++;
         this.logger.warn(
@@ -1051,6 +1181,22 @@ export class GmailService {
     // avisa de los **ids nuevos**. Un problema que sigue ahí ya se contó; uno
     // que crece, no.
     const nuevos = await this.huerfanosNuevos(huerfanos.map((h) => h.id));
+
+    // ⚠️ **Dos averias distintas que hasta ahora se veian iguales.**
+    //
+    // Un correo que se perdio una vez y uno que **no se clasifica nunca** salen
+    // los dos en este barrido, pero piden cosas opuestas: el primero se arregla
+    // solo al reencolarlo, y el segundo seguira apareciendo cada vez con la
+    // espera mas larga hasta que alguien mire por que. Sin este contador, el
+    // aviso decia «N correos sin encolar» en los dos casos y el segundo se leia
+    // como ruido del primero.
+    if (atascados > 0) {
+      this.logger.warn(
+        `Reconciliacion: ${atascados} correo(s) llevan ${RECONCILIACION_INTENTOS_SOSPECHOSOS} ` +
+          'reintentos o mas sin llegar a clasificarse. Ya no es un correo perdido: es uno ' +
+          'que falla siempre. Miralos en la DLQ de `classify-email`.',
+      );
+    }
 
     if (nuevos.length > 0) {
       await this.alertas.avisar(

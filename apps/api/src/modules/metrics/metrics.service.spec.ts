@@ -126,6 +126,40 @@ describe('MetricsService', () => {
       expect(m.throughput.avgPerDay).toBe(1);
     });
 
+    /**
+     * §51.6 · el cronómetro que corría siete días y la métrica decía 0.0 hrs.
+     *
+     * La consulta filtraba `durationSec IS NOT NULL` con un motivo razonable
+     * —un tramo abierto no tiene duración cerrada— y una consecuencia mala: el
+     * tramo **no envenenaba la métrica, desaparecía de ella**. Siete días de
+     * trabajo que el tablero daba por cero.
+     */
+    it('cuenta también el tramo que está corriendo, no solo los cerrados', async () => {
+      responder({ fichajes: [] });
+      await service.dashboard(USER_ID);
+
+      const consulta = crudas.find((c) => c.sql.includes('"TimeEntry"'));
+      expect(consulta).toBeDefined();
+
+      // Si vuelve este filtro, vuelve el 0.0 con el reloj en marcha.
+      expect(consulta!.sql).not.toContain('"durationSec" IS NOT NULL');
+      // Y lo que lo sustituye: la duración cerrada si la hay, y si no, lo
+      // corrido hasta ahora.
+      expect(consulta!.sql).toContain('COALESCE');
+      expect(consulta!.sql).toContain('EXTRACT(EPOCH FROM');
+    });
+
+    it('acota el tramo abierto al final de la ventana consultada', async () => {
+      responder({ fichajes: [] });
+      await service.dashboard(USER_ID);
+
+      const consulta = crudas.find((c) => c.sql.includes('"TimeEntry"'));
+      // Sin el `LEAST(now(), hasta)`, consultar una semana pasada le sumaría
+      // todo el tiempo transcurrido **después** de esa semana: el total de una
+      // ventana cerrada crecería solo, cada vez que alguien la mirara.
+      expect(consulta!.sql).toContain('LEAST(now()');
+    });
+
     it('suma los segundos fichados y rellena los días vacíos', async () => {
       responder({ fichajes: [{ dia: '2026-07-24', segundos: 7200 }] });
 

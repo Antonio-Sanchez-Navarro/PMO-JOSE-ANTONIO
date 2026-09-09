@@ -33,6 +33,31 @@ export const HIGH_WINDOW_HOURS = 72;
  */
 export const MIN_CONFIDENCE_FOR_ESCALATION = 0.5;
 
+/**
+ * Marca que deja una prioridad **elegida por una persona**.
+ *
+ * Se guarda en `priorityReason`, que es el campo que ya viaja a la tarjeta, en
+ * vez de añadir una columna: el rastro y el candado son el mismo hecho —quién
+ * decidió esta prioridad— y separarlos permitiría que dijeran cosas distintas.
+ *
+ * **Regla de negocio (2026-09-09):** ningún proceso de fondo puede sobrescribir
+ * ni degradar una prioridad marcada así. El barrido de vencidas la lee y pasa
+ * de largo. Solo otra persona la cambia.
+ */
+export const MOTIVO_PRIORIDAD_MANUAL = 'fijada a mano por el usuario';
+
+/**
+ * ¿Esta prioridad la puso una persona?
+ *
+ * Se compara con el prefijo y no con la cadena entera para que el texto pueda
+ * crecer —«fijada a mano por el usuario el 9 de septiembre»— sin que el candado
+ * deje de reconocerse. Un candado que se abre solo al reescribir un mensaje no
+ * es un candado.
+ */
+export function esPrioridadManual(priorityReason: string | null | undefined): boolean {
+  return typeof priorityReason === 'string' && priorityReason.startsWith(MOTIVO_PRIORIDAD_MANUAL);
+}
+
 export interface PriorityInput {
   /** Lo que dijo el modelo. */
   priority: TaskPriority;

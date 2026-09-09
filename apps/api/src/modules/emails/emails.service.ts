@@ -3,6 +3,7 @@ import { EmailStatus, Task, TaskPriority, TaskSource, TaskStatus, Prisma } from 
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService, aJsonDeBorradores } from '../ai/email-classification.service';
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
+import type { ProposedTask } from '@pmo/shared';
 import { QueryEmailsDto } from './dto/query-emails.dto';
 import { TasksGateway } from '../tasks/tasks.gateway';
 import { TagsService } from '../tags/tags.service';
@@ -155,33 +156,23 @@ function esReapertura(actual: EmailStatus, destino: EmailStatus): boolean {
   return destino === EmailStatus.PENDING && YA_DESPACHADOS.includes(actual);
 }
 
-/** Una tarea propuesta: todavía no existe en la base de datos, por eso no hay `id`. */
-export interface ProposedTask {
-  title: string;
-  description: string;
-  priority: TaskPriority;
-  tags: string[];
-  /**
-   * ISO 8601, **cadena y no `Date`**, y no es un descuido.
-   *
-   * Un borrador vive en una columna `Json`, así que lo que se relee es lo que
-   * Prisma dejó escrito: la fecha en texto. Mientras esto decía `Date`, el
-   * tipo mentía en la mitad de los caminos —el recién clasificado traía un
-   * `Date`, el releído una cadena— y quien llamara a `.toISOString()` sobre
-   * el segundo se llevaba un fallo en ejecución que el compilador no podía
-   * ver. Sobre el cable las dos formas se serializan igual, así que unificar
-   * en cadena no cambia nada de lo que recibe el frontend.
-   */
-  dueDate: string | null;
-  /**
-   * Lo seguro que estaba el modelo. Opcional porque los borradores escritos
-   * antes de la Fase 6 no lo traen: la cuarentena tiene que saber distinguir
-   * «no consta» de «cero confianza».
-   */
-  aiConfidence?: number;
-  /** `EMAIL` si la extrajo el modelo; `MANUAL` si es el respaldo del asunto. */
-  source?: TaskSource;
-}
+/**
+ * `ProposedTask` **vive en `@pmo/shared`** y se reexporta aquí para que los
+ * consumidores del servicio no tengan que cambiar de import.
+ *
+ * Estaba declarado dos veces —aquí y en shared— con **cinco diferencias entre
+ * las dos copias**: el frontend leía `tagIds` de la de shared y el backend
+ * emitía `aiConfidence` y `source` desde esta, así que cada lado compilaba
+ * contra una verdad distinta sobre el mismo JSON. Compilar no era la prueba de
+ * nada: era el síntoma.
+ *
+ * ⚠️ `dueDate` es una **cadena ISO, no un `Date`**, y eso vale para las dos
+ * vías. Un borrador vive en una columna `Json`, así que lo que se relee es lo
+ * que Prisma dejó escrito: texto. Mientras el tipo decía `Date`, el recién
+ * clasificado traía un objeto y el releído una cadena, y un `.toISOString()`
+ * sobre el segundo reventaba en ejecución sin que el compilador lo viera.
+ */
+export type { ProposedTask } from '@pmo/shared';
 
 /**
  * Lee la columna `proposedTasks` como lo que es: una lista de propuestas, o

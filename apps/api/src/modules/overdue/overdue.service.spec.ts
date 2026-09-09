@@ -2,6 +2,7 @@ import { TaskPriority, TaskStatus } from '@prisma/client';
 import { OverdueService } from './overdue.service';
 import { TasksGateway } from '../tasks/tasks.gateway';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { MOTIVO_PRIORIDAD_MANUAL } from '../ai/priority.rules';
 
 const NOW = new Date('2026-07-27T12:00:00.000Z');
 const HOUR_MS = 3_600_000;
@@ -73,6 +74,76 @@ describe('OverdueService — barrido y reevaluación del tablero', () => {
     prisma = makePrisma();
     events = { emitTaskUpdated: jest.fn(), emitTaskCreated: jest.fn(), emitTaskDeleted: jest.fn() };
     service = new OverdueService(prisma as unknown as PrismaService, events as unknown as TasksGateway);
+  });
+
+  /**
+   * Regla de negocio del 2026-09-09: **si la prioridad la puso una persona,
+   * ningún proceso de fondo la sobrescribe ni la degrada.**
+   *
+   * Este barrido corre cada hora y sube prioridades a una hora en la que nadie
+   * mira. Sin el candado, alguien bajaba una tarea a MEDIUM por la tarde y por
+   * la noche se la encontraba en URGENT otra vez sin haber tocado nada: el
+   * sistema discutiendo con el usuario, y ganando siempre porque corre más
+   * veces.
+   */
+  describe('una prioridad puesta a mano es intocable', () => {
+    const enTresHoras = new Date(NOW.getTime() + 3 * 3_600_000);
+
+    it('no la escala aunque la fecha esté dentro de la ventana urgente', async () => {
+      scan(prisma, [
+        {
+          id: 't1',
+          priority: TaskPriority.LOW,
+          dueDate: enTresHoras,
+          priorityReason: MOTIVO_PRIORIDAD_MANUAL,
+        } as never,
+      ]);
+
+      await service.sweep(NOW);
+
+      // Sin el candado, tres horas para vencer la subirían a URGENT.
+      expect(writes(prisma).t1?.priority).toBeUndefined();
+    });
+
+    it('tampoco le reescribe el motivo: el rastro es de quien decidió', async () => {
+      scan(prisma, [
+        {
+          id: 't1',
+          priority: TaskPriority.LOW,
+          dueDate: enTresHoras,
+          priorityReason: MOTIVO_PRIORIDAD_MANUAL,
+        } as never,
+      ]);
+
+      await service.sweep(NOW);
+
+      expect(writes(prisma).t1?.priorityReason).toBeUndefined();
+    });
+
+    it('pero sí la manda a Atrasadas si venció: eso es el calendario, no una opinión', async () => {
+      const ayer = new Date(NOW.getTime() - 24 * 3_600_000);
+      scan(prisma, [
+        {
+          id: 't1',
+          priority: TaskPriority.LOW,
+          dueDate: ayer,
+          priorityReason: MOTIVO_PRIORIDAD_MANUAL,
+        } as never,
+      ]);
+
+      await service.sweep(NOW);
+
+      expect(writes(prisma).t1?.status).toBe(TaskStatus.OVERDUE);
+      expect(writes(prisma).t1?.priority).toBeUndefined();
+    });
+
+    it('la que NO es manual sigue escalando como siempre', async () => {
+      scan(prisma, [{ id: 't1', priority: TaskPriority.LOW, dueDate: enTresHoras }]);
+
+      await service.sweep(NOW);
+
+      expect(writes(prisma).t1?.priority).toBe(TaskPriority.URGENT);
+    });
   });
 
   describe('horizonte del escaneo', () => {

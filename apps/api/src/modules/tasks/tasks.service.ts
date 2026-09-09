@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, Task, TaskPriority, TaskSource, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { adjustPriority } from '../ai/priority.rules';
+import { adjustPriority, esPrioridadManual, MOTIVO_PRIORIDAD_MANUAL } from '../ai/priority.rules';
 import { completionStamp } from './completion';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
@@ -354,18 +354,109 @@ export class TasksService {
     return result;
   }
 
+  /**
+   * Qué prioridad queda —y qué rastro deja— cuando una persona edita a mano.
+   *
+   * **Regla de negocio: si la elige una persona, manda la persona.** Se guarda
+   * con la marca de origen manual y **ningún proceso de fondo vuelve a
+   * tocarla** — ni para subirla. Antes no había forma de saber quién había
+   * puesto una prioridad, así que el barrido de vencidas reevaluaba todo por
+   * igual y podía pisar en mitad de la noche lo que alguien había decidido a
+   * mediodía.
+   *
+   * Tres caminos, y el que importa es el primero:
+   *
+   * 1. **La persona toca la prioridad** → se guarda tal cual, marcada. Sin
+   *    escalado: subirle la urgencia a lo que acaba de elegir es exactamente
+   *    lo que la regla prohíbe, y da igual que lo haga el barrido esta noche o
+   *    esta misma llamada.
+   * 2. **Solo cambia la fecha, y la prioridad ya era manual** → se respeta
+   *    igual. El candado no se abre por mover una fecha.
+   * 3. **Solo cambia la fecha y nadie la había fijado** → escala como en
+   *    `create`: la fecha es un dato duro y no hay decisión humana que pisar.
+   */
+  private reevaluarPrioridad(
+    task: {
+      priority: TaskPriority;
+      dueDate: Date | null;
+      status: TaskStatus;
+      aiConfidence: number | null;
+      priorityReason: string | null;
+    },
+    dto: UpdateTaskDto,
+    now: Date,
+  ): Prisma.TaskUpdateInput {
+    // 1 · Elección explícita de una persona: manda y queda marcada.
+    if (dto.priority !== undefined) {
+      this.logger.log(`Prioridad fijada a mano: ${task.priority} → ${dto.priority}`);
+      return {
+        priority: dto.priority,
+        priorityReason: MOTIVO_PRIORIDAD_MANUAL,
+        priorityAdjustedAt: now,
+        // `null` porque no hubo ajuste del que venir: no es que el sistema la
+        // subiera desde algo, es que la puso una persona.
+        priorityAdjustedFrom: null,
+      };
+    }
+
+    // 2 · Cambió la fecha, pero la prioridad ya la había fijado alguien.
+    if (esPrioridadManual(task.priorityReason)) {
+      return {};
+    }
+
+    // 3 · Nadie la había fijado: la fecha manda, como al crear.
+    const dueDate = dto.dueDate !== undefined ? new Date(dto.dueDate) : task.dueDate;
+    const status = dto.status ?? task.status;
+
+    // Escalar lo que ya está cumplido no le sirve a nadie.
+    if (status === TaskStatus.DONE) return {};
+
+    const decision = adjustPriority(
+      { priority: task.priority, dueDate, aiConfidence: task.aiConfidence },
+      now,
+    );
+
+    if (!decision.adjusted) return {};
+
+    this.logger.log(`Prioridad al cambiar la fecha: ${decision.reason}`);
+    return {
+      priority: decision.priority,
+      priorityReason: decision.reason,
+      priorityAdjustedAt: now,
+      priorityAdjustedFrom: task.priority,
+    };
+  }
+
   async update(userId: string, id: string, updateTaskDto: UpdateTaskDto, socketId?: string) {
     const task = await this.prisma.task.findFirst({ where: { id, userId } });
     if (!task) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
+
+    const now = new Date();
+
+    // ─── La prioridad manual pasa por la misma capa que al crear ─────────
+    //
+    // `create` escala por cercanía del vencimiento y `update` no lo hacía: la
+    // misma tarea, con la misma fecha, salía con prioridades distintas según
+    // si la fecha se puso al crearla o se cambió después. Se recalcula solo
+    // cuando la persona toca **la prioridad o la fecha**; si no ha tocado
+    // ninguna de las dos, no hay nada que reevaluar y el rastro anterior
+    // -que quizá escribió el barrido de vencidas- se queda como está.
+    const tocaPrioridad =
+      updateTaskDto.priority !== undefined || updateTaskDto.dueDate !== undefined;
+
+    const ajuste = tocaPrioridad
+      ? this.reevaluarPrioridad(task, updateTaskDto, now)
+      : {};
 
     const updated = await this.prisma.task.update({
       where: { id },
       data: {
         ...updateTaskDto,
+        ...ajuste,
         // El modal de edición también puede cambiar el estado, no solo el
         // arrastre. `updateTaskDto.status` puede venir sin definir: entonces la
         // tarea se queda donde está y no hay cierre que sellar ni que limpiar.
-        ...(updateTaskDto.status ? completionStamp(task.status, updateTaskDto.status, new Date()) : {}),
+        ...(updateTaskDto.status ? completionStamp(task.status, updateTaskDto.status, now) : {}),
       },
     });
 

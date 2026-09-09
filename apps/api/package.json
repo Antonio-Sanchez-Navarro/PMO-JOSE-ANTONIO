@@ -1,5 +1,7 @@
 {
   "name": "@pmo/api",
+  "//engines": "Node 22 o mas. No es por estar al dia: ESLint 10 exige ^20.19.0 || ^22.13.0 || >=24, y el proyecto se construye hoy con tres versiones distintas -CI en 22.x, la imagen en 22-bookworm-slim, y las maquinas de desarrollo en lo que tengan-. Sin `engines` npm no advierte de nada y la primera senal de una version incompatible es un fallo que parece del codigo.",
+  "engines": { "node": ">=22.0.0" },
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -8,7 +10,7 @@
     "//prebuild": "El cliente de Prisma es CODIGO GENERADO: sin `prisma generate` no existen ni los tipos de los modelos ni el namespace `Prisma`, y el build se cae con errores que parecen del codigo. En una maquina de desarrollo no se nota porque lo genero `prisma migrate` hace semanas; en un CI, que parte de un `npm ci` limpio, no lo ha generado nadie. El postinstall de @prisma/client no lo cubre: busca el esquema desde la raiz del monorepo y el nuestro esta en apps/api/prisma. Aqui el directorio de trabajo es apps/api, asi que lo encuentra.",
     "prebuild": "prisma generate",
     "build": "nest build",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" --max-warnings 0",
     "test": "jest"
   },
   "dependencies": {

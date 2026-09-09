@@ -153,8 +153,22 @@ model Email {
   proposedTasks  Json?
   /// Indica si el correo trae archivos adjuntos (cuyo contenido no bajamos).
   hasAttachments Boolean @default(false)
+  /// Veces que el barrido de reconciliación lo ha reencolado sin que llegara a
+  /// procesarse. Es lo que separa «se perdió una vez» de «este correo no se
+  /// clasifica nunca», que piden cosas distintas.
+  reconcileAttempts Int @default(0)
+  /// No volver a reencolarlo antes de esta hora. `null` = elegible ya.
+  ///
+  /// Sin esto el barrido cogía los 100 más antiguos con `processedAt: null`,
+  /// los reencolaba, fallaban todos —clasificación caída— y quince minutos
+  /// después cogía **exactamente los mismos 100**, para siempre y sin avanzar
+  /// uno. 96 vueltas al día de 200 operaciones de Redis en bucle cerrado.
+  reconcileAfter DateTime?
 
   @@index([threadId])
+  /// El barrido pregunta por «lo que sigue sin procesar y ya toca reintentar».
+  /// Sin índice recorre la tabla entera cada quince minutos.
+  @@index([processedAt, reconcileAfter])
   /// La bandeja pregunta siempre por "lo mío que sigue pendiente".
   @@index([userId, status])
 }
