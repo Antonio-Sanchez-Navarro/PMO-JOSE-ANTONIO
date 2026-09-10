@@ -29,6 +29,21 @@ export interface EmailSnippet {
   proposedTaskCount?: number;
   /** El correo trae adjuntos, cuyo contenido no bajamos ni lee el modelo. */
   hasAttachments?: boolean;
+  /**
+   * Si el modelo vio algo que hacer en este correo. `false` es la mitad de la
+   * bandeja que se puede limpiar de un golpe.
+   *
+   * **Ojo: hoy no llega.** `GET /emails` acepta `?actionable=false` para
+   * filtrar, pero `SELECT_TRIAGE` no incluye la columna, así que la fila viaja
+   * sin ella y aquí es `undefined` en los tres casos —accionable, no accionable
+   * y sin analizar—. Está pedido en el buzón.
+   *
+   * Por eso el código nunca pregunta `!isActionable`: eso metería en la
+   * selección masiva todo lo que la API aún no sabe contar. Se pregunta
+   * `isActionable === false`, y quien ofrece el atajo comprueba antes que el
+   * campo exista de verdad en las filas cargadas.
+   */
+  isActionable?: boolean;
 }
 
 /** Mensajes de un mismo hilo, del más reciente al más antiguo. */

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useInbox, type LabelFacet } from "./useInbox";
 import type { LabelsById } from "./useGmailLabels";
 import {
@@ -19,6 +19,11 @@ import { updateEmailStatus } from "../kanban/api/tasks.api";
 import { useSocket } from "../kanban/hooks/useSocket";
 import { useCopilot } from "../copilot/CopilotContext";
 import { useDashboardMetrics } from "../dashboard/hooks/useDashboardMetrics";
+import { useEmailSelection, type EstadoDeSeleccion } from "./useEmailSelection";
+import { BulkActionBar } from "./components/BulkActionBar";
+import { ConfirmDismissDialog } from "./components/ConfirmDismissDialog";
+import { bulkDismissEmails } from "./api/emails.api";
+import { ApiError } from "../../lib/api";
 
 export function InboxPage() {
   const [activeTab, setActiveTab] = useState<'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED'>('PENDING');
@@ -48,6 +53,7 @@ export function InboxPage() {
     refresh,
     loadMore,
     updateEmail,
+    removeEmails,
   } = useInbox(activeTab);
 
   useSocket({
@@ -83,6 +89,100 @@ export function InboxPage() {
       } else {
         toast.error(error.message || 'Error al analizar el correo');
       }
+    }
+  };
+
+  const seleccion = useEmailSelection(emails);
+  const [confirmandoDescarte, setConfirmandoDescarte] = useState(false);
+  const [descartando, setDescartando] = useState(false);
+  const [progreso, setProgreso] = useState<{ hechos: number; total: number } | null>(null);
+
+  /**
+   * En «Descartados» no se ofrece descartar: sería un lote de no-operaciones
+   * que además pediría confirmación. Las casillas tampoco se pintan ahí.
+   */
+  const seleccionDisponible = activeTab !== "DISMISSED";
+
+  /**
+   * Los no accionables de entre lo cargado, o `null` si la API no manda el
+   * campo. Las tres formas de "no" no son la misma —`false` es un boletín,
+   * `undefined` es un correo del que no sabemos nada— y contarlas juntas
+   * ofrecería descartar lo que nadie ha mirado.
+   */
+  const noAccionables = useMemo(() => {
+    const campoDisponible = emails.some((e) => typeof e.isActionable === "boolean");
+    if (!campoDisponible) return null;
+    return emails.filter((e) => e.isActionable === false).map((e) => e.id);
+  }, [emails]);
+
+  /** Cuántos hilos toca la selección actual. Es el número que va al diálogo. */
+  const hilosSeleccionados = useMemo(() => {
+    const marcados = new Set(seleccion.seleccionados);
+    return threads.filter((hilo) => hilo.messages.some((m) => marcados.has(m.id))).length;
+  }, [threads, seleccion.seleccionados]);
+
+  const ejecutarDescarteMasivo = async () => {
+    const ids = seleccion.seleccionados;
+    setConfirmandoDescarte(false);
+    setDescartando(true);
+    setProgreso({ hechos: 0, total: ids.length });
+
+    try {
+      const resultado = await bulkDismissEmails(ids, (hechos, total) =>
+        setProgreso({ hechos, total }),
+      );
+
+      // Los tres motivos de omisión no significan lo mismo, y meterlos en un
+      // solo "N sin mover" haría sonar a fallo lo que no lo es.
+      const porMotivo = (motivo: string) =>
+        resultado.skipped.filter((s) => s.reason === motivo).length;
+      const yaEstaban = porMotivo("ALREADY_DISMISSED");
+      const protegidos = porMotivo("NOT_PENDING");
+      const perdidos = porMotivo("NOT_FOUND");
+
+      // `ALREADY_DISMISSED` sale de la lista igual que los movidos: el correo
+      // está en Descartados, que es donde se le quería. Dejarlo en pantalla
+      // como pendiente sería enseñar algo que ya no lo está.
+      const siguenPendientes = new Set(
+        resultado.skipped
+          .filter((s) => s.reason !== "ALREADY_DISMISSED")
+          .map((s) => s.id),
+      );
+      removeEmails(ids.filter((id) => !siguenPendientes.has(id)));
+      seleccion.limpiar();
+      void refreshMetrics();
+
+      const despachados = resultado.updated + yaEstaban;
+
+      if (protegidos === 0 && perdidos === 0) {
+        toast.success(`${despachados} ${despachados === 1 ? "correo" : "correos"} en Descartados`);
+      } else if (protegidos > 0) {
+        // El único caso con remedio, así que se dice cuál es.
+        toast.warning(
+          `${despachados} descartados. ${protegidos} se quedaron fuera porque ya estaban en proceso o completados: ` +
+            "el lote no los toca. Para descartarlos, ábrelos en su pestaña y usa el botón «Descartar» de cada fila.",
+          { duration: 10000 },
+        );
+      } else {
+        toast.warning(`${despachados} descartados · ${perdidos} ya no existían`);
+      }
+    } catch (e) {
+      // El lote va troceado: si revienta el segundo envío, el primero ya se
+      // escribió. Por eso aquí se recarga en vez de suponer que no pasó nada —
+      // dejar la lista como estaba enseñaría como pendientes correos que la API
+      // ya movió.
+      if (e instanceof ApiError && e.status === 404) {
+        toast.error(
+          "El descarte masivo todavía no está desplegado en la API (POST /emails/bulk-dismiss).",
+        );
+      } else {
+        toast.error(e instanceof Error ? e.message : "No se pudo descartar la selección.");
+        refresh();
+        void refreshMetrics();
+      }
+    } finally {
+      setDescartando(false);
+      setProgreso(null);
     }
   };
 
@@ -180,6 +280,10 @@ export function InboxPage() {
                 thread={thread}
                 labelNames={labelNames}
                 onAnalyze={handleAnalyzeEmail}
+                seleccionable={seleccionDisponible}
+                estadoSeleccion={seleccion.estadoDelHilo(thread)}
+                estaSeleccionado={seleccion.estaSeleccionado}
+                onSeleccionar={seleccion.alternar}
 
                 onRead={(id) => setSelectedEmailId(id)}
                 onUpdateStatus={async (id, newStatus, force) => {
@@ -206,8 +310,31 @@ export function InboxPage() {
               Cargar más correos
             </button>
           </div>
+
+          {seleccionDisponible && (
+            <BulkActionBar
+              correos={seleccion.total}
+              hilos={hilosSeleccionados}
+              visibles={emails.length}
+              noAccionables={noAccionables === null ? null : noAccionables.length}
+              ocupado={descartando}
+              progreso={progreso}
+              onSeleccionarTodo={() => seleccion.reemplazar(emails.map((e) => e.id))}
+              onSeleccionarNoAccionables={() => seleccion.reemplazar(noAccionables ?? [])}
+              onLimpiar={seleccion.limpiar}
+              onDescartar={() => setConfirmandoDescarte(true)}
+            />
+          )}
         </>
       )}
+
+      <ConfirmDismissDialog
+        abierto={confirmandoDescarte}
+        correos={seleccion.total}
+        hilos={hilosSeleccionados}
+        onCancelar={() => setConfirmandoDescarte(false)}
+        onConfirmar={ejecutarDescarteMasivo}
+      />
 
       <AiValidationModal
         isOpen={isAiModalOpen}
@@ -260,15 +387,31 @@ function ThreadRow({
   onAnalyze,
   onRead,
   onUpdateStatus,
+  seleccionable,
+  estadoSeleccion,
+  estaSeleccionado,
+  onSeleccionar,
 }: {
   thread: EmailThread;
   labelNames: LabelsById;
   onAnalyze: (id: string, hasAttachments?: boolean) => Promise<void> | void;
   onRead: (id: string) => void;
   onUpdateStatus: (id: string, status: string, force?: boolean) => void;
+  seleccionable: boolean;
+  estadoSeleccion: EstadoDeSeleccion;
+  estaSeleccionado: (id: string) => boolean;
+  onSeleccionar: (ids: string[], seleccionar: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasReplies = thread.messages.length > 1;
+
+  /**
+   * La casilla del hilo manda sobre **todos** sus mensajes, incluidos los que
+   * están plegados. Es lo que hace que despachar 401 hilos no obligue a abrir
+   * los 728 correos, y por eso el diálogo de confirmación cuenta las dos cosas.
+   */
+  const alternarHilo = (marcar: boolean) =>
+    onSeleccionar(thread.messages.map((m) => m.id), marcar);
 
   return (
     <li>
@@ -277,6 +420,15 @@ function ThreadRow({
         labelNames={labelNames}
         threadCount={thread.messages.length}
         expanded={expanded}
+        seleccionable={seleccionable}
+        estadoCasilla={hasReplies ? estadoSeleccion : undefined}
+        marcada={estaSeleccionado(thread.latest.id)}
+        onMarcar={alternarHilo}
+        etiquetaCasilla={
+          hasReplies
+            ? `Seleccionar la conversación completa (${thread.messages.length} correos)`
+            : "Seleccionar este correo"
+        }
         onToggle={hasReplies ? () => setExpanded((open) => !open) : undefined}
         onAnalyze={() => onAnalyze(thread.latest.id, thread.latest.hasAttachments)}
         onRead={() => onRead(thread.latest.id)}
@@ -291,6 +443,10 @@ function ThreadRow({
                 email={message}
                 labelNames={labelNames}
                 nested
+                seleccionable={seleccionable}
+                marcada={estaSeleccionado(message.id)}
+                onMarcar={(marcar) => onSeleccionar([message.id], marcar)}
+                etiquetaCasilla="Seleccionar este correo del hilo"
 
                 onAnalyze={() => onAnalyze(message.id, message.hasAttachments)} 
                 onRead={() => onRead(message.id)}
@@ -314,6 +470,11 @@ function EmailRow({
   onAnalyze,
   onRead,
   onUpdateStatus,
+  seleccionable = false,
+  estadoCasilla,
+  marcada = false,
+  onMarcar,
+  etiquetaCasilla,
 }: {
   email: EmailSnippet;
   labelNames: LabelsById;
@@ -324,6 +485,15 @@ function EmailRow({
   onAnalyze?: () => Promise<void> | void;
   onRead?: () => void;
   onUpdateStatus?: (status: string, force?: boolean) => void;
+  seleccionable?: boolean;
+  /**
+   * Solo para la fila que representa un hilo con respuestas: es el estado de
+   * los mensajes de dentro, y `"parcial"` pinta la casilla indeterminada.
+   */
+  estadoCasilla?: EstadoDeSeleccion;
+  marcada?: boolean;
+  onMarcar?: (marcar: boolean) => void;
+  etiquetaCasilla?: string;
 }) {
   const sender = parseSender(email.from);
   const interactive = Boolean(onToggle);
@@ -339,6 +509,11 @@ function EmailRow({
   const proposalCount = email.proposedTaskCount ?? 0;
   const hasProposals = proposalCount > 0;
 
+  // Estrictamente `=== false`. `undefined` no es "accionable": es que la API
+  // no manda el campo todavía, y pintar esa fila como boletín sería inventar
+  // una clasificación que nadie hizo.
+  const noAccionable = email.isActionable === false;
+
   const { openCopilotWithContext } = useCopilot();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -347,20 +522,45 @@ function EmailRow({
       {...(!interactive ? { role: "button", tabIndex: 0 } : {})}
       className={`flex items-start gap-4 px-6 py-4 cursor-pointer hover:bg-slate-50 transition ${nested ? "pl-16" : ""}`}
       onClick={(e) => {
-        // Evitar que el clic en botones propague el evento al div padre
+        // Evitar que el clic en botones propague el evento al div padre.
+        // La casilla entra en la misma guarda: marcar un correo no es pedir
+        // que se abra, y sin esto cada clic de selección abriría el modal.
         const target = e.target as HTMLElement;
-        if (target.closest('button')) return;
+        if (target.closest('button, input, label')) return;
         onRead?.();
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
           const target = e.target as HTMLElement;
-          if (target.closest('button')) return;
+          // El espacio sobre una casilla es su forma de marcarse: si aquí se
+          // hace `preventDefault()` antes de comprobarlo, la casilla deja de
+          // funcionar con el teclado.
+          if (target.closest('button, input, label')) return;
+          e.preventDefault();
           onRead?.();
         }
       }}
     >
+      {seleccionable && onMarcar && (
+        <label
+          className="flex shrink-0 cursor-pointer items-center self-center py-1 pr-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="sr-only">{etiquetaCasilla ?? "Seleccionar correo"}</span>
+          <input
+            type="checkbox"
+            checked={estadoCasilla ? estadoCasilla === "lleno" : marcada}
+            ref={(el) => {
+              // `indeterminate` no es un atributo: solo existe como propiedad
+              // del nodo, así que en JSX hay que ponerlo a mano.
+              if (el) el.indeterminate = estadoCasilla === "parcial";
+            }}
+            onChange={(e) => onMarcar(e.target.checked)}
+            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+          />
+        </label>
+      )}
+
       {!nested && (
         <span
           aria-hidden="true"
@@ -404,8 +604,16 @@ function EmailRow({
         </p>
         <p className="truncate text-sm text-slate-500">{email.snippet}</p>
 
-        {(hasProposals || labels.length > 0) && (
+        {(hasProposals || noAccionable || labels.length > 0) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {noAccionable && (
+              <span
+                className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600"
+                title="La IA no vio nada que hacer aquí: boletín, notificación o informativo."
+              >
+                No accionable
+              </span>
+            )}
             {hasProposals && (
               <span
                 className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"

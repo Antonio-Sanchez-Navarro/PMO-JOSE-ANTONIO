@@ -126,6 +126,18 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
     });
   }, [activeStatus]);
 
+  /**
+   * Saca correos de la lista sin volver a pedirla.
+   *
+   * Lo usa el descarte masivo: la respuesta del lote ya dice cuáles se movieron
+   * y cuáles no, así que recargar sería pedirle a la API que repita algo que
+   * acaba de contar. Solo se le pasan los ids que la API confirmó.
+   */
+  const removeEmails = useCallback((ids: string[]) => {
+    const fuera = new Set(ids);
+    setEmails((prev) => prev.filter((e) => !fuera.has(e.id)));
+  }, []);
+
   return {
     emails: visible,
     totalEmails: emails.length,
@@ -140,5 +152,6 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
     refresh: () => load(maxResults, { silent: true }),
     loadMore: () => setMaxResults((current) => current + 20),
     updateEmail,
+    removeEmails,
   };
 }
