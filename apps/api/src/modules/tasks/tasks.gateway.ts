@@ -7,7 +7,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Task, TaskStatus } from '@prisma/client';
+import { EmailStatus, Task, TaskStatus } from '@prisma/client';
 import { SesionRechazadaError, SessionService } from '../auth/session.service';
 import { CODIGO_SESION, SESSION_EVENTS } from '@pmo/shared';
 import cookie from 'cookie';
@@ -30,6 +30,7 @@ export const TASK_EVENTS = {
  */
 export const EMAIL_EVENTS = {
   updated: 'email.updated',
+  bulkUpdated: 'email.bulk_updated',
 } as const;
 
 /**
@@ -369,6 +370,31 @@ export class TasksGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
    */
   emitEmailUpdated(email: { id: string; userId: string }, exceptSocketId?: string) {
     this.emit(EMAIL_EVENTS.updated, email, exceptSocketId);
+  }
+
+  /**
+   * Un lote de correos cambió de estado de una vez (Fase 7).
+   *
+   * **Existe para no emitir 318 `email.updated` seguidos.** El descarte masivo
+   * mueve cientos de correos en una sola petición, y anunciarlos de uno en uno
+   * le da al cliente cientos de repintados que además llegan intercalados: la
+   * bandeja parpadea mientras se vacía en vez de vaciarse. Aquí va **un evento
+   * por lote**, con la lista de ids y el estado común a todos.
+   *
+   * Van solo los ids y no las filas enteras, al revés que en `email.updated`:
+   * el cliente ya tiene esas filas pintadas y lo único que necesita es quitar
+   * las que salen de la bandeja. Mandar 318 filas completas sería el mismo
+   * problema por otra puerta — el ahorro estaba en el número de eventos, no en
+   * el de bytes, pero pagar los dos sale gratis.
+   *
+   * `status` es uno solo porque un lote mueve todo al mismo sitio. El día que
+   * haya un lote heterogéneo, esto no vale y hay que cambiarlo a propósito.
+   */
+  emitEmailsBulkUpdated(
+    lote: { userId: string; ids: string[]; status: EmailStatus },
+    exceptSocketId?: string,
+  ) {
+    this.emit(EMAIL_EVENTS.bulkUpdated, lote, exceptSocketId);
   }
 
   /**

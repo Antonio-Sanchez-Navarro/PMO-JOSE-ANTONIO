@@ -5,6 +5,7 @@ import { EmailClassificationService, aJsonDeBorradores } from '../ai/email-class
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
 import type { ProposedTask } from '@pmo/shared';
 import { QueryEmailsDto } from './dto/query-emails.dto';
+import { QueryThreadsDto } from './dto/query-threads.dto';
 import { TasksGateway } from '../tasks/tasks.gateway';
 import { TagsService } from '../tags/tags.service';
 
@@ -18,6 +19,20 @@ export interface TriageEmail {
   category: string | null;
   /** Triage de la persona: PENDING · IN_PROGRESS · COMPLETED · DISMISSED. */
   status: EmailStatus;
+  /**
+   * Veredicto del modelo: si de este correo sale trabajo o no.
+   *
+   * Estaba en la base desde el Sprint 3 y en `GET /emails/:id`, pero **no en el
+   * listado**, así que la bandeja no podía ni filtrar por él ni ofrecer «marca
+   * todos los no accionables». Es el campo que desbloqueó la Fase 7.
+   *
+   * ⚠️ **Un `false` no siempre es un veredicto.** La columna nace en `false` y
+   * sigue ahí mientras nadie clasifique el correo, así que «no accionable» y
+   * «todavía sin mirar» se leen igual desde aquí. Para separarlos hace falta
+   * `processedAt`, y por eso `GET /emails/threads` no decide `allNonActionable`
+   * solo con este campo.
+   */
+  isActionable: boolean;
   taskCount: number;
   /** Ya generó tareas: `to-task` daría 409 salvo que se insista con `force`. */
   isConverted: boolean;
@@ -52,6 +67,7 @@ const SELECT_TRIAGE = {
   receivedAt: true,
   category: true,
   status: true,
+  isActionable: true,
   threadId: true,
   labels: true,
   snippet: true,
@@ -68,6 +84,7 @@ type FilaTriage = {
   receivedAt: Date;
   category: string | null;
   status: EmailStatus;
+  isActionable: boolean;
   threadId: string;
   labels: string[];
   snippet: string | null;
@@ -87,6 +104,7 @@ function aTriageEmail(email: FilaTriage): TriageEmail {
     date: email.receivedAt.toISOString(),
     category: email.category,
     status: email.status,
+    isActionable: email.isActionable,
     taskCount: email._count.tasks,
     isConverted: email._count.tasks > 0,
     proposedTaskCount: Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0,
@@ -96,6 +114,161 @@ function aTriageEmail(email: FilaTriage): TriageEmail {
     snippet: email.snippet ?? '',
     gmailMessageId: email.gmailMessageId,
   };
+}
+
+/**
+ * El `where` de la bandeja, común al listado plano y al agrupado por hilos.
+ *
+ * Vive fuera de la clase por el mismo motivo que `SELECT_TRIAGE`: `GET /emails`
+ * y `GET /emails/threads` tienen que estar mirando **el mismo conjunto de
+ * correos**, o el contador de hilos hablaría de una bandeja distinta de la que
+ * se pinta. Con dos `where` escritos aparte, la divergencia no la ve el
+ * compilador — se ve en pantalla, como un total que no cuadra con las filas.
+ */
+function filtroDeBandeja(userId: string, query: QueryEmailsDto): Prisma.EmailWhereInput {
+  return {
+    userId,
+    ...(query.actionable === undefined ? {} : { isActionable: query.actionable }),
+    ...(query.status === undefined ? {} : { status: query.status }),
+    // `converted` se traduce a "tiene o no tiene tareas", que es justo lo
+    // que hace que `to-task` responda 409. `processedAt` no sirve para
+    // esto: el worker lo marca aunque no crease ni una tarea.
+    ...(query.converted === undefined
+      ? {}
+      : query.converted
+        ? { tasks: { some: {} } }
+        : { tasks: { none: {} } }),
+  };
+}
+
+/**
+ * Lo que necesita una fila para agruparse en un hilo: todo lo del listado, más
+ * las dos marcas con las que se distingue «el modelo dijo que no hay nada que
+ * hacer» de «nadie ha mirado este correo todavía».
+ */
+const SELECT_HILO = {
+  ...SELECT_TRIAGE,
+  processedAt: true,
+  skipReason: true,
+} as const;
+
+type FilaHilo = FilaTriage & {
+  processedAt: Date | null;
+  skipReason: string | null;
+};
+
+/**
+ * ¿Este correo es no accionable **porque el modelo lo dijo**?
+ *
+ * `isActionable` nace en `false` y se queda ahí hasta que alguien clasifique el
+ * correo, así que la columna sola no distingue un veredicto de un valor por
+ * defecto. Preguntarle solo a ella metería en «marca todos los no accionables»
+ * los correos que nadie ha analizado — y esos son justo los que no se pueden
+ * descartar a ciegas, porque puede haber trabajo dentro.
+ *
+ * Por eso hacen falta las tres condiciones: el worker lo despachó
+ * (`processedAt`), la IA llegó a opinar (`skipReason` vacío: si está puesto, el
+ * correo se saltó la clasificación y su `false` no significa nada) y el
+ * veredicto fue que no.
+ */
+function esNoAccionableConVeredicto(email: FilaHilo): boolean {
+  return email.processedAt !== null && email.skipReason === null && !email.isActionable;
+}
+
+/** Un hilo de decisión: los correos de un mismo `threadId` vistos como uno. */
+export interface DecisionThread {
+  threadId: string;
+  /** Correos del hilo **que pasan el filtro**, no los del hilo en Gmail. */
+  messageCount: number;
+  /** Del más reciente al más antiguo. Es lo que manda `bulk-dismiss`. */
+  emailIds: string[];
+  /** El más reciente, en la forma exacta de una fila de `GET /emails`. */
+  latest: TriageEmail;
+  /**
+   * Todo el hilo es no accionable con veredicto del modelo detrás. Es la
+   * condición del atajo «descarta esto entero», y por eso es `every` y no
+   * `some`: basta un mensaje con trabajo dentro para que el hilo no se pueda
+   * barrer sin mirarlo.
+   */
+  allNonActionable: boolean;
+  /** Suma de las propuestas en cuarentena de todo el hilo. */
+  proposedTaskCount: number;
+  /** Algún mensaje del hilo trae adjuntos. */
+  hasAttachments: boolean;
+}
+
+/** Una página de hilos, con los dos totales que el cliente necesita. */
+export interface ThreadPage {
+  items: DecisionThread[];
+  /** Hilos que deja el filtro, no los de esta página. */
+  total: number;
+  /**
+   * Correos que deja el filtro. Va junto al de hilos para que la pantalla pueda
+   * decir «401 hilos · 728 correos» sin inventarse ninguno de los dos números
+   * ni tener que bajarse la bandeja entera para contarlos.
+   */
+  totalEmails: number;
+}
+
+/**
+ * Convierte los correos de un mismo hilo en la tarjeta que se pinta.
+ *
+ * `grupo` llega **ordenado del más reciente al más antiguo**, que es de donde
+ * sale `latest` sin volver a ordenar.
+ */
+function aHiloDeDecision(grupo: FilaHilo[]): DecisionThread {
+  const [ultimo] = grupo;
+
+  return {
+    threadId: ultimo.threadId,
+    messageCount: grupo.length,
+    emailIds: grupo.map((email) => email.id),
+    latest: aTriageEmail(ultimo),
+    allNonActionable: grupo.every(esNoAccionableConVeredicto),
+    proposedTaskCount: grupo.reduce(
+      (suma, email) => suma + (Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0),
+      0,
+    ),
+    hasAttachments: grupo.some((email) => email.hasAttachments),
+  };
+}
+
+/**
+ * Por qué un id del lote no se movió.
+ *
+ * **Se programa contra el código, nunca contra el texto** — la misma regla que
+ * el handshake del socket. Son los tres motivos posibles y no hay un cuarto:
+ * cualquier id que no acabe en `updated` sale por uno de estos.
+ */
+export const MOTIVO_OMISION = {
+  /** No existe, o no es de quien lo pide. Los dos casos se ven igual a propósito. */
+  noEncontrado: 'NOT_FOUND',
+  /** Ya estaba descartado: no hay nada que hacer, y no es un fallo. */
+  yaDescartado: 'ALREADY_DISMISSED',
+  /** Estaba en `IN_PROGRESS` o `COMPLETED` y el lote vino sin `force`. */
+  noPendiente: 'NOT_PENDING',
+} as const;
+
+export type MotivoOmision = (typeof MOTIVO_OMISION)[keyof typeof MOTIVO_OMISION];
+
+/** Un id que el lote no movió, con el motivo. */
+export interface BulkDismissSkip {
+  id: string;
+  reason: MotivoOmision;
+}
+
+/**
+ * Resultado de un descarte masivo.
+ *
+ * **Se cumple siempre `updated + skipped.length === requested`.** Es lo que
+ * permite al cliente comprobar la respuesta en vez de creerla, y el motivo de
+ * que los ids repetidos se cuenten una sola vez.
+ */
+export interface BulkDismissResult {
+  /** Ids distintos que se pidieron mover. */
+  requested: number;
+  updated: number;
+  skipped: BulkDismissSkip[];
 }
 
 /** Una tarea que ese correo ya generó, en su versión corta. */
@@ -110,7 +283,9 @@ export interface EmailTaskSummary {
 export interface EmailDetail extends TriageEmail {
   /** Texto completo. `null` si el correo se guardó sin cuerpo. */
   bodyText: string | null;
-  isActionable: boolean;
+  // `isActionable` ya no se declara aquí: lo hereda de `TriageEmail` desde la
+  // Fase 7. Estaba en las dos, y dos declaraciones del mismo campo son dos
+  // sitios donde cambiar su tipo el día que cambie.
   /** ISO 8601, o `null` si el worker todavía no lo ha despachado. */
   processedAt: string | null;
   /** Las tareas propuestas por la IA que aún no se han convertido. */
@@ -373,19 +548,7 @@ export class EmailsService {
    */
   async listForTriage(userId: string, query: QueryEmailsDto): Promise<TriageEmail[]> {
     const emails = await this.prisma.email.findMany({
-      where: {
-        userId,
-        ...(query.actionable === undefined ? {} : { isActionable: query.actionable }),
-        ...(query.status === undefined ? {} : { status: query.status }),
-        // `converted` se traduce a "tiene o no tiene tareas", que es justo lo
-        // que hace que `to-task` responda 409. `processedAt` no sirve para
-        // esto: el worker lo marca aunque no crease ni una tarea.
-        ...(query.converted === undefined
-          ? {}
-          : query.converted
-            ? { tasks: { some: {} } }
-            : { tasks: { none: {} } }),
-      },
+      where: filtroDeBandeja(userId, query),
       // `bodyText` se queda fuera a propósito: son ~8 KB por correo y en un
       // listado de 50 serían 400 KB por petición para pintar una lista.
       select: SELECT_TRIAGE,
@@ -395,6 +558,192 @@ export class EmailsService {
     });
 
     return emails.map(aTriageEmail);
+  }
+
+  /**
+   * La bandeja agrupada por hilo de Gmail (Fase 7).
+   *
+   * **Nace de una cuenta.** Los 728 correos pendientes de producción son 401
+   * hilos: la lista plana obligaba a la persona a decidir 728 veces sobre 401
+   * asuntos, y a leer seis veces la misma conversación citada. Aquí cada hilo
+   * llega una vez, con el mensaje más reciente delante y los ids de todos sus
+   * hermanos detrás para poder despacharlo entero.
+   *
+   * **La paginación es de hilos, y por eso hay tres consultas y no una.**
+   * Agrupar en memoria lo que devuelve `GET /emails` habría sido más corto, y
+   * habría paginado por correo: pedir «los 50 primeros hilos» exigiría bajarse
+   * la bandeja completa para saber dónde acaba el hilo número 50. Con 728 hoy
+   * se nota poco; el problema es que el número solo sube.
+   *
+   * 1. `groupBy` paginado, ordenado por el correo más reciente de cada hilo —
+   *    los hilos de esta página.
+   * 2. `groupBy` completo sin paginar — `total` (hilos) y `totalEmails` (la
+   *    suma de sus cuentas). Devuelve una fila diminuta por hilo y evita un
+   *    `COUNT(DISTINCT ...)` en SQL crudo, que aquí no aporta nada.
+   * 3. `findMany` de los correos de esos hilos y solo de esos.
+   *
+   * ⚠️ **El hilo es el que deja el filtro, no el que hay en Gmail.** Con
+   * `?status=PENDING`, un hilo de seis mensajes con dos pendientes llega con
+   * `messageCount: 2`. Es lo correcto para lo que se va a hacer con él —los
+   * `emailIds` que se devuelven son exactamente los que `bulk-dismiss` va a
+   * mover— pero significa que el número **no** es «mensajes de la
+   * conversación», y pintarlo como tal mentiría.
+   */
+  async listThreads(userId: string, query: QueryThreadsDto): Promise<ThreadPage> {
+    const where = filtroDeBandeja(userId, query);
+    const skip = query.skip ?? 0;
+    const take = query.take ?? 50;
+
+    const [pagina, todos] = await Promise.all([
+      this.prisma.email.groupBy({
+        by: ['threadId'],
+        where,
+        _max: { receivedAt: true },
+        // Por el correo más reciente del hilo, no por el más antiguo: un hilo
+        // al que acaba de llegar una respuesta sube, que es como se comporta
+        // cualquier bandeja y lo que la persona espera ver arriba.
+        orderBy: { _max: { receivedAt: 'desc' } },
+        skip,
+        take,
+      }),
+      this.prisma.email.groupBy({
+        by: ['threadId'],
+        where,
+        _count: { _all: true },
+      }),
+    ]);
+
+    const total = todos.length;
+    const totalEmails = todos.reduce((suma, grupo) => suma + (grupo._count?._all ?? 0), 0);
+
+    const threadIds = pagina.map((grupo) => grupo.threadId);
+    if (threadIds.length === 0) {
+      return { items: [], total, totalEmails };
+    }
+
+    const filas = (await this.prisma.email.findMany({
+      // El `where` del filtro **y además** los hilos de esta página. Sin
+      // repetir el filtro, un hilo con un correo pendiente y otro completado
+      // traería los dos, y `messageCount` diría 2 mientras la bandeja enseña 1.
+      where: { ...where, threadId: { in: threadIds } },
+      select: SELECT_HILO,
+      orderBy: { receivedAt: 'desc' },
+    })) as FilaHilo[];
+
+    const porHilo = new Map<string, FilaHilo[]>();
+    for (const fila of filas) {
+      const grupo = porHilo.get(fila.threadId);
+      if (grupo) {
+        grupo.push(fila);
+      } else {
+        porHilo.set(fila.threadId, [fila]);
+      }
+    }
+
+    // Se recorre `threadIds` y no el mapa: el orden lo decidió la base en el
+    // `groupBy`, y el de inserción de un `Map` solo lo respeta por accidente.
+    const items = threadIds
+      .map((threadId) => porHilo.get(threadId))
+      .filter((grupo): grupo is FilaHilo[] => grupo !== undefined && grupo.length > 0)
+      .map(aHiloDeDecision);
+
+    return { items, total, totalEmails };
+  }
+
+  /**
+   * Descarta un lote de correos de una sola vez (Fase 7).
+   *
+   * Es el atajo que vacía de golpe los 318 no accionables que llevaban meses
+   * en la bandeja. Todo lo demás de esta función existe para que ese atajo no
+   * se lleve por delante nada que no tocaba.
+   *
+   * **Un lote no es todo o nada.** La selección se hizo sobre una lista que
+   * pudo pintarse hace diez minutos, así que es normal que algún id ya no
+   * encaje: se movió, se descartó desde otra pestaña o dejó de existir. Tirar
+   * las 317 buenas porque una falló sería exactamente el resultado que nadie
+   * quiere, así que la respuesta es **200 con el desglose** y cada id que no se
+   * movió sale nombrado en `skipped` con su motivo. Un fallo silencioso aquí es
+   * peor que un error: la bandeja se queda con correos dentro y nadie sabe
+   * cuáles.
+   *
+   * **Sin `force` solo se mueve lo que está en `PENDING`.** Descartar es
+   * avanzar —nunca es la reapertura que protege `updateStatus`— pero arrastrar
+   * a `DISMISSED` un correo que alguien ya completó sí es borrarle trabajo, y
+   * un lote de 200 ids es el peor sitio para que eso pase sin que se vea.
+   *
+   * Los ids repetidos se cuentan **una vez**: así se sostiene
+   * `updated + skipped.length === requested`, que es lo que permite al cliente
+   * comprobar la respuesta en lugar de confiar en ella.
+   */
+  async bulkDismiss(
+    userId: string,
+    emailIds: string[],
+    socketId?: string,
+    force = false,
+  ): Promise<BulkDismissResult> {
+    const ids = [...new Set(emailIds)];
+
+    // Leer y escribir en la misma transacción, igual que `updateStatus`: entre
+    // clasificar los ids y guardar cabe otra pestaña moviendo uno de ellos, y
+    // la regla de «solo lo pendiente» se aplicaría sobre un estado viejo.
+    //
+    // El desglose se construye **dentro** y se devuelve, en vez de ir
+    // acumulando sobre un array de fuera: si la transacción se reintentara, un
+    // array externo se quedaría con los duplicados de la vuelta anterior.
+    const { movidos, skipped } = await this.prisma.$transaction(async (tx) => {
+      const encontrados = await tx.email.findMany({
+        // Por `userId` además de por `id`: sin esto, cualquier sesión válida
+        // vaciaría la bandeja de otra persona mandando una lista de ids.
+        where: { id: { in: ids }, userId },
+        select: { id: true, status: true },
+      });
+
+      const estadoPorId = new Map(encontrados.map((email) => [email.id, email.status]));
+      const aMover: string[] = [];
+      const omitidos: BulkDismissSkip[] = [];
+
+      for (const id of ids) {
+        const estado = estadoPorId.get(id);
+
+        if (estado === undefined) {
+          // "No existe" y "no es tuyo" se contestan igual a propósito: la
+          // diferencia solo le sirve a quien está probando ids ajenos.
+          omitidos.push({ id, reason: MOTIVO_OMISION.noEncontrado });
+        } else if (estado === EmailStatus.DISMISSED) {
+          omitidos.push({ id, reason: MOTIVO_OMISION.yaDescartado });
+        } else if (estado !== EmailStatus.PENDING && !force) {
+          omitidos.push({ id, reason: MOTIVO_OMISION.noPendiente });
+        } else {
+          aMover.push(id);
+        }
+      }
+
+      if (aMover.length > 0) {
+        await tx.email.updateMany({
+          where: { id: { in: aMover }, userId },
+          data: { status: EmailStatus.DISMISSED },
+        });
+      }
+
+      return { movidos: aMover, skipped: omitidos };
+    });
+
+    this.logger.log(
+      `Descarte masivo: ${movidos.length} de ${ids.length} correos a ${EmailStatus.DISMISSED}` +
+        (skipped.length > 0 ? ` (${skipped.length} omitidos)` : ''),
+    );
+
+    if (movidos.length > 0) {
+      // **Un evento por lote, no uno por correo.** 318 `email.updated` seguidos
+      // no son "más información": son 318 repintados que llegan intercalados y
+      // dejan la bandeja parpadeando mientras se vacía.
+      this.gateway.emitEmailsBulkUpdated(
+        { userId, ids: movidos, status: EmailStatus.DISMISSED },
+        socketId,
+      );
+    }
+
+    return { requested: ids.length, updated: movidos.length, skipped };
   }
 
   /**

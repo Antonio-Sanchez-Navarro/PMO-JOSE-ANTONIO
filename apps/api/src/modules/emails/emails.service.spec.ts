@@ -14,7 +14,11 @@ const USER_ID = 'user-1';
  * de abajo: este `beforeEach` se registra primero y corre antes que los suyos,
  * que son los que construyen el servicio.
  */
-let gateway: { emitTaskCreated: jest.Mock; emitEmailUpdated: jest.Mock };
+let gateway: {
+  emitTaskCreated: jest.Mock;
+  emitEmailUpdated: jest.Mock;
+  emitEmailsBulkUpdated: jest.Mock;
+};
 /**
  * Por defecto acepta las etiquetas que le pidan: las pruebas que comprueban el
  * rechazo lo hacen fallar ellas mismas. Devuelve la forma de `connect` que
@@ -22,7 +26,11 @@ let gateway: { emitTaskCreated: jest.Mock; emitEmailUpdated: jest.Mock };
  */
 let tags: { resolveIds: jest.Mock };
 beforeEach(() => {
-  gateway = { emitTaskCreated: jest.fn(), emitEmailUpdated: jest.fn() };
+  gateway = {
+    emitTaskCreated: jest.fn(),
+    emitEmailUpdated: jest.fn(),
+    emitEmailsBulkUpdated: jest.fn(),
+  };
   tags = {
     resolveIds: jest.fn().mockImplementation((_userId: string, ids?: string[]) =>
       Promise.resolve((ids ?? []).map((id) => ({ id }))),
@@ -691,6 +699,7 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
       labels: ['INBOX', 'UNREAD'],
       snippet: 'Adjunto el borrador de la escritura…',
       gmailMessageId: '19f95edbf2b0650a',
+      isActionable: true,
       _count: { tasks: 3 },
     },
     {
@@ -703,6 +712,7 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
       labels: [],
       snippet: null,
       gmailMessageId: '19f95edbf2b0650b',
+      isActionable: false,
       _count: { tasks: 0 },
     },
   ];
@@ -733,6 +743,23 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
     expect(convertido.taskCount).toBe(3);
     expect(pendiente.isConverted).toBe(false);
     expect(pendiente.taskCount).toBe(0);
+  });
+
+  it('entrega isActionable en cada fila (Fase 7)', async () => {
+    // Sin esto la bandeja no puede ni filtrar los no accionables ni ofrecer
+    // «marca todos»: la columna existia desde el Sprint 3 pero se quedaba fuera
+    // del `select`, asi que llegaba `undefined` en los tres casos.
+    const [accionable, no] = await service.listForTriage(USER_ID, {});
+
+    expect(accionable.isActionable).toBe(true);
+    expect(no.isActionable).toBe(false);
+  });
+
+  it('pide isActionable a la base, no lo deduce', async () => {
+    await service.listForTriage(USER_ID, {});
+
+    const { select } = prisma.email.findMany.mock.calls[0][0];
+    expect(select.isActionable).toBe(true);
   });
 
   it('da un asunto que pintar cuando el correo no lo trae', async () => {
@@ -1297,5 +1324,358 @@ describe('EmailsService — aviso a la bandeja al mover un correo', () => {
     // Un evento emitido antes de que la escritura cuaje anunciaría un estado
     // que todavía podría no existir.
     expect(orden).toEqual(['escritura', 'evento']);
+  });
+});
+
+describe('EmailsService — GET /emails/threads (bandeja por hilos, Fase 7)', () => {
+  let service: EmailsService;
+  let prisma: any;
+
+  /** Base de una fila: cada hilo cambia solo lo que la prueba mira. */
+  const fila = (extra: Record<string, unknown>) => ({
+    subject: 'Asunto',
+    from: 'quien@ejemplo.mx',
+    category: 'OTHER',
+    status: EmailStatus.PENDING,
+    labels: [],
+    snippet: null,
+    proposedTasks: null,
+    hasAttachments: false,
+    processedAt: new Date('2026-09-01T00:00:00.000Z'),
+    skipReason: null,
+    isActionable: false,
+    _count: { tasks: 0 },
+    ...extra,
+  });
+
+  /**
+   * Tres hilos que cubren los tres desenlaces de `allNonActionable`:
+   * un boletin de dos mensajes, un hilo con trabajo dentro, y uno que nadie ha
+   * clasificado todavia.
+   */
+  const filas = [
+    fila({
+      id: 'e1',
+      threadId: 'hilo-boletin',
+      gmailMessageId: 'g1',
+      receivedAt: new Date('2026-09-05T10:00:00.000Z'),
+      hasAttachments: true,
+    }),
+    fila({
+      id: 'e2',
+      threadId: 'hilo-boletin',
+      gmailMessageId: 'g2',
+      receivedAt: new Date('2026-09-04T10:00:00.000Z'),
+    }),
+    fila({
+      id: 'e3',
+      threadId: 'hilo-con-trabajo',
+      gmailMessageId: 'g3',
+      receivedAt: new Date('2026-09-03T10:00:00.000Z'),
+      isActionable: true,
+      proposedTasks: [{ title: 'a' }, { title: 'b' }],
+    }),
+    fila({
+      id: 'e4',
+      threadId: 'hilo-con-trabajo',
+      gmailMessageId: 'g4',
+      receivedAt: new Date('2026-09-02T10:00:00.000Z'),
+    }),
+    fila({
+      id: 'e5',
+      threadId: 'hilo-sin-clasificar',
+      gmailMessageId: 'g5',
+      receivedAt: new Date('2026-09-01T10:00:00.000Z'),
+      processedAt: null,
+    }),
+  ];
+
+  const pagina = [
+    { threadId: 'hilo-boletin', _max: { receivedAt: new Date('2026-09-05T10:00:00.000Z') } },
+    { threadId: 'hilo-con-trabajo', _max: { receivedAt: new Date('2026-09-03T10:00:00.000Z') } },
+    { threadId: 'hilo-sin-clasificar', _max: { receivedAt: new Date('2026-09-01T10:00:00.000Z') } },
+  ];
+
+  const todos = [
+    { threadId: 'hilo-boletin', _count: { _all: 2 } },
+    { threadId: 'hilo-con-trabajo', _count: { _all: 2 } },
+    { threadId: 'hilo-sin-clasificar', _count: { _all: 1 } },
+  ];
+
+  beforeEach(() => {
+    prisma = {
+      email: {
+        // El `groupBy` completo es el que pide `_count`; el paginado, el que
+        // pide `_max` para poder ordenar. Es lo que separa las dos llamadas.
+        groupBy: jest.fn().mockImplementation((args: any) =>
+          Promise.resolve(args._count ? todos : pagina),
+        ),
+        findMany: jest.fn().mockResolvedValue(filas),
+      },
+    };
+
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      {} as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
+    );
+  });
+
+  it('devuelve un item por hilo, no uno por correo', async () => {
+    const { items } = await service.listThreads(USER_ID, {});
+
+    expect(items).toHaveLength(3);
+    expect(items.map((h) => h.threadId)).toEqual([
+      'hilo-boletin',
+      'hilo-con-trabajo',
+      'hilo-sin-clasificar',
+    ]);
+  });
+
+  it('cuenta hilos y correos por separado', async () => {
+    // Es el par de numeros que deja pintar «3 hilos · 5 correos» sin que el
+    // cliente se baje la bandeja entera para contarla.
+    const { total, totalEmails } = await service.listThreads(USER_ID, {});
+
+    expect(total).toBe(3);
+    expect(totalEmails).toBe(5);
+  });
+
+  it('trae los ids de todo el hilo, del mas reciente al mas antiguo', async () => {
+    const [boletin] = (await service.listThreads(USER_ID, {})).items;
+
+    expect(boletin.messageCount).toBe(2);
+    expect(boletin.emailIds).toEqual(['e1', 'e2']);
+  });
+
+  it('latest es el mensaje mas reciente, en la forma de GET /emails', async () => {
+    const [boletin] = (await service.listThreads(USER_ID, {})).items;
+
+    expect(boletin.latest.id).toBe('e1');
+    expect(boletin.latest.date).toBe('2026-09-05T10:00:00.000Z');
+    expect(boletin.latest.gmailMessageId).toBe('g1');
+  });
+
+  it('allNonActionable es true solo si TODO el hilo es no accionable', async () => {
+    const [boletin, conTrabajo] = (await service.listThreads(USER_ID, {})).items;
+
+    expect(boletin.allNonActionable).toBe(true);
+    // Basta un mensaje con trabajo dentro para que el hilo no se pueda barrer.
+    expect(conTrabajo.allNonActionable).toBe(false);
+  });
+
+  it('un hilo sin clasificar NO cuenta como no accionable', async () => {
+    // La trampa de la fase: `isActionable` nace en `false`, asi que un correo
+    // que nadie ha analizado se lee igual que uno que la IA descarto. Si esto
+    // se rompe, «marca todos los no accionables» barre correos sin mirar.
+    const sinClasificar = (await service.listThreads(USER_ID, {})).items[2];
+
+    expect(sinClasificar.latest.isActionable).toBe(false);
+    expect(sinClasificar.allNonActionable).toBe(false);
+  });
+
+  it('suma las propuestas en cuarentena de todo el hilo', async () => {
+    const [boletin, conTrabajo] = (await service.listThreads(USER_ID, {})).items;
+
+    expect(conTrabajo.proposedTaskCount).toBe(2);
+    expect(boletin.proposedTaskCount).toBe(0);
+  });
+
+  it('marca el clip si cualquier mensaje del hilo trae adjuntos', async () => {
+    const [boletin, conTrabajo] = (await service.listThreads(USER_ID, {})).items;
+
+    expect(boletin.hasAttachments).toBe(true);
+    expect(conTrabajo.hasAttachments).toBe(false);
+  });
+
+  it('pagina hilos en la base, no correos en memoria', async () => {
+    await service.listThreads(USER_ID, { skip: 10, take: 25 });
+
+    const paginado = prisma.email.groupBy.mock.calls.find((c: any[]) => c[0].skip !== undefined);
+    expect(paginado[0]).toEqual(
+      expect.objectContaining({ by: ['threadId'], skip: 10, take: 25 }),
+    );
+    // Y el `findMany` no pagina: ya viene acotado por los hilos de la pagina.
+    expect(prisma.email.findMany.mock.calls[0][0].take).toBeUndefined();
+  });
+
+  it('ordena por el correo mas reciente de cada hilo', async () => {
+    await service.listThreads(USER_ID, {});
+
+    const paginado = prisma.email.groupBy.mock.calls.find((c: any[]) => c[0].skip !== undefined);
+    expect(paginado[0].orderBy).toEqual({ _max: { receivedAt: 'desc' } });
+  });
+
+  it('solo devuelve hilos del usuario', async () => {
+    await service.listThreads(USER_ID, {});
+
+    for (const [args] of prisma.email.groupBy.mock.calls) {
+      expect(args.where).toEqual(expect.objectContaining({ userId: USER_ID }));
+    }
+    expect(prisma.email.findMany.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({ userId: USER_ID }),
+    );
+  });
+
+  it('aplica el mismo filtro al agrupar y al traer los correos', async () => {
+    // Sin repetir el filtro en el `findMany`, un hilo con un correo pendiente y
+    // otro completado traeria los dos: `messageCount` diria 2 y la bandeja 1.
+    await service.listThreads(USER_ID, { status: EmailStatus.PENDING });
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    expect(where.status).toBe(EmailStatus.PENDING);
+    expect(where.threadId).toEqual({ in: ['hilo-boletin', 'hilo-con-trabajo', 'hilo-sin-clasificar'] });
+  });
+
+  it('no pide correos cuando la pagina no tiene hilos', async () => {
+    prisma.email.groupBy.mockImplementation((args: any) =>
+      Promise.resolve(args._count ? todos : []),
+    );
+
+    const { items, total } = await service.listThreads(USER_ID, { skip: 999 });
+
+    expect(items).toEqual([]);
+    // El total sigue siendo el de la bandeja, no el de la pagina vacia.
+    expect(total).toBe(3);
+    expect(prisma.email.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('EmailsService — POST /emails/bulk-dismiss (Fase 7)', () => {
+  let service: EmailsService;
+  let prisma: any;
+  let tx: any;
+
+  /** Lo que hay en la base para estas pruebas, por id. */
+  const enBase = [
+    { id: 'p1', status: EmailStatus.PENDING },
+    { id: 'p2', status: EmailStatus.PENDING },
+    { id: 'ya', status: EmailStatus.DISMISSED },
+    { id: 'hecho', status: EmailStatus.COMPLETED },
+    { id: 'curso', status: EmailStatus.IN_PROGRESS },
+  ];
+
+  beforeEach(() => {
+    tx = {
+      email: {
+        findMany: jest.fn().mockImplementation(({ where }: any) =>
+          Promise.resolve(enBase.filter((e) => where.id.in.includes(e.id))),
+        ),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    prisma = { $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)) };
+
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      {} as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
+    );
+  });
+
+  it('mueve a DISMISSED los correos pendientes del lote', async () => {
+    const r = await service.bulkDismiss(USER_ID, ['p1', 'p2']);
+
+    expect(r).toEqual({ requested: 2, updated: 2, skipped: [] });
+    expect(tx.email.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['p1', 'p2'] }, userId: USER_ID },
+      data: { status: EmailStatus.DISMISSED },
+    });
+  });
+
+  it('un id muerto no tumba el lote entero', async () => {
+    // El escenario del encargo: 318 ids y uno que ya no existe. Sin esto, el
+    // lote se cae por completo y la bandeja se queda igual de llena.
+    const r = await service.bulkDismiss(USER_ID, ['p1', 'fantasma', 'p2']);
+
+    expect(r.updated).toBe(2);
+    expect(r.skipped).toEqual([{ id: 'fantasma', reason: 'NOT_FOUND' }]);
+  });
+
+  it('el que ya estaba descartado se omite, y no es un fallo', async () => {
+    const r = await service.bulkDismiss(USER_ID, ['p1', 'ya']);
+
+    expect(r.updated).toBe(1);
+    expect(r.skipped).toEqual([{ id: 'ya', reason: 'ALREADY_DISMISSED' }]);
+  });
+
+  it('sin force no arrastra lo que alguien ya despacho', async () => {
+    // Descartar es avanzar, asi que la regla de reapertura no protege esto:
+    // el guardarrail es propio del lote. Un clic dirigido a los boletines no
+    // puede llevarse por delante trabajo ya completado.
+    const r = await service.bulkDismiss(USER_ID, ['p1', 'hecho', 'curso']);
+
+    expect(r.updated).toBe(1);
+    expect(r.skipped).toEqual([
+      { id: 'hecho', reason: 'NOT_PENDING' },
+      { id: 'curso', reason: 'NOT_PENDING' },
+    ]);
+  });
+
+  it('con force si los arrastra', async () => {
+    const r = await service.bulkDismiss(USER_ID, ['p1', 'hecho', 'curso'], undefined, true);
+
+    expect(r.updated).toBe(3);
+    expect(r.skipped).toEqual([]);
+  });
+
+  it('force no revive lo que ya estaba descartado', async () => {
+    const r = await service.bulkDismiss(USER_ID, ['ya'], undefined, true);
+
+    expect(r.updated).toBe(0);
+    expect(r.skipped).toEqual([{ id: 'ya', reason: 'ALREADY_DISMISSED' }]);
+    expect(tx.email.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('cuenta los ids repetidos una sola vez', async () => {
+    const r = await service.bulkDismiss(USER_ID, ['p1', 'p1', 'p2']);
+
+    expect(r.requested).toBe(2);
+    expect(r.updated).toBe(2);
+  });
+
+  it('siempre cuadra updated + skipped = requested', async () => {
+    // Es la invariante que deja al cliente comprobar la respuesta en vez de
+    // creersela: cada id que se mando sale por una puerta o por la otra.
+    const r = await service.bulkDismiss(USER_ID, ['p1', 'ya', 'hecho', 'fantasma', 'p1']);
+
+    expect(r.updated + r.skipped.length).toBe(r.requested);
+    expect(r.requested).toBe(4);
+  });
+
+  it('filtra por userId al leer y al escribir', async () => {
+    await service.bulkDismiss(USER_ID, ['p1']);
+
+    expect(tx.email.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['p1'] }, userId: USER_ID } }),
+    );
+    expect(tx.email.updateMany.mock.calls[0][0].where.userId).toBe(USER_ID);
+  });
+
+  it('lee y escribe dentro de la misma transaccion', async () => {
+    await service.bulkDismiss(USER_ID, ['p1']);
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('avisa con UN evento por lote, no con uno por correo', async () => {
+    // 318 `email.updated` seguidos dejan la bandeja parpadeando mientras se
+    // vacia. Es el motivo entero de que exista `email.bulk_updated`.
+    await service.bulkDismiss(USER_ID, ['p1', 'p2'], 'socket-9');
+
+    expect(gateway.emitEmailUpdated).not.toHaveBeenCalled();
+    expect(gateway.emitEmailsBulkUpdated).toHaveBeenCalledTimes(1);
+    expect(gateway.emitEmailsBulkUpdated).toHaveBeenCalledWith(
+      { userId: USER_ID, ids: ['p1', 'p2'], status: EmailStatus.DISMISSED },
+      'socket-9',
+    );
+  });
+
+  it('no anuncia nada si no se movio ningun correo', async () => {
+    await service.bulkDismiss(USER_ID, ['fantasma']);
+
+    expect(gateway.emitEmailsBulkUpdated).not.toHaveBeenCalled();
   });
 });
