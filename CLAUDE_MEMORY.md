@@ -1,3 +1,134 @@
+## Fase 7 — el despacho masivo de la bandeja (2026-09-10)
+
+Dos rutas nuevas para vaciar los 728 `PENDING` de producción: `GET /emails/threads`
+(401 hilos en vez de 728 filas) y `POST /emails/bulk-dismiss` (los 318 no
+accionables en dos llamadas). Contrato acordado con Gravity **antes** de escribir
+código, y documentado en `API_CONTRACTS.md`. `POST /emails/bulk-approve` se sacó
+del alcance por decisión de Doc.
+
+**801 pruebas en 38 suites**, en verde. `tsc` y ESLint limpios.
+
+### `isActionable` estaba en la base y no salía por ninguna parte
+
+`GET /emails` **aceptaba `?actionable=false` para filtrar y luego no devolvía el
+campo por el que acababa de filtrar**. La columna existía desde el Sprint 3 y
+estaba en `GET /emails/:id`, pero no en `SELECT_TRIAGE`, así que la fila viajaba
+sin ella. La bandeja podía pedir los no accionables y no podía enseñar cuáles lo
+eran, ni ofrecer «marca todos».
+
+Es exactamente la lección que Gravity escribió en la Fase 6 sobre
+`hasAttachments` —_«un campo que no devuelve ningún endpoint no existe»_—, con
+otro campo y cuatro meses después. **La forma de que no vuelva a pasar no es
+recordarla: es que un filtro y su campo se añadan juntos.** Un `?actionable=` sin
+`isActionable` en el `select` es un contrato incompleto que compila y pasa los
+tests, porque nadie prueba lo que no devuelve.
+
+### La trampa de la fase: `isActionable: false` no significa «no accionable»
+
+**La columna nace en `false` y se queda ahí hasta que alguien clasifique el
+correo.** Así que «la IA dijo que aquí no hay trabajo» y «nadie ha mirado esto
+todavía» se leen **idénticos** desde el campo.
+
+Y el encargo era «deja que el Jefe barra los no accionables de un golpe». Con el
+atajo colgado de `!isActionable`, ese golpe se lleva también todo lo que el
+worker no ha procesado — que es justo lo que no se puede descartar a ciegas,
+porque puede tener trabajo dentro. **Un descarte masivo mal condicionado no da
+error: deja la bandeja limpia y el trabajo perdido**, que es la peor forma de
+fallar que puede tener esta fase.
+
+Por eso `allNonActionable` exige **tres** condiciones por correo, no una:
+`processedAt` puesto (el worker lo despachó), `skipReason` vacío (la IA llegó a
+opinar; si está puesto, el correo se saltó la clasificación y su `false` no
+significa nada) y el veredicto negativo. Y es `every`, no `some`: basta un
+mensaje con trabajo dentro para que el hilo no se pueda barrer.
+
+Gravity tenía la mitad del hallazgo en un comentario de `types.ts` —había notado
+que `undefined` no es `false`— pero seguía pensando en preguntar
+`isActionable === false`. La otra mitad, que un `false` de verdad tampoco basta,
+está avisada en su buzón.
+
+### Por qué la paginación de hilos son tres consultas y no una
+
+Agrupar en memoria lo que ya devuelve `GET /emails` era mucho más corto. Pero
+habría paginado **por correo**: para servir «los 50 primeros hilos» hay que
+bajarse la bandeja entera y averiguar dónde acaba el hilo 50. Con 728 se nota
+poco; el problema es que ese número solo sube, y la fase existe justamente
+porque la lista plana dejó de escalar.
+
+Así que: `groupBy` paginado con `orderBy: { _max: { receivedAt: 'desc' } }` para
+los hilos de la página, `groupBy` completo con `_count: { _all: true }` para los
+dos totales —`total` es su longitud y `totalEmails` la suma, en una sola consulta
+en vez de un `COUNT(DISTINCT)` en SQL crudo— y un `findMany` acotado a esos
+hilos.
+
+**El `findMany` repite el filtro además de acotar por `threadId`.** Sin eso, un
+hilo con un correo pendiente y otro completado traería los dos y `messageCount`
+diría 2 mientras la bandeja enseña 1. Tiene una consecuencia de contrato que hay
+que decir en voz alta: **el hilo es el que deja el filtro, no el que hay en
+Gmail**. Los `emailIds` que se devuelven son exactamente los que `bulk-dismiss`
+va a mover, ni uno más — que es lo que se quiere— pero `messageCount` no es
+«mensajes de la conversación» y pintarlo así mentiría.
+
+Y el orden de la página se recorre sobre `threadIds`, no sobre el `Map` que los
+agrupa: el orden lo decidió la base, y el de inserción de un `Map` solo lo
+respeta por accidente.
+
+### Un lote no es todo o nada, y tiene que decir por qué
+
+318 ids y uno que ya no existe no pueden tumbar las otras 317. La respuesta es
+**200 con desglose**: `{ requested, updated, skipped: [{ id, reason }] }`, con
+tres motivos cerrados (`NOT_FOUND`, `ALREADY_DISMISSED`, `NOT_PENDING`) contra
+los que se programa por código, no por texto.
+
+Se cumple siempre **`updated + skipped.length === requested`**, y por eso los ids
+repetidos se cuentan una vez. Es lo que deja al cliente *comprobar* la respuesta
+en vez de creérsela — un lote que contesta solo «updated: 315» sobre 318 no dice
+cuáles tres se quedaron dentro, y la bandeja se queda con correos que nadie sabe
+nombrar.
+
+El desglose se construye **dentro** de la transacción y se devuelve, en vez de
+acumular sobre un array de fuera: si la transacción se reintentara, el array
+externo se quedaría con los duplicados de la vuelta anterior.
+
+**Sin `force` el lote solo mueve `PENDING`.** Descartar es avanzar, así que
+`esReapertura` no protege esto —solo salta al volver a `PENDING`— y el
+guardarraíl tuvo que ser propio del lote. El motivo: la selección se hizo sobre
+una lista que pudo pintarse hace diez minutos, y arrastrar a `DISMISSED` un
+correo que alguien completó mientras tanto es borrarle trabajo con un clic que
+iba dirigido a los boletines.
+
+### `email.bulk_updated`: el ahorro estaba en el número de eventos
+
+318 `email.updated` seguidos no son más información: son 318 repintados
+intercalados, y la bandeja parpadea mientras se vacía en vez de vaciarse. Un
+evento por petición, con **solo los ids** —el cliente ya tiene esas filas
+pintadas y lo único que necesita es quitarlas— y respetando `x-socket-id` igual
+que todo lo demás. No se emite si no se movió nada.
+
+De paso, corregido en `API_CONTRACTS.md` un párrafo que llevaba desde el
+2026-08-25 describiendo el comportamiento **anterior** del gateway: decía que un
+payload sin `userId` se difunde a todos los clientes, y desde §43.5 no se emite a
+nadie y se registra un `error`.
+
+### La trampa de Nest que no da error al compilar
+
+**`@Get('threads')` va declarada antes que `@Get(':id')`, y tiene que seguir
+ahí.** Nest resuelve por orden de declaración: con `:id` delante,
+`/emails/threads` entra por el detalle con `id: "threads"` y contesta un 404
+perfectamente razonable sobre un correo que nadie pidió. No lo ve el compilador
+ni ningún test unitario del servicio — solo se ve llamando a la ruta.
+
+### Lo que **no** está verificado
+
+Docker Desktop estaba parado, así que **las dos consultas de `groupBy` no se han
+ejecutado nunca contra un Postgres**. Están comprobadas por tipos —y los tipos de
+`groupBy` en Prisma son estrictos de verdad, no un `any`— y por pruebas con
+dobles, pero eso no es lo mismo. `orderBy` sobre un agregado con paginación es
+exactamente la clase de consulta que compila y luego se queja. La primera llamada
+real a `GET /emails/threads` es la prueba que falta.
+
+---
+
 despliegue siguió en rojo: la sonda se comió cinco **403** seguidos.
 
 **El 403 no era nuestro.** Lo devuelve la puerta de entrada de Cloud Run

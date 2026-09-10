@@ -156,13 +156,38 @@ movimiento y `DELETE` sin tocar ningún DTO. **El `socket.id` cambia en cada
 reconexión**: hay que leerlo en el momento de la petición, no guardarlo al
 montar.
 
-Los mismos eventos de correos y tiempos —`email.updated`, `time.started`,
-`time.stopped`, `time.deleted`— salen por el mismo camino y respetan la misma
-cabecera.
+Los mismos eventos de correos y tiempos —`email.updated`, `email.bulk_updated`,
+`time.started`, `time.stopped`, `time.deleted`— salen por el mismo camino y
+respetan la misma cabecera.
+
+#### `email.bulk_updated` — un lote entero en un solo evento (Fase 7, 2026-09-10)
+
+| Evento | Cuerpo | Cuándo |
+|---|---|---|
+| `email.bulk_updated` | `{ userId, ids: string[], status }` | `POST /emails/bulk-dismiss` movió uno o más correos |
+
+**Existe para no emitir 318 `email.updated` seguidos.** Un descarte masivo mueve
+cientos de correos en una sola petición; anunciarlos de uno en uno le da al
+cliente cientos de repintados intercalados y la bandeja parpadea mientras se
+vacía en vez de vaciarse. Va **un evento por petición**.
+
+Al revés que `email.updated`, aquí viajan **solo los ids**, no las filas: el
+cliente ya tiene esas filas pintadas y lo único que necesita es quitar las que
+salen de la bandeja. `status` es uno solo para todo el lote, porque un lote
+mueve todo al mismo sitio.
+
+**No se emite si no se movió nada** (`updated: 0`). Un lote entero omitido no
+cambió la bandeja de nadie.
+
+Respeta `x-socket-id` como todos los demás: quien pulsó el botón no recibe el
+eco, porque ya tiene el desglose en la respuesta HTTP.
 
 > Detalle de implementación, por si algún día cuadra un comportamiento raro: si
-> el payload llega sin `userId`, el gateway **difunde a todos los clientes** y
-> deja un aviso en el log. Es un cinturón, no el camino normal.
+> el payload llega **sin `userId`**, el gateway **no emite a nadie** y deja un
+> `error` en el log. Antes difundía a todos los clientes —así estaba escrito
+> aquí— y se cambió el 2026-08-25 (§43.5): hacer visible un fallo mudo pagándolo
+> con los datos de otra persona no era el trato. _Corregido el 2026-09-10:
+> este párrafo llevaba describiendo el comportamiento anterior desde entonces._
 
 ---
 
@@ -240,6 +265,197 @@ con `400 INVALID_ARGUMENT`.
 > `git show 7232c17:HANDOFF.md`. Alguna frase habla en presente de trabajo
 > que ya entregaste —los ids de correo de ejemplo puede que ya no existan—,
 > pero **los contratos de las rutas siguen vigentes**.
+
+# Fase 7 — despacho masivo de la bandeja · contrato vigente (2026-09-10)
+
+**El problema que resuelven estas dos rutas es una cuenta.** En producción hay
+**728 correos en `PENDING`**, que son **401 hilos** distintos y **318 correos no
+accionables**. Con la lista plana, vaciar eso son 728 decisiones sobre 401
+asuntos, leyendo seis veces la misma conversación citada. Aquí el hilo llega una
+vez y los boletines se van en dos llamadas.
+
+_Acordado con @Gravity en el buzón el 2026-09-10 e implementado ese mismo día.
+`POST /emails/bulk-approve` **se sacó del alcance** por decisión de Doc; no
+existe._
+
+---
+
+## `GET /emails/threads` — la bandeja agrupada por hilo · **nuevo**
+
+Devuelve **envoltorio**, al revés que `GET /emails`. Es deliberado: una lista de
+hilos sin `total` obliga al cliente a mentir en el contador o a bajarse la
+bandeja entera para contarla. Como la ruta es nueva, nadie tenía que aprenderse
+la forma anterior.
+
+```json
+{
+  "items": [
+    {
+      "threadId": "hilo-boletin",
+      "messageCount": 2,
+      "emailIds": ["cmrz...e1", "cmrz...e2"],
+      "latest": {
+        "id": "cmrz...e1",
+        "subject": "Boletín semanal",
+        "from": "no-reply@ejemplo.mx",
+        "date": "2026-09-05T10:00:00.000Z",
+        "category": "OTHER",
+        "status": "PENDING",
+        "isActionable": false,
+        "taskCount": 0,
+        "isConverted": false,
+        "proposedTaskCount": 0,
+        "hasAttachments": true,
+        "threadId": "hilo-boletin",
+        "labels": ["INBOX"],
+        "snippet": "Esta semana en…",
+        "gmailMessageId": "19f9…"
+      },
+      "allNonActionable": true,
+      "proposedTaskCount": 0,
+      "hasAttachments": true
+    }
+  ],
+  "total": 401,
+  "totalEmails": 728
+}
+```
+
+`latest` es **una fila `TriageEmail` idéntica a la de `GET /emails`**, campo por
+campo. No hay una forma corta de correo que aprenderse: si sabes pintar una fila
+de la bandeja, sabes pintar la cabecera de un hilo.
+
+Los hilos van **del que tiene el correo más reciente al que lo tiene más
+antiguo**, y dentro de cada uno `emailIds` va también del más reciente al más
+antiguo. Un hilo al que acaba de llegar una respuesta sube, como en cualquier
+bandeja.
+
+### Los dos totales, y por qué son dos
+
+`total` son **hilos** y `totalEmails` son **correos**, los dos sobre el filtro
+aplicado y no sobre la página. Con los dos, la pantalla puede decir «401 hilos ·
+728 correos» sin inventarse ninguno; con uno solo, el contador o miente o exige
+descargar la bandeja completa.
+
+### ⚠️ `skip` y `take` cuentan hilos, no correos
+
+Mismos filtros que `GET /emails` —`?status=`, `?actionable=`, `?converted=`,
+`?skip=`, `?take=` (por defecto 50, tope 200)— con idénticas reglas: un valor
+que no sea `true` ni `false` da **400**, no se interpreta por su cuenta. Sin
+cookie, **401**.
+
+Lo que cambia es la unidad: `?take=50` devuelve **50 hilos**, que pueden ser 50
+correos o 300. Los 401 hilos de producción salen en 3 páginas.
+
+### ⚠️ El hilo es el que deja el filtro, no el que hay en Gmail
+
+Con `?status=PENDING`, un hilo de seis mensajes del que solo dos siguen
+pendientes llega con `messageCount: 2` y dos `emailIds`.
+
+Es lo correcto para lo que se va a hacer con él —los `emailIds` que se devuelven
+son **exactamente** los que `bulk-dismiss` va a mover, ni uno más— pero
+significa que el número **no** es «mensajes de la conversación». Pintarlo como
+«3 mensajes en este hilo» mentiría en cuanto haya un filtro puesto.
+
+### ⚠️ `allNonActionable` no es «todos tienen `isActionable: false`»
+
+Es `true` solo si **todos** los correos del hilo son no accionables **y el
+modelo llegó a decirlo**. Son tres condiciones por correo: el worker lo despachó
+(`processedAt`), la IA llegó a opinar (sin `skipReason`) y el veredicto fue que
+no.
+
+**La columna `isActionable` nace en `false` y se queda ahí hasta que alguien
+clasifique el correo**, así que «no accionable» y «todavía sin mirar» se leen
+igual desde ella. Un `allNonActionable` construido solo con la columna metería
+en «marca todos los no accionables» los correos que nadie ha analizado — que son
+justo los que no se pueden barrer a ciegas, porque puede haber trabajo dentro.
+
+Por eso el atajo de la UI se ofrece sobre `allNonActionable` y **nunca** sobre
+`!latest.isActionable`.
+
+---
+
+## `POST /emails/bulk-dismiss` — vaciar los 318 en dos llamadas · **nuevo**
+
+```json
+{ "emailIds": ["cuid1", "cuid2"], "force": false }
+```
+
+`emailIds` es obligatorio, no puede venir vacío y admite **hasta 200 ids**: el
+mismo tope que el `?take=` de `GET /emails`, para no tener que aprenderse dos
+números. Los 318 no accionables salen en dos llamadas. Pasarse da **400**.
+
+**No se puede mandar un filtro** («descarta todo lo no accionable»), solo una
+lista explícita, y es deliberado: un filtro se evalúa en el servidor y se
+llevaría por delante también lo que entró entre que se pintó la lista y se pulsó
+el botón — o sea, justo lo que nadie miró.
+
+### Contesta **200 aunque parte del lote no se mueva**
+
+```json
+{
+  "requested": 318,
+  "updated": 315,
+  "skipped": [{ "id": "cuid9", "reason": "NOT_FOUND" }]
+}
+```
+
+Un lote no es todo o nada. La selección se hizo sobre una lista que pudo
+pintarse hace diez minutos, así que es normal que algún id ya no encaje. Tirar
+las 317 buenas porque una falló sería exactamente el resultado que nadie quiere.
+
+**Se cumple siempre `updated + skipped.length === requested`**, y por eso los
+ids repetidos se cuentan una sola vez. Es lo que permite comprobar la respuesta
+en lugar de creérsela.
+
+### Los tres motivos de `skipped`
+
+**Programa contra el código, nunca contra el texto.** No hay un cuarto motivo:
+todo id que no acabe en `updated` sale por uno de estos.
+
+| `reason` | Qué pasó |
+|---|---|
+| `NOT_FOUND` | No existe, o no es de quien lo pide. Los dos casos se contestan igual a propósito |
+| `ALREADY_DISMISSED` | Ya estaba descartado. No hay nada que hacer, y no es un fallo |
+| `NOT_PENDING` | Estaba en `IN_PROGRESS` o `COMPLETED` y el lote vino sin `force` |
+
+### ⚠️ Sin `force`, el lote solo mueve lo que está en `PENDING`
+
+Descartar es avanzar, así que no lo protege la regla de reapertura de
+`PATCH /:id/status` —esa solo salta al volver a `PENDING`—. El guardarraíl es
+propio del lote: arrastrar a `DISMISSED` un correo que alguien ya completó es
+borrarle trabajo, y una lista de 200 ids es el peor sitio para que eso pase sin
+que se vea.
+
+Esos ids vuelven como `NOT_PENDING`, a la vista. Quien de verdad quiera
+arrastrarlos reenvía con `"force": true`, que es la misma convención de «sé lo
+que hago» que ya tienen `PATCH /emails/:id/status` y `POST /emails/:id/to-task`.
+
+`force` **no revive lo ya descartado**: un `ALREADY_DISMISSED` sigue siéndolo.
+
+### Socket
+
+Un solo `email.bulk_updated` por petición, nunca N `email.updated` (contrato
+arriba). Respeta `x-socket-id`.
+
+---
+
+## `isActionable` en `GET /emails` — campo nuevo en la fila (Fase 7)
+
+`TriageEmail` gana `isActionable: boolean`, y con él lo ganan `GET /emails`,
+`GET /emails/:id`, `GET /emails/threads` (dentro de `latest`) y la respuesta de
+`PATCH /emails/:id/status`.
+
+**Estaba en la base desde el Sprint 3 y en el detalle, pero no en el listado**,
+así que la bandeja aceptaba `?actionable=false` para filtrar y luego no podía
+enseñar el campo por el que había filtrado, ni ofrecer «marca todos los no
+accionables». Es el campo que desbloqueó la fase.
+
+⚠️ **Un `false` no siempre es un veredicto** — ver `allNonActionable` arriba. Es
+la misma trampa, y en una fila suelta no hay forma de distinguirlo: para eso
+está el hilo.
+
+---
 
 # Sprint 6 — Copiloto de IA · contrato de referencia
 
