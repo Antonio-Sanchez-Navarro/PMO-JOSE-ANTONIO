@@ -298,3 +298,96 @@ build**: `buildCommand`, `outputDirectory` e `installCommand` vienen del panel.
 La nota generalizaba de un caso a una regla, y una regla más estricta de lo que
 manda el hecho acaba frenando cambios legítimos. Añadir cabeceras es seguro; el
 peligro está en una lista concreta de cuatro claves, no en el número de claves.
+
+---
+
+## Fase 7 — Selección múltiple y descarte masivo · `c172d3f` · 2026-09-10
+
+Entregado el frontend del atasco de los 728: casillas por hilo y por mensaje,
+barra flotante de selección, confirmación y cliente de `POST /emails/bulk-dismiss`
+troceado. Contrato acordado con @Claude **en el buzón antes de escribir código**,
+y su implementación llegó igual a lo pactado —incluido el tope de 200 ids—, así
+que no hubo que rehacer nada al enchufar.
+
+### 1. La bandeja ya agrupaba por hilo, y el encargo pedía agruparla
+
+Lo primero que hizo falta fue **no construir lo que ya existía**. `groupByThread`
+y `ThreadRow` estaban desde antes; lo que fallaba no era la agrupación sino la
+escala: se agrupa **en cliente, sobre la página de `take=20`**. Agrupar 20 de 728
+no da hilos, da 20 filas con un badge puesto.
+
+**Lección de método:** un encargo que describe una carencia real puede estar
+describiendo mal su causa. Antes de aceptar «no existe X», mirar si X existe y lo
+que falla es su alcance — la solución de un problema de escala no se parece en
+nada a la de un problema de ausencia, y aquí una era backend y la otra frontend.
+
+### 2. `isActionable` — el mismo fallo de `hasAttachments`, cazado antes de repetirlo
+
+`GET /emails` acepta `?actionable=false` desde el Sprint 3, pero `SELECT_TRIAGE`
+**no incluye la columna**: la fila viaja sin ella. Se puede *filtrar* por el campo
+y no se puede *leer*. Es exactamente lo de `hasAttachments` en la Fase 6 —«un
+campo que no devuelve ningún endpoint no existe»—, y la trampa aquí era peor
+porque en TypeScript el campo ausente es `undefined`, no un error:
+
+- `!isActionable` es `true` para un boletín **y** para un correo sin analizar. Un
+  «seleccionar no accionables» escrito así habría metido en el lote todo lo que
+  nadie ha mirado, y el lote lo descarta.
+- Por eso en todo el código se pregunta **`isActionable === false`**, nunca la
+  negación. Las tres formas de «no» no son la misma, igual que en `proposedTasks`.
+
+**Y el botón se apaga diciendo por qué** cuando ninguna fila trae el campo. Un
+atajo que selecciona cero porque el dato no llega se lee como «no tienes nada que
+limpiar», que es lo contrario de lo que pasa. Se enciende solo cuando la API
+empiece a mandarlo: no hay que volver aquí.
+
+### 3. La selección se poda a lo que está cargado
+
+Regla que sostiene la honestidad de la barra: **lo que se cuenta es lo que se
+puede ver**. Al cambiar de pestaña, de etiqueta o al refrescar, los ids que ya no
+están cargados salen de la selección.
+
+La alternativa —recordar ids de listas anteriores— habría dado una barra que dice
+«318 seleccionados» con veinte filas en pantalla: números que su dueño no puede
+revisar, y una confirmación que no pide permiso para lo que va a hacer. Está
+cubierto con prueba (`useEmailSelection.test.ts`), porque es la clase de regla que
+alguien relaja en seis meses para «no perder la selección al refrescar».
+
+### 4. Los tres motivos de omisión no son el mismo suceso
+
+`bulk-dismiss` devuelve `skipped` con `NOT_FOUND`, `ALREADY_DISMISSED` o
+`NOT_PENDING`, y contarlos juntos como «N sin mover» habría sonado a fallo:
+
+| Motivo | Qué es | Qué hace la bandeja |
+|---|---|---|
+| `ALREADY_DISMISSED` | No-operación: ya estaba donde se le quería llevar | Lo saca de la lista **como si se hubiera movido** y lo suma a los despachados |
+| `NOT_PENDING` | El freno del lote sobre algo que alguien ya despachó | Lo deja en pantalla y **dice los clics exactos** para hacerlo a mano |
+| `NOT_FOUND` | Ausencia de verdad | Lo deja en pantalla y lo nombra aparte |
+
+`NOT_PENDING` es el único con remedio, así que es el único cuyo aviso explica el
+camino manual. Los otros dos no tienen nada que el Jefe pueda hacer.
+
+### 5. Trampas pequeñas que costarían una tarde
+
+- **`indeterminate` no es un atributo**, solo propiedad del nodo: en JSX hay que
+  ponerlo por `ref`. Sin eso, un hilo a medio seleccionar se pinta vacío y quien
+  lo mire creerá que su clic no hizo nada.
+- **La guarda de clic de la fila abría el correo al marcar la casilla.** Era
+  `target.closest('button')`; ahora `('button, input, label')`.
+- **Y en el teclado había una segunda mitad**: el `preventDefault()` del `Espacio`
+  se hacía *antes* de comprobar el destino, así que la casilla dejaba de marcarse
+  con el teclado aunque con el ratón funcionara. Comprobar primero, prevenir
+  después.
+- **El lote va en serie, no en paralelo.** El progreso que se enseña tiene que
+  corresponder con lo que la API ya escribió; en paralelo sería una animación que
+  adelanta a los hechos. Y si el segundo trozo falla, el primero ya se escribió:
+  por eso el `catch` recarga en vez de suponer que no pasó nada.
+
+### Deuda conocida, a propósito
+
+- **`GET /emails/threads` no se consume todavía.** Existe y está bien, pero
+  cambia la semántica de la paginación —`take` pasa a contar hilos— y toca
+  cabecera, «cargar más» y el aviso de cuántos quedan. Se hace cuando esté
+  publicado en `API_CONTRACTS.md` y desplegado, no contra código sin commitear.
+- **La cabecera sigue sin poder decir la verdad**: dice «N correos cargados»
+  porque no hay `total` hasta que se consuma la ruta de hilos.
+- **No hay UI de `bulk-approve`.** Fuera de alcance por decisión de Doc.
