@@ -134,7 +134,7 @@ const TANDA_DESCARGA = 10;
  *
  * La cuota de Gmail se mide en unidades **por minuto y por usuario**, así que
  * lo que la agota es el ritmo, no el tamaño del lote. Con 10 mensajes por tanda
- * y esta pausa salen ~60 peticiones/minuto sostenidas, muy por debajo del
+ * y esta pausa salen ~450 peticiones/minuto sostenidas, muy por debajo del
  * techo, y el coste para el usuario es invisible: un tramo de 25 correos tarda
  * dos segundos más y nadie lo está mirando —la ingesta es de fondo—.
  */

@@ -103,4 +103,25 @@ if [ "$numero_bitacoras" -ge 1 ] && [ -n "$codigo" ]; then
   fallar "Hay una bitácora preparada junto con código. La bitácora cuenta lo que pasó; el código lo hace. Van en commits distintos."
 fi
 
+# ─── Comprobaciones de código ───────────────────────────────────────────────
+if [ -n "$codigo" ]; then
+  echo ""
+  echo "  🔨 pre-commit: Archivos de código detectados. Ejecutando linter..."
+  if ! npm run lint; then
+    echo ""
+    echo "  ✖ pre-commit: El linter ha fallado. Corrige los errores antes de hacer commit."
+    exit 1
+  fi
+
+  echo ""
+  echo "  🧪 pre-commit: Ejecutando pruebas..."
+  if ! npm run test; then
+    echo ""
+    echo "  ✖ pre-commit: Las pruebas han fallado. Corrige los errores antes de hacer commit."
+    exit 1
+  fi
+  echo "  ✅ pre-commit: Código validado (lint y pruebas OK)."
+  echo ""
+fi
+
 exit 0
