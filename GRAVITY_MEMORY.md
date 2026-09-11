@@ -458,3 +458,77 @@ correos era justo el encargo.
   cargados. Lo era antes también, pero ahora se nota más porque la página es de
   hilos. Si hace falta de verdad, es un filtro nuevo en `GET /emails/threads`.
 - **No hay UI de `bulk-approve`.** Fuera de alcance por decisión de Doc.
+
+## Fase 8 — Pestañas de empresa/banco y adjuntos · 2026-09-11
+
+Entregadas las pestañas **General | Bancos | Urbazepto | Tecnoresin** y la
+gestión de adjuntos (lista, visor y descarga). Lint 0 avisos, `tsc` limpio,
+build de los tres paquetes, 37 pruebas de web en verde (5 nuevas de adjuntos).
+
+### 1. El filtro que no existe, y por qué no lo fingí
+
+Doc pidió una pestaña «Bancos». El filtro del servidor es `?bank=<uno de
+BANCOS>` con `@IsIn`: **no hay «cualquier banco»**. Tenía tres salidas y solo una
+honrada:
+
+- Siete llamadas y juntarlas en cliente: rompe la paginación por hilos, que es
+  justo lo que arreglamos en la Fase 7.
+- Una pestaña «Bancos» que enseña Konfio en silencio: promete todos y da uno.
+- **Lo hecho:** «Bancos» abre una fila de chips y el activo se ve. La pestaña no
+  promete más de lo que da, y el filtro paraguas queda pedido en el buzón.
+
+**Regla:** cuando el encargo pide una vista que el contrato no sabe expresar, la
+interfaz enseña lo que hay y lo dice; no se rellena el hueco con una media
+verdad ni se simula en cliente lo que el servidor pagina.
+
+### 2. Las listas se importan, no se copian
+
+`BANCOS` y `EMPRESAS` salen de `@pmo/shared`, las mismas que usan el extractor y
+la validación del backend. Con la lista copiada, añadir un banco habría exigido
+tocar dos sitios y **el frontend se habría quedado atrás sin romperse** —la
+pestaña simplemente no aparecería—. Es la forma de fallo favorita de este
+proyecto: la capacidad que se apaga en silencio.
+
+### 3. Contadores que cuentan otra cosa
+
+Las pestañas de estado llevaban su número de `/dashboard/metrics`, que cuenta
+**la bandeja entera**. Con un ámbito puesto, «Pendientes 728» sobre los doce
+correos de Tecnoresin no es un número desactualizado: es un número de otra
+pregunta. Se ocultan mientras haya filtro y manda la cabecera, que sí trae los
+totales del ámbito activo.
+
+Es el mismo patrón que `taskCount` en la Fase 6: **un campo que deja de
+responder a la pregunta que la pantalla hace, sin cambiar de nombre ni de tipo**.
+No rompe la compilación; rompe la pantalla.
+
+### 4. Adjuntos — tres reglas que vienen del contrato
+
+- **Los `inline` no se listan.** Logo de la firma e imágenes citadas: nadie los
+  adjuntó. Enseñarlos hace que el clip deje de significar «aquí hay un
+  documento», que es justo para lo que sirve.
+- **El visor solo abre PDF e imágenes.** Todo lo demás se descarga. No es
+  comodidad: un adjunto HTML abierto en línea correría en **nuestro** origen, con
+  la cookie de sesión al alcance. El backend lo sirve como `attachment` y esto es
+  la otra mitad de la cerradura — saltárselo desde aquí habría abierto el agujero
+  que el otro lado cerró.
+- **`attachments: []` con `hasAttachments: true` es «no disponibles»**, no «sin
+  adjuntos». Las fichas nacieron en esta fase y no hay relleno hacia atrás, así
+  que es el caso de los correos viejos: casi todos los que quedan por despachar.
+
+### 5. La descarga no puede ser un `<a href>`
+
+La ruta va con cookie y **en producción la API vive en otro origen** (Cloud Run,
+no Vercel): una navegación normal sale sin credenciales y devuelve un 401 que el
+navegador pinta como pestaña en blanco — un fallo que en local no aparece, porque
+el proxy de Vite hace que todo sea mismo origen. Se baja con `apiFetchBlob`
+(`credentials: "include"`, con el mismo reintento de refresco que `apiFetch`) y
+se entrega como `blob:`. Las URLs se sueltan al desmontar: un `blob:` vivo
+retiene el archivo entero en memoria.
+
+### Deuda conocida
+
+- **No hay filtro «cualquier banco»**: pedido en el buzón.
+- **Sin métricas por ámbito**: por eso se ocultan los contadores en vez de
+  enseñarlos mal.
+- **Nada de esto se ha probado contra Gmail de verdad.** La primera descarga real
+  de un adjunto sigue siendo la prueba que falta, y es de despliegue.
