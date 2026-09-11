@@ -23,12 +23,12 @@ export function BulkActionBar({
   /** Correos cargados en pantalla. Es el techo de «seleccionar todo». */
   visibles: number;
   /**
-   * Cuántos de los cargados son no accionables, o **`null` si la API todavía no
-   * manda `isActionable`**. No es lo mismo que cero, y la barra no los pinta
-   * igual: un «0» ahí diría que el Jefe no tiene nada que limpiar, que es
-   * justo lo contrario de lo que pasa.
+   * Correos de los hilos que la IA despachó y declaró no accionables **enteros**.
+   *
+   * Sale de `allNonActionable`, nunca de `isActionable` de una fila: esa columna
+   * nace en `false` y no distingue un boletín de un correo que nadie ha mirado.
    */
-  noAccionables: number | null;
+  noAccionables: number;
   ocupado: boolean;
   progreso: { hechos: number; total: number } | null;
   onSeleccionarTodo: () => void;
@@ -63,23 +63,20 @@ export function BulkActionBar({
           {todoSeleccionado ? "Quitar selección" : `Seleccionar los ${visibles} cargados`}
         </button>
 
-        {/* El atajo de los boletines. Deshabilitado —y diciendo por qué— cuando
-            el campo no viaja: un botón que selecciona cero porque el dato no
-            llega es peor que un botón apagado, porque se lee como "no hay". */}
+        {/* El atajo de los boletines: el quick-win de la fase. Solo entran hilos
+            en los que la IA opinó sobre todos los mensajes y dijo que no. */}
         <button
           onClick={onSeleccionarNoAccionables}
-          disabled={ocupado || noAccionables === null || noAccionables === 0}
+          disabled={ocupado || noAccionables === 0}
           title={
-            noAccionables === null
-              ? "La API todavía no devuelve isActionable en el listado, así que no se puede distinguir un boletín de un correo sin analizar."
-              : noAccionables === 0
-                ? "Ninguno de los correos cargados está marcado como no accionable."
-                : `Selecciona los ${noAccionables} correos que la IA marcó como no accionables.`
+            noAccionables === 0
+              ? "Ninguna de las conversaciones cargadas es no accionable de principio a fin. Las que tienen correos sin analizar no entran aquí: puede haber trabajo dentro."
+              : `Selecciona los ${noAccionables} correos de las conversaciones que la IA descartó enteras.`
           }
           className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Solo no accionables
-          {noAccionables !== null && noAccionables > 0 && ` (${noAccionables})`}
+          {noAccionables > 0 && ` (${noAccionables})`}
         </button>
       </div>
 

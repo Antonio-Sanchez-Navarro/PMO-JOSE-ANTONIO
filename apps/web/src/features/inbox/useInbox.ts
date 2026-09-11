@@ -1,54 +1,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch, ApiError } from "../../lib/api";
+import { ApiError } from "../../lib/api";
+import { fetchEmailThreads } from "./api/emails.api";
 import { visibleLabels } from "./format";
 import { useGmailLabels } from "./useGmailLabels";
-import type { EmailSnippet, EmailThread } from "./types";
+import type { EmailSnippet, InboxThread } from "./types";
 
 export type InboxStatus = "loading" | "ready" | "error";
 
-/** Etiqueta presente en los resultados, con cuántos correos la llevan. */
+/** Etiqueta presente en los resultados, con cuántos hilos la llevan. */
 export interface LabelFacet {
   id: string;
   name: string;
   count: number;
 }
 
-/** Agrupa los mensajes por `threadId`, ordenando hilos y mensajes por fecha descendente. */
-function groupByThread(emails: EmailSnippet[]): EmailThread[] {
-  const byThread = new Map<string, EmailSnippet[]>();
-  for (const email of emails) {
-    const group = byThread.get(email.threadId);
-    if (group) group.push(email);
-    else byThread.set(email.threadId, [email]);
-  }
-
-  const timeOf = (email: EmailSnippet) => {
-    const parsed = new Date(email.date).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
-  };
-
-  return [...byThread.entries()]
-    .map(([threadId, messages]) => {
-      const sorted = [...messages].sort((a, b) => timeOf(b) - timeOf(a));
-      return { threadId, messages: sorted, latest: sorted[0] };
-    })
-    .sort((a, b) => timeOf(b.latest) - timeOf(a.latest));
-}
-
 /**
- * Carga la bandeja de entrada desde `GET /emails`, filtrando por el estado de
- * triage de la pestaña activa.
+ * Carga la bandeja desde `GET /emails/threads`, ya agrupada por el servidor.
  *
- * **No es `GET /gmail/inbox`**, que es lo que decía aquí hasta el 2026-08-21:
- * esa ruta va a la API de Google y devuelve el buzón; esta lee la tabla `Email`
- * ya ingerida, que es la que tiene el estado de Inbox Zero por el que se filtra.
- * Son dos fuentes distintas y solo una responde a lo que pinta este hook.
+ * **Agrupaba aquí hasta la Fase 7, y era una agrupación que mentía a escala.**
+ * Se pedían 20 correos y se juntaban por `threadId` en el cliente: con 728
+ * correos repartidos en 401 hilos, agrupar los 20 de la página no daba hilos,
+ * daba 20 filas con un contador puesto. Dos mensajes de la misma conversación
+ * solo caían juntos si la casualidad los ponía en la misma página.
+ *
+ * Ahora el servidor agrupa sobre la tabla entera y **pagina por hilo**: `take`
+ * cuenta hilos, no correos, y la respuesta trae los dos totales para que la
+ * cabecera pueda decir «401 hilos · 728 correos» sin inventarse ninguno.
  *
  * La sesión viaja en cookies httpOnly: `apiFetch` ya usa `credentials: "include"`
  * y renueva el token una vez si la API responde 401.
  */
-export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 20) {
-  const [emails, setEmails] = useState<EmailSnippet[]>([]);
+export function useInbox(activeStatus: string = "PENDING", initialMaxResults = 20) {
+  const [threads, setThreads] = useState<InboxThread[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalEmails, setTotalEmails] = useState(0);
   const [status, setStatus] = useState<InboxStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const [maxResults, setMaxResults] = useState(initialMaxResults);
@@ -59,89 +44,134 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
   const labelNames = useGmailLabels();
   const reqIdRef = useRef(0);
 
-  const load = useCallback(async (limit: number, { silent = false } = {}) => {
-    const currentReqId = ++reqIdRef.current;
-    if (silent) setIsRefreshing(true);
-    else setStatus("loading");
-    setError(null);
+  const load = useCallback(
+    async (limit: number, { silent = false } = {}) => {
+      const currentReqId = ++reqIdRef.current;
+      if (silent) setIsRefreshing(true);
+      else setStatus("loading");
+      setError(null);
 
-    try {
-      const data = await apiFetch<EmailSnippet[]>(`/emails?status=${activeStatus}&take=${limit}`);
-      if (currentReqId !== reqIdRef.current) return;
-      setEmails(data);
-      setStatus("ready");
-    } catch (err) {
-      if (currentReqId !== reqIdRef.current) return;
-      setError(
-        err instanceof ApiError && err.status === 401
-          ? "Tu sesión con Google expiró. Vuelve a iniciar sesión."
-          : "No se pudo cargar la bandeja de entrada.",
-      );
-      setStatus("error");
-    } finally {
-      if (currentReqId === reqIdRef.current) {
-        setIsRefreshing(false);
+      try {
+        const page = await fetchEmailThreads({ status: activeStatus, take: limit });
+        if (currentReqId !== reqIdRef.current) return;
+        setThreads(page.items);
+        setTotal(page.total);
+        setTotalEmails(page.totalEmails);
+        setStatus("ready");
+      } catch (err) {
+        if (currentReqId !== reqIdRef.current) return;
+        setError(
+          err instanceof ApiError && err.status === 401
+            ? "Tu sesión con Google expiró. Vuelve a iniciar sesión."
+            : "No se pudo cargar la bandeja de entrada.",
+        );
+        setStatus("error");
+      } finally {
+        if (currentReqId === reqIdRef.current) {
+          setIsRefreshing(false);
+        }
       }
-    }
-  }, [activeStatus]);
+    },
+    [activeStatus],
+  );
 
   useEffect(() => {
-    // Cuando activeStatus cambia, forzamos recarga y limpiamos la lista actual
     void load(maxResults, { silent: false });
   }, [load, maxResults, activeStatus]);
 
-  /** Etiquetas presentes en los resultados, ordenadas por frecuencia. */
+  /**
+   * Etiquetas presentes en los resultados, ordenadas por frecuencia.
+   *
+   * Se cuentan sobre **el correo más reciente de cada hilo**, que es el único
+   * que viaja: el servidor manda los ids del resto, no sus etiquetas. Antes se
+   * contaban sobre todos los correos cargados, así que un número que baje aquí
+   * no es una regresión — es que ahora cuenta hilos.
+   */
   const labels = useMemo<LabelFacet[]>(() => {
     const counts = new Map<string, LabelFacet>();
-    for (const email of emails) {
-      for (const label of visibleLabels(email.labels ?? [], labelNames)) {
+    for (const thread of threads) {
+      for (const label of visibleLabels(thread.latest.labels ?? [], labelNames)) {
         const existing = counts.get(label.id);
         if (existing) existing.count++;
         else counts.set(label.id, { ...label, count: 1 });
       }
     }
     return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-  }, [emails, labelNames]);
+  }, [threads, labelNames]);
 
   const visible = useMemo(
-    () => (labelFilter ? emails.filter((e) => (e.labels ?? []).includes(labelFilter)) : emails),
-    [emails, labelFilter],
+    () =>
+      labelFilter
+        ? threads.filter((t) => (t.latest.labels ?? []).includes(labelFilter))
+        : threads,
+    [threads, labelFilter],
   );
 
-  const threads = useMemo(() => groupByThread(visible), [visible]);
-
-  const updateEmail = useCallback((updatedEmail: EmailSnippet) => {
-    setEmails((prev) => {
-      // Si el email cambia de status, lo quitamos de la lista si no coincide con activeStatus
-      if (updatedEmail.status !== activeStatus) {
-        return prev.filter(e => e.id !== updatedEmail.id);
-      }
-      
-      const exists = prev.some(e => e.id === updatedEmail.id);
-      if (exists) {
-        return prev.map(e => e.id === updatedEmail.id ? updatedEmail : e);
-      } else {
-        return [updatedEmail, ...prev];
-      }
-    });
-  }, [activeStatus]);
-
   /**
-   * Saca correos de la lista sin volver a pedirla.
+   * Quita correos de la bandeja sin volver a pedirla, y descuenta los totales.
    *
-   * Lo usa el descarte masivo: la respuesta del lote ya dice cuáles se movieron
-   * y cuáles no, así que recargar sería pedirle a la API que repita algo que
-   * acaba de contar. Solo se le pasan los ids que la API confirmó.
+   * Un hilo que se queda sin correos desaparece: `messageCount` cuenta lo que
+   * deja el filtro, así que un hilo vacío ya no pertenece a esta pestaña.
+   *
+   * Los totales se ajustan a mano **porque son los que pinta la cabecera**. Si
+   * no se tocaran, descartar 318 correos dejaría el rótulo diciendo «401 hilos ·
+   * 728 correos» sobre una bandeja recién vaciada, y el siguiente en leerlo
+   * pensaría que el lote no hizo nada.
    */
   const removeEmails = useCallback((ids: string[]) => {
     const fuera = new Set(ids);
-    setEmails((prev) => prev.filter((e) => !fuera.has(e.id)));
+    if (fuera.size === 0) return;
+
+    setThreads((prev) => {
+      let correosFuera = 0;
+      let hilosFuera = 0;
+
+      const siguiente = prev.flatMap((thread) => {
+        const quedan = thread.emailIds.filter((id) => !fuera.has(id));
+        if (quedan.length === thread.emailIds.length) return [thread];
+
+        correosFuera += thread.emailIds.length - quedan.length;
+        if (quedan.length === 0) {
+          hilosFuera++;
+          return [];
+        }
+        return [{ ...thread, emailIds: quedan, messageCount: quedan.length }];
+      });
+
+      setTotal((t) => Math.max(0, t - hilosFuera));
+      setTotalEmails((t) => Math.max(0, t - correosFuera));
+      return siguiente;
+    });
   }, []);
 
+  /**
+   * Aplica el cambio de estado de un correo suelto (botones de fila y socket).
+   *
+   * Si el correo sale de la pestaña activa se quita; si sigue en ella, se
+   * refresca la cabecera del hilo cuando el que cambió era el más reciente.
+   */
+  const applyEmailUpdate = useCallback(
+    (email: EmailSnippet) => {
+      if (email.status !== activeStatus) {
+        removeEmails([email.id]);
+        return;
+      }
+      setThreads((prev) =>
+        prev.map((thread) =>
+          thread.latest.id === email.id ? { ...thread, latest: email } : thread,
+        ),
+      );
+    },
+    [activeStatus, removeEmails],
+  );
+
   return {
-    emails: visible,
-    totalEmails: emails.length,
-    threads,
+    threads: visible,
+    /** Hilos que deja el filtro en la tabla entera, no los cargados. */
+    total,
+    totalEmails,
+    /** Cuántos hilos quedan sin traer. Es lo que decide si «cargar más» sirve. */
+    porCargar: Math.max(0, total - threads.length),
     labels,
     labelNames,
     labelFilter,
@@ -151,7 +181,7 @@ export function useInbox(activeStatus: string = 'PENDING', initialMaxResults = 2
     isRefreshing,
     refresh: () => load(maxResults, { silent: true }),
     loadMore: () => setMaxResults((current) => current + 20),
-    updateEmail,
+    applyEmailUpdate,
     removeEmails,
   };
 }

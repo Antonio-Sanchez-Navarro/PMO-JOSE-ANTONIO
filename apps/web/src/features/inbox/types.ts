@@ -33,23 +33,62 @@ export interface EmailSnippet {
    * Si el modelo vio algo que hacer en este correo. `false` es la mitad de la
    * bandeja que se puede limpiar de un golpe.
    *
-   * **Ojo: hoy no llega.** `GET /emails` acepta `?actionable=false` para
-   * filtrar, pero `SELECT_TRIAGE` no incluye la columna, así que la fila viaja
-   * sin ella y aquí es `undefined` en los tres casos —accionable, no accionable
-   * y sin analizar—. Está pedido en el buzón.
+   * ⚠️ **Un `false` aquí no es un veredicto.** La columna nace en `false` y se
+   * queda así hasta que alguien clasifique el correo, así que «es un boletín» y
+   * «nadie lo ha mirado» se leen igual desde este campo, y en una fila suelta no
+   * hay forma de separarlos.
    *
-   * Por eso el código nunca pregunta `!isActionable`: eso metería en la
-   * selección masiva todo lo que la API aún no sabe contar. Se pregunta
-   * `isActionable === false`, y quien ofrece el atajo comprueba antes que el
-   * campo exista de verdad en las filas cargadas.
+   * Por eso **el descarte en bloque no lo mira nunca**: usa
+   * `InboxThread.allNonActionable`, que exige que el worker despachara el correo
+   * y que la IA llegara a opinar. Este campo vale para leer un correo concreto,
+   * no para barrer.
    */
   isActionable?: boolean;
 }
 
-/** Mensajes de un mismo hilo, del más reciente al más antiguo. */
-export interface EmailThread {
+/**
+ * Un hilo de decisión, tal como lo sirve `GET /emails/threads`.
+ *
+ * **No trae los mensajes, solo sus ids.** La bandeja pinta el más reciente y
+ * despacha el hilo entero: `emailIds` son exactamente los correos que
+ * `bulk-dismiss` va a mover, ni uno más, y esa correspondencia es lo que
+ * permite descartar una conversación sin abrirla.
+ */
+export interface InboxThread {
   threadId: string;
-  messages: EmailSnippet[];
-  /** Mensaje más reciente: es el que representa al hilo en la lista. */
+  /**
+   * Correos de este hilo **que quedan dentro del filtro**, no de la
+   * conversación de Gmail. Con `?status=PENDING`, un hilo de seis mensajes del
+   * que solo dos siguen pendientes llega con `messageCount: 2`.
+   *
+   * Por eso la interfaz nunca lo pinta como «mensajes de la conversación»:
+   * mentiría en cuanto haya un filtro puesto, que es siempre.
+   */
+  messageCount: number;
+  emailIds: string[];
+  /** El más reciente, en la misma forma que una fila de `GET /emails`. */
   latest: EmailSnippet;
+  /**
+   * Todos los correos del hilo son no accionables **y el modelo llegó a
+   * decirlo**: despachado por el worker, sin `skipReason` y con veredicto
+   * negativo.
+   *
+   * **Es el único campo con el que se puede barrer a ciegas.** `isActionable`
+   * de una fila no sirve: la columna nace en `false` y se queda ahí hasta que
+   * alguien clasifique el correo, así que «es un boletín» y «nadie lo ha
+   * mirado» se leen igual desde ella. Aquí ya están separados.
+   */
+  allNonActionable: boolean;
+  /** Propuestas de IA esperando decisión en todo el hilo. */
+  proposedTaskCount: number;
+  hasAttachments: boolean;
+}
+
+/** Lo que devuelve `GET /emails/threads`: hilos paginados y los dos totales. */
+export interface ThreadPage {
+  items: InboxThread[];
+  /** Hilos que deja el filtro, no los de la página. */
+  total: number;
+  /** Correos que deja el filtro. Son dos números y ninguno sustituye al otro. */
+  totalEmails: number;
 }

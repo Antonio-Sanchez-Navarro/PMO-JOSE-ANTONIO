@@ -13,7 +13,23 @@ export const TASK_EVENTS = {
 
 export const EMAIL_EVENTS = {
   updated: 'email.updated',
+  /**
+   * Un lote entero de correos cambió de estado (Fase 7).
+   *
+   * Trae **solo los ids y el estado común**, no las filas: el cliente ya las
+   * tiene pintadas y lo único que necesita es quitar las que salen de la
+   * bandeja. Es un evento por petición y no uno por correo — 318 `email.updated`
+   * seguidos hacen que la bandeja parpadee mientras se vacía en vez de vaciarse.
+   */
+  bulkUpdated: 'email.bulk_updated',
 } as const;
+
+/** Cuerpo de `email.bulk_updated`. `status` es uno solo: un lote va todo al mismo sitio. */
+export interface EmailsBulkUpdated {
+  userId: string;
+  ids: string[];
+  status: string;
+}
 
 export const TIME_EVENTS = {
   started: 'time.started',
@@ -49,6 +65,7 @@ interface UseSocketProps {
   onTaskDeleted?: (payload: { id: string; status: TaskStatus; userId: string }) => void;
   onTasksReordered?: (payload: { userId: string; columns: ColumnOrder[] }) => void;
   onEmailUpdated?: (email: Record<string, unknown>) => void;
+  onEmailsBulkUpdated?: (payload: EmailsBulkUpdated) => void;
   onTimeStarted?: (timeEntry: TimeEntry) => void;
   onTimeStopped?: (timeEntry: TimeEntry) => void;
 }
@@ -59,6 +76,7 @@ export const useSocket = ({
   onTaskDeleted,
   onTasksReordered,
   onEmailUpdated,
+  onEmailsBulkUpdated,
   onTimeStarted,
   onTimeStopped,
 }: UseSocketProps) => {
@@ -69,6 +87,7 @@ export const useSocket = ({
   const savedOnTaskDeleted = useRef(onTaskDeleted);
   const savedOnTasksReordered = useRef(onTasksReordered);
   const savedOnEmailUpdated = useRef(onEmailUpdated);
+  const savedOnEmailsBulkUpdated = useRef(onEmailsBulkUpdated);
   const savedOnTimeStarted = useRef(onTimeStarted);
   const savedOnTimeStopped = useRef(onTimeStopped);
 
@@ -78,6 +97,7 @@ export const useSocket = ({
     savedOnTaskDeleted.current = onTaskDeleted;
     savedOnTasksReordered.current = onTasksReordered;
     savedOnEmailUpdated.current = onEmailUpdated;
+    savedOnEmailsBulkUpdated.current = onEmailsBulkUpdated;
     savedOnTimeStarted.current = onTimeStarted;
     savedOnTimeStopped.current = onTimeStopped;
   });
@@ -155,6 +175,8 @@ export const useSocket = ({
       savedOnTasksReordered.current?.(data);
     const onEmailUpdatedHandler = (data: Record<string, unknown>) =>
       savedOnEmailUpdated.current?.(data);
+    const onEmailsBulkUpdatedHandler = (data: EmailsBulkUpdated) =>
+      savedOnEmailsBulkUpdated.current?.(data);
     const onTimeStartedHandler = (data: TimeEntry) =>
       savedOnTimeStarted.current?.(data);
     const onTimeStoppedHandler = (data: TimeEntry) =>
@@ -165,6 +187,7 @@ export const useSocket = ({
     socket.on(TASK_EVENTS.deleted, onDeleted);
     socket.on(TASK_EVENTS.reordered, onReordered);
     socket.on(EMAIL_EVENTS.updated, onEmailUpdatedHandler);
+    socket.on(EMAIL_EVENTS.bulkUpdated, onEmailsBulkUpdatedHandler);
     socket.on(TIME_EVENTS.started, onTimeStartedHandler);
     socket.on(TIME_EVENTS.stopped, onTimeStoppedHandler);
 
@@ -174,6 +197,7 @@ export const useSocket = ({
       socket.off(TASK_EVENTS.deleted, onDeleted);
       socket.off(TASK_EVENTS.reordered, onReordered);
       socket.off(EMAIL_EVENTS.updated, onEmailUpdatedHandler);
+      socket.off(EMAIL_EVENTS.bulkUpdated, onEmailsBulkUpdatedHandler);
       socket.off(TIME_EVENTS.started, onTimeStartedHandler);
       socket.off(TIME_EVENTS.stopped, onTimeStoppedHandler);
 

@@ -1,7 +1,7 @@
 import type { ProposedTask } from "@pmo/shared";
 import { apiFetch } from "../../../lib/api";
 import { getSocketId } from "../../kanban/hooks/useSocket";
-import { EmailSnippet } from "../types";
+import type { EmailSnippet, ThreadPage } from "../types";
 
 /**
  * Lo que devuelve `GET /emails/:id`. Es el mismo correo del listado más el
@@ -47,6 +47,27 @@ export type BulkDismissReason =
   | "ALREADY_DISMISSED"
   | "NOT_PENDING"
   | (string & {});
+
+/**
+ * La bandeja agrupada por hilo.
+ *
+ * ⚠️ **`skip` y `take` cuentan hilos, no correos.** `take=20` trae 20 hilos,
+ * que pueden ser 20 correos o 300. Es justo el motivo de que exista la ruta:
+ * con 728 correos en 401 hilos, paginar por correo obligaba a bajarse la
+ * bandeja entera para saber cuántas filas había que pintar.
+ */
+export async function fetchEmailThreads(params: {
+  status: string;
+  take: number;
+  skip?: number;
+}): Promise<ThreadPage> {
+  const query = new URLSearchParams({
+    status: params.status,
+    take: String(params.take),
+  });
+  if (params.skip) query.set("skip", String(params.skip));
+  return apiFetch<ThreadPage>(`/emails/threads?${query.toString()}`);
+}
 
 /** Un id que el lote no pudo mover, con el motivo que dio la API. */
 export interface BulkDismissSkip {

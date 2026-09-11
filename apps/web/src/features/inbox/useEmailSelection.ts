@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { EmailSnippet, EmailThread } from "./types";
+import type { InboxThread } from "./types";
 
 /** Estado de la casilla de un hilo: ninguno, algunos o todos sus mensajes. */
 export type EstadoDeSeleccion = "vacio" | "parcial" | "lleno";
@@ -7,10 +7,11 @@ export type EstadoDeSeleccion = "vacio" | "parcial" | "lleno";
 /**
  * La selección múltiple de la bandeja.
  *
- * **Se selecciona por correo, aunque se pinte por hilo.** El descarte masivo
- * recibe `emailIds`, y un hilo puede mezclar mensajes accionables con boletines:
- * si la unidad de selección fuera el hilo, descartar uno se llevaría por delante
- * el mensaje que sí había que atender.
+ * **Se guarda por correo, aunque se marque por hilo.** El descarte masivo
+ * recibe `emailIds` y la casilla del hilo mete los suyos de una vez: guardar el
+ * `threadId` en su lugar obligaría a resolverlo otra vez al enviar, y el hilo
+ * que se envía tiene que ser el que se vio —los `emailIds` de la respuesta son
+ * exactamente los correos que el lote va a mover, ni uno más.
  *
  * **La selección no sobrevive a lo que no está en pantalla.** Cada vez que
  * cambia la lista —otra pestaña, otra etiqueta, un refresco— se podan los ids
@@ -19,10 +20,13 @@ export type EstadoDeSeleccion = "vacio" | "parcial" | "lleno";
  * dueño no puede ver ni revisar, y el botón de al lado no pide confirmación de
  * veinte, sino de trescientos dieciocho.
  */
-export function useEmailSelection(emails: EmailSnippet[]) {
+export function useEmailSelection(threads: InboxThread[]) {
   const [seleccion, setSeleccion] = useState<ReadonlySet<string>>(new Set());
 
-  const idsCargados = useMemo(() => new Set(emails.map((e) => e.id)), [emails]);
+  const idsCargados = useMemo(
+    () => new Set(threads.flatMap((t) => t.emailIds)),
+    [threads],
+  );
 
   // La poda. Se hace en un efecto y no al leer, para que `seleccionados` sea
   // siempre el mismo conjunto que se va a mandar a la API.
@@ -53,11 +57,11 @@ export function useEmailSelection(emails: EmailSnippet[]) {
   const estaSeleccionado = useCallback((id: string) => seleccion.has(id), [seleccion]);
 
   const estadoDelHilo = useCallback(
-    (hilo: EmailThread): EstadoDeSeleccion => {
+    (hilo: InboxThread): EstadoDeSeleccion => {
       let marcados = 0;
-      for (const mensaje of hilo.messages) if (seleccion.has(mensaje.id)) marcados++;
+      for (const id of hilo.emailIds) if (seleccion.has(id)) marcados++;
       if (marcados === 0) return "vacio";
-      return marcados === hilo.messages.length ? "lleno" : "parcial";
+      return marcados === hilo.emailIds.length ? "lleno" : "parcial";
     },
     [seleccion],
   );

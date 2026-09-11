@@ -9,7 +9,7 @@ import {
   parseSender,
   visibleLabels,
 } from "./format";
-import type { EmailSnippet, EmailThread } from "./types";
+import type { EmailSnippet, InboxThread } from "./types";
 import { AiValidationModal } from "../kanban/components/AiValidationModal";
 import { classifyEmail, createTasksFromEmail } from "../kanban/api/tasks.api";
 import { EmailClassification } from "@pmo/shared";
@@ -41,8 +41,9 @@ export function InboxPage() {
 
   const {
     threads,
-    emails,
+    total,
     totalEmails,
+    porCargar,
     labels,
     labelNames,
     labelFilter,
@@ -52,14 +53,20 @@ export function InboxPage() {
     isRefreshing,
     refresh,
     loadMore,
-    updateEmail,
+    applyEmailUpdate,
     removeEmails,
   } = useInbox(activeTab);
 
   useSocket({
     onEmailUpdated: (email) => {
-      updateEmail(email as unknown as EmailSnippet);
-    }
+      applyEmailUpdate(email as unknown as EmailSnippet);
+    },
+    // Un lote entero en un solo evento. Llega cuando el descarte masivo lo hizo
+    // *otra* pestaña: la que pulsó el botón manda su `x-socket-id` y el backend
+    // la excluye, así que no se repinta a sí misma.
+    onEmailsBulkUpdated: ({ ids, status: nuevoEstado }) => {
+      if (nuevoEstado !== activeTab) removeEmails(ids);
+    },
   });
 
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -92,7 +99,7 @@ export function InboxPage() {
     }
   };
 
-  const seleccion = useEmailSelection(emails);
+  const seleccion = useEmailSelection(threads);
   const [confirmandoDescarte, setConfirmandoDescarte] = useState(false);
   const [descartando, setDescartando] = useState(false);
   const [progreso, setProgreso] = useState<{ hechos: number; total: number } | null>(null);
@@ -104,22 +111,32 @@ export function InboxPage() {
   const seleccionDisponible = activeTab !== "DISMISSED";
 
   /**
-   * Los no accionables de entre lo cargado, o `null` si la API no manda el
-   * campo. Las tres formas de "no" no son la misma —`false` es un boletín,
-   * `undefined` es un correo del que no sabemos nada— y contarlas juntas
-   * ofrecería descartar lo que nadie ha mirado.
+   * Los correos de los hilos que se pueden barrer a ciegas.
+   *
+   * **Se construye sobre `allNonActionable` y nunca sobre `isActionable`.** La
+   * columna nace en `false` y se queda ahí hasta que alguien clasifique el
+   * correo, así que preguntándole a la fila, «es un boletín» y «nadie lo ha
+   * mirado todavía» contestan lo mismo — y los segundos son justo los que no se
+   * pueden descartar en bloque, porque puede haber trabajo dentro. El hilo ya
+   * trae esa distinción hecha: exige que el worker lo despachara, que la IA
+   * llegara a opinar y que el veredicto fuera que no.
    */
-  const noAccionables = useMemo(() => {
-    const campoDisponible = emails.some((e) => typeof e.isActionable === "boolean");
-    if (!campoDisponible) return null;
-    return emails.filter((e) => e.isActionable === false).map((e) => e.id);
-  }, [emails]);
+  const noAccionables = useMemo(
+    () => threads.filter((t) => t.allNonActionable).flatMap((t) => t.emailIds),
+    [threads],
+  );
 
   /** Cuántos hilos toca la selección actual. Es el número que va al diálogo. */
   const hilosSeleccionados = useMemo(() => {
     const marcados = new Set(seleccion.seleccionados);
-    return threads.filter((hilo) => hilo.messages.some((m) => marcados.has(m.id))).length;
+    return threads.filter((hilo) => hilo.emailIds.some((id) => marcados.has(id))).length;
   }, [threads, seleccion.seleccionados]);
+
+  /** Todos los correos a la vista: es el techo de «seleccionar los cargados». */
+  const correosVisibles = useMemo(
+    () => threads.flatMap((t) => t.emailIds),
+    [threads],
+  );
 
   const ejecutarDescarteMasivo = async () => {
     const ids = seleccion.seleccionados;
@@ -193,10 +210,15 @@ export function InboxPage() {
         <div>
           <h2 className="font-semibold text-slate-800">Bandeja de entrada</h2>
           {status === "ready" && (
+            /* Los dos totales salen de la respuesta y son de la tabla entera, no
+               de la página. Hasta la Fase 7 aquí ponía «N correos cargados»
+               porque no había forma de saber cuántos había detrás: con 20 de 728
+               a la vista, el rótulo era verdad y aun así engañaba. */
             <p className="text-xs text-slate-400">
-              {emails.length} {emails.length === 1 ? "correo cargado" : "correos cargados"} ·{" "}
-              {threads.length} {threads.length === 1 ? "conversación" : "conversaciones"}
-              {labelFilter && ` · filtrado de ${totalEmails}`}
+              {total} {total === 1 ? "conversación" : "conversaciones"} ·{" "}
+              {totalEmails} {totalEmails === 1 ? "correo" : "correos"}
+              {porCargar > 0 && ` · mostrando ${threads.length}`}
+              {labelFilter && " · filtrado por etiqueta"}
             </p>
           )}
         </div>
@@ -282,14 +304,13 @@ export function InboxPage() {
                 onAnalyze={handleAnalyzeEmail}
                 seleccionable={seleccionDisponible}
                 estadoSeleccion={seleccion.estadoDelHilo(thread)}
-                estaSeleccionado={seleccion.estaSeleccionado}
                 onSeleccionar={seleccion.alternar}
 
                 onRead={(id) => setSelectedEmailId(id)}
                 onUpdateStatus={async (id, newStatus, force) => {
                   try {
                     const updated = await updateEmailStatus(id, newStatus, force);
-                    updateEmail(updated as unknown as EmailSnippet);
+                    applyEmailUpdate(updated as unknown as EmailSnippet);
                     // El correo cambió de estado: los contadores de las
                     // pestañas acaban de quedarse viejos.
                     void refreshMetrics();
@@ -301,26 +322,30 @@ export function InboxPage() {
               />
             ))}
           </ul>
-          <div className="border-t border-slate-200 px-6 py-4 text-center">
-            <button
-              onClick={loadMore}
-              disabled={isRefreshing}
-              className="text-sm font-medium text-indigo-600 transition hover:text-indigo-700 disabled:opacity-50"
-            >
-              Cargar más correos
-            </button>
-          </div>
+          {porCargar > 0 && (
+            <div className="border-t border-slate-200 px-6 py-4 text-center">
+              <button
+                onClick={loadMore}
+                disabled={isRefreshing}
+                className="text-sm font-medium text-indigo-600 transition hover:text-indigo-700 disabled:opacity-50"
+              >
+                {/* Dice cuántas quedan porque ahora se sabe. Un «cargar más» que
+                    sigue ahí con la lista completa hace dudar de si falta algo. */}
+                Cargar más conversaciones ({porCargar} por ver)
+              </button>
+            </div>
+          )}
 
           {seleccionDisponible && (
             <BulkActionBar
               correos={seleccion.total}
               hilos={hilosSeleccionados}
-              visibles={emails.length}
-              noAccionables={noAccionables === null ? null : noAccionables.length}
+              visibles={correosVisibles.length}
+              noAccionables={noAccionables.length}
               ocupado={descartando}
               progreso={progreso}
-              onSeleccionarTodo={() => seleccion.reemplazar(emails.map((e) => e.id))}
-              onSeleccionarNoAccionables={() => seleccion.reemplazar(noAccionables ?? [])}
+              onSeleccionarTodo={() => seleccion.reemplazar(correosVisibles)}
+              onSeleccionarNoAccionables={() => seleccion.reemplazar(noAccionables)}
               onLimpiar={seleccion.limpiar}
               onDescartar={() => setConfirmandoDescarte(true)}
             />
@@ -389,73 +414,52 @@ function ThreadRow({
   onUpdateStatus,
   seleccionable,
   estadoSeleccion,
-  estaSeleccionado,
   onSeleccionar,
 }: {
-  thread: EmailThread;
+  thread: InboxThread;
   labelNames: LabelsById;
   onAnalyze: (id: string, hasAttachments?: boolean) => Promise<void> | void;
   onRead: (id: string) => void;
   onUpdateStatus: (id: string, status: string, force?: boolean) => void;
   seleccionable: boolean;
   estadoSeleccion: EstadoDeSeleccion;
-  estaSeleccionado: (id: string) => boolean;
   onSeleccionar: (ids: string[], seleccionar: boolean) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasReplies = thread.messages.length > 1;
-
   /**
-   * La casilla del hilo manda sobre **todos** sus mensajes, incluidos los que
-   * están plegados. Es lo que hace que despachar 401 hilos no obligue a abrir
-   * los 728 correos, y por eso el diálogo de confirmación cuenta las dos cosas.
+   * El hilo se pliega y se despliega desde la Fase 7 **sin lista dentro**.
+   *
+   * `GET /emails/threads` manda el correo más reciente y los ids del resto, no
+   * los mensajes: pintar las respuestas exigiría un `GET /emails/:id` por cada
+   * una, y son 728 en producción. La fila es la unidad de decisión, y para leer
+   * la conversación se abre el correo.
+   *
+   * La casilla marca **todo el hilo**: son exactamente los ids que el lote va a
+   * mover, que es lo que permite despachar 401 conversaciones sin abrir 728
+   * correos.
    */
-  const alternarHilo = (marcar: boolean) =>
-    onSeleccionar(thread.messages.map((m) => m.id), marcar);
+  const alternarHilo = (marcar: boolean) => onSeleccionar(thread.emailIds, marcar);
 
   return (
     <li>
       <EmailRow
         email={thread.latest}
         labelNames={labelNames}
-        threadCount={thread.messages.length}
-        expanded={expanded}
+        threadCount={thread.messageCount}
+        allNonActionable={thread.allNonActionable}
+        proposalCountHilo={thread.proposedTaskCount}
+        hasAttachmentsHilo={thread.hasAttachments}
         seleccionable={seleccionable}
-        estadoCasilla={hasReplies ? estadoSeleccion : undefined}
-        marcada={estaSeleccionado(thread.latest.id)}
+        estadoCasilla={estadoSeleccion}
         onMarcar={alternarHilo}
         etiquetaCasilla={
-          hasReplies
-            ? `Seleccionar la conversación completa (${thread.messages.length} correos)`
+          thread.messageCount > 1
+            ? `Seleccionar la conversación completa (${thread.messageCount} correos)`
             : "Seleccionar este correo"
         }
-        onToggle={hasReplies ? () => setExpanded((open) => !open) : undefined}
-        onAnalyze={() => onAnalyze(thread.latest.id, thread.latest.hasAttachments)}
+        onAnalyze={() => onAnalyze(thread.latest.id, thread.hasAttachments)}
         onRead={() => onRead(thread.latest.id)}
         onUpdateStatus={(status, force) => onUpdateStatus(thread.latest.id, status, force)}
       />
-
-      {expanded && (
-        <ul className="border-t border-slate-100 bg-slate-50/60">
-          {thread.messages.slice(1).map((message) => (
-            <li key={message.id} className="border-t border-slate-100 first:border-t-0">
-              <EmailRow
-                email={message}
-                labelNames={labelNames}
-                nested
-                seleccionable={seleccionable}
-                marcada={estaSeleccionado(message.id)}
-                onMarcar={(marcar) => onSeleccionar([message.id], marcar)}
-                etiquetaCasilla="Seleccionar este correo del hilo"
-
-                onAnalyze={() => onAnalyze(message.id, message.hasAttachments)} 
-                onRead={() => onRead(message.id)}
-                onUpdateStatus={(status, force) => onUpdateStatus(message.id, status, force)}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
     </li>
   );
 }
@@ -464,39 +468,36 @@ function EmailRow({
   email,
   labelNames,
   threadCount,
-  expanded,
-  onToggle,
-  nested = false,
+  allNonActionable = false,
+  proposalCountHilo,
+  hasAttachmentsHilo,
   onAnalyze,
   onRead,
   onUpdateStatus,
   seleccionable = false,
   estadoCasilla,
-  marcada = false,
   onMarcar,
   etiquetaCasilla,
 }: {
   email: EmailSnippet;
   labelNames: LabelsById;
+  /** Correos del hilo **que deja el filtro**, no mensajes de la conversación. */
   threadCount?: number;
-  expanded?: boolean;
-  onToggle?: () => void;
-  nested?: boolean;
+  /** Veredicto del hilo, no de la fila. Ver `InboxThread.allNonActionable`. */
+  allNonActionable?: boolean;
+  /** Propuestas de todo el hilo: las respuestas también esperan decisión. */
+  proposalCountHilo?: number;
+  hasAttachmentsHilo?: boolean;
   onAnalyze?: () => Promise<void> | void;
   onRead?: () => void;
   onUpdateStatus?: (status: string, force?: boolean) => void;
   seleccionable?: boolean;
-  /**
-   * Solo para la fila que representa un hilo con respuestas: es el estado de
-   * los mensajes de dentro, y `"parcial"` pinta la casilla indeterminada.
-   */
+  /** `"parcial"` pinta la casilla indeterminada. */
   estadoCasilla?: EstadoDeSeleccion;
-  marcada?: boolean;
   onMarcar?: (marcar: boolean) => void;
   etiquetaCasilla?: string;
 }) {
   const sender = parseSender(email.from);
-  const interactive = Boolean(onToggle);
   const labels = visibleLabels(email.labels ?? [], labelNames);
   const unread = isUnread(email.labels ?? []);
 
@@ -506,21 +507,25 @@ function EmailRow({
   // La cuarentena, vista desde la lista. `taskCount` no sirve para esto: desde
   // la Fase 6 sigue en 0 mientras las propuestas esperan, porque la IA ya no
   // escribe en el tablero.
-  const proposalCount = email.proposedTaskCount ?? 0;
+  // Del hilo entero, no del correo de cabecera: una respuesta también puede
+  // tener propuestas esperando, y el badge cuenta lo que hay que decidir aquí.
+  const proposalCount = proposalCountHilo ?? email.proposedTaskCount ?? 0;
   const hasProposals = proposalCount > 0;
 
-  // Estrictamente `=== false`. `undefined` no es "accionable": es que la API
-  // no manda el campo todavía, y pintar esa fila como boletín sería inventar
-  // una clasificación que nadie hizo.
-  const noAccionable = email.isActionable === false;
+  // **Del hilo, nunca de `email.isActionable`.** La columna nace en `false`, así
+  // que preguntándole a la fila un correo sin analizar se pinta como boletín.
+  const noAccionable = allNonActionable;
+
+  const traeAdjuntos = hasAttachmentsHilo ?? email.hasAttachments;
 
   const { openCopilotWithContext } = useCopilot();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  const content = (
-    <div 
-      {...(!interactive ? { role: "button", tabIndex: 0 } : {})}
-      className={`flex items-start gap-4 px-6 py-4 cursor-pointer hover:bg-slate-50 transition ${nested ? "pl-16" : ""}`}
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className="flex items-start gap-4 px-6 py-4 cursor-pointer hover:bg-slate-50 transition"
       onClick={(e) => {
         // Evitar que el clic en botones propague el evento al div padre.
         // La casilla entra en la misma guarda: marcar un correo no es pedir
@@ -549,7 +554,7 @@ function EmailRow({
           <span className="sr-only">{etiquetaCasilla ?? "Seleccionar correo"}</span>
           <input
             type="checkbox"
-            checked={estadoCasilla ? estadoCasilla === "lleno" : marcada}
+            checked={estadoCasilla === "lleno"}
             ref={(el) => {
               // `indeterminate` no es un atributo: solo existe como propiedad
               // del nodo, así que en JSX hay que ponerlo a mano.
@@ -561,14 +566,12 @@ function EmailRow({
         </label>
       )}
 
-      {!nested && (
-        <span
-          aria-hidden="true"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-700"
-        >
-          {initialOf(sender.name)}
-        </span>
-      )}
+      <span
+        aria-hidden="true"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-700"
+      >
+        {initialOf(sender.name)}
+      </span>
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
@@ -591,7 +594,7 @@ function EmailRow({
           )}
         </div>
         <p className={`truncate text-sm text-slate-700 ${unread ? "font-semibold" : "font-medium"}`}>
-          {email.hasAttachments && (
+          {traeAdjuntos && (
             <span
               className="mr-1 text-slate-400"
               title="Trae adjuntos. La IA no lee su contenido."
@@ -644,7 +647,7 @@ function EmailRow({
         </time>
 
         {/* Botones de Inbox Zero (Activos) */}
-        {!nested && onUpdateStatus && (
+        {onUpdateStatus && (
           <div className="flex items-center gap-1">
             <button
               onClick={(e) => { e.stopPropagation(); onUpdateStatus('PENDING', true); }}
@@ -725,26 +728,6 @@ function EmailRow({
           </div>
         )}
       </div>
-    </div>
-  );
-
-  if (!interactive) return content;
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onToggle}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onToggle?.();
-        }
-      }}
-      aria-expanded={expanded}
-      className="block w-full text-left transition hover:bg-slate-50 cursor-pointer"
-    >
-      {content}
     </div>
   );
 }
