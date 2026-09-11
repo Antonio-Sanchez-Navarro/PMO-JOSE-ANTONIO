@@ -1019,3 +1019,157 @@ describe('GmailService · fetchMessages distingue los tres desenlaces', () => {
     expect(res.correos).toEqual([]);
   });
 });
+
+describe('GmailService · fichas de los adjuntos (Fase 8)', () => {
+  /** Llama a `toEmailSnippet` con el arbol MIME que pida la prueba. */
+  function snippetDe(payload: unknown) {
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn() } as never,
+      {} as never,
+      { add: jest.fn() } as never,
+      { avisar: jest.fn() } as never,
+    );
+
+    return (
+      service as unknown as {
+        toEmailSnippet: (m: unknown) => {
+          hasAttachments: boolean;
+          attachments: Array<{
+            attachmentId: string;
+            filename: string;
+            mimeType: string;
+            size: number;
+            inline: boolean;
+          }>;
+        };
+      }
+    ).toEmailSnippet({
+      id: 'msg-1',
+      threadId: 'hilo-1',
+      snippet: '',
+      labelIds: [],
+      payload,
+    });
+  }
+
+  const cuerpo = {
+    mimeType: 'text/plain',
+    body: { data: Buffer.from('Hola').toString('base64url') },
+  };
+
+  it('saca nombre, tipo y tamaño de cada adjunto', () => {
+    const r = snippetDe({
+      mimeType: 'multipart/mixed',
+      parts: [
+        cuerpo,
+        {
+          mimeType: 'application/pdf',
+          filename: 'Cotización obra.pdf',
+          body: { attachmentId: 'att-1', size: 120_000 },
+        },
+      ],
+    });
+
+    expect(r.hasAttachments).toBe(true);
+    expect(r.attachments).toEqual([
+      {
+        attachmentId: 'att-1',
+        filename: 'Cotización obra.pdf',
+        mimeType: 'application/pdf',
+        size: 120_000,
+        inline: false,
+      },
+    ]);
+  });
+
+  it('una parte sin attachmentId no es un adjunto', () => {
+    const r = snippetDe({ mimeType: 'multipart/mixed', parts: [cuerpo] });
+
+    expect(r.hasAttachments).toBe(false);
+    expect(r.attachments).toEqual([]);
+  });
+
+  describe('lo incrustado se marca, porque cuesta dinero', () => {
+    it('Content-Disposition: inline', () => {
+      // El logo de la firma. Sin esta marca, la clasificacion le mandaria a
+      // Claude el logotipo de la empresa en CADA correo que entra.
+      const r = snippetDe({
+        mimeType: 'multipart/related',
+        parts: [
+          cuerpo,
+          {
+            mimeType: 'image/png',
+            filename: 'logo.png',
+            headers: [{ name: 'Content-Disposition', value: 'inline; filename="logo.png"' }],
+            body: { attachmentId: 'att-logo', size: 4000 },
+          },
+        ],
+      });
+
+      expect(r.attachments[0].inline).toBe(true);
+    });
+
+    it('o un Content-ID, que no todos los clientes escriben igual', () => {
+      const r = snippetDe({
+        mimeType: 'multipart/related',
+        parts: [
+          cuerpo,
+          {
+            mimeType: 'image/png',
+            filename: 'firma.png',
+            headers: [{ name: 'Content-ID', value: '<firma@ejemplo>' }],
+            body: { attachmentId: 'att-firma', size: 3000 },
+          },
+        ],
+      });
+
+      expect(r.attachments[0].inline).toBe(true);
+    });
+
+    it('un adjunto de verdad NO se marca', () => {
+      const r = snippetDe({
+        mimeType: 'multipart/mixed',
+        parts: [
+          cuerpo,
+          {
+            mimeType: 'application/pdf',
+            filename: 'contrato.pdf',
+            headers: [{ name: 'Content-Disposition', value: 'attachment; filename="contrato.pdf"' }],
+            body: { attachmentId: 'att-1', size: 10_000 },
+          },
+        ],
+      });
+
+      expect(r.attachments[0].inline).toBe(false);
+    });
+  });
+
+  it('los encuentra tambien anidados', () => {
+    // Un correo con cuerpo alternativo y adjuntos cuelga a varios niveles.
+    const r = snippetDe({
+      mimeType: 'multipart/mixed',
+      parts: [
+        { mimeType: 'multipart/alternative', parts: [cuerpo] },
+        {
+          mimeType: 'application/pdf',
+          filename: 'a.pdf',
+          body: { attachmentId: 'att-a', size: 1 },
+        },
+      ],
+    });
+
+    expect(r.attachments).toHaveLength(1);
+  });
+
+  it('un adjunto sin nombre recibe uno, no una fila en blanco', () => {
+    const r = snippetDe({
+      mimeType: 'multipart/mixed',
+      parts: [cuerpo, { mimeType: 'application/pdf', body: { attachmentId: 'att-1' } }],
+    });
+
+    expect(r.attachments[0].filename).toBe('(sin nombre)');
+    // Y sin tamaño declarado, cero: es lo que Gmail no dijo, no una suposicion.
+    expect(r.attachments[0].size).toBe(0);
+  });
+});

@@ -8,6 +8,7 @@ import { QueryEmailsDto } from './dto/query-emails.dto';
 import { QueryThreadsDto } from './dto/query-threads.dto';
 import { TasksGateway } from '../tasks/tasks.gateway';
 import { TagsService } from '../tags/tags.service';
+import { AttachmentMeta, GmailService } from '../gmail/gmail.service';
 
 /** Un correo tal y como lo necesita la bandeja de triage del tablero. */
 export interface TriageEmail {
@@ -290,6 +291,34 @@ export interface BulkDismissResult {
   skipped: BulkDismissSkip[];
 }
 
+/**
+ * Un adjunto tal y como lo ve el frontend.
+ *
+ * Es `AttachmentMeta` **sin `attachmentId`**... no: lo lleva, porque es lo que
+ * hay que poner en la URL de descarga. Lo que no lleva nunca es contenido.
+ */
+export type EmailAttachment = AttachmentMeta;
+
+/**
+ * Lee la columna `attachments` como lo que es: una lista de fichas, o nada.
+ *
+ * Mismo criterio que `tareasPropuestas`: una columna `Json` puede contener
+ * cualquier cosa, así que afirmarle al compilador que es un array sin mirarlo
+ * es justo el `as` que se quiere evitar. Un correo anterior a la Fase 8 tiene
+ * `null` aquí y sale como lista vacía.
+ */
+function fichasDeAdjuntos(valor: Prisma.JsonValue | null | undefined): EmailAttachment[] {
+  if (!Array.isArray(valor)) return [];
+  return valor as unknown as EmailAttachment[];
+}
+
+/** Un adjunto listo para mandar al navegador. */
+export interface AttachmentDownload {
+  filename: string;
+  mimeType: string;
+  contenido: Buffer;
+}
+
 /** Una tarea que ese correo ya generó, en su versión corta. */
 export interface EmailTaskSummary {
   id: string;
@@ -307,6 +336,15 @@ export interface EmailDetail extends TriageEmail {
   // sitios donde cambiar su tipo el día que cambie.
   /** ISO 8601, o `null` si el worker todavía no lo ha despachado. */
   processedAt: string | null;
+  /**
+   * Los adjuntos del correo, sin contenido. Cada uno se baja por
+   * `GET /emails/:id/attachments/:attachmentId`.
+   *
+   * Va en el detalle y no en el listado a propósito: la bandeja ya sabe con
+   * `hasAttachments` si pintar el clip, y cargar la lista de las 50 filas de
+   * una página para enseñar un icono sería pagar por lo que no se mira.
+   */
+  attachments: EmailAttachment[];
   /** Las tareas propuestas por la IA que aún no se han convertido. */
   proposedTasks?: ProposedTask[] | null;
   /** Las tareas que ya salieron de este correo, en el orden del tablero. */
@@ -410,6 +448,7 @@ export class EmailsService {
     private readonly classification: EmailClassificationService,
     private readonly gateway: TasksGateway,
     private readonly tags: TagsService,
+    private readonly gmail: GmailService,
   ) {}
 
   /**
@@ -526,6 +565,7 @@ export class EmailsService {
         processedAt: true,
         proposedTasks: true,
         hasAttachments: true,
+        attachments: true,
         tasks: {
           select: { id: true, title: true, status: true, priority: true },
           orderBy: { position: 'asc' },
@@ -558,6 +598,7 @@ export class EmailsService {
       // pueden desaparecer al abrir el correo que los mostraba.
       proposedTaskCount: tareasPropuestas(email.proposedTasks).length,
       hasAttachments: email.hasAttachments,
+      attachments: fichasDeAdjuntos(email.attachments),
       // `null` y no cadena vacía: distingue "este correo no tiene cuerpo
       // guardado" de "el cuerpo está vacío", y así la vista sabe cuándo caer
       // al snippet en vez de enseñar un panel en blanco.
@@ -777,6 +818,65 @@ export class EmailsService {
     }
 
     return { requested: ids.length, updated: movidos.length, skipped };
+  }
+
+  /**
+   * Baja un adjunto de Gmail para que el navegador se lo lleve (Fase 8).
+   *
+   * **El contenido no vive en nuestra base**: se guarda la ficha y el binario se
+   * le pide a Gmail en el momento. Por eso esto necesita el `gmailMessageId`
+   * además del adjunto — un `attachmentId` solo vale para el mensaje del que
+   * salió.
+   *
+   * ⚠️ **Se comprueba que el adjunto sea de ese correo, no solo que el correo
+   * sea del usuario.** Sin esa segunda comprobación, la ruta se convierte en un
+   * proxy con el que bajar **cualquier** adjunto del buzón sabiendo su id, sin
+   * pasar por la bandeja: el `userId` protege el correo, pero es la lista de
+   * fichas la que dice qué adjuntos pertenecen a ese correo.
+   *
+   * El nombre y el tipo salen de **nuestra** ficha, no de lo que conteste Gmail:
+   * es lo que la persona vio en la lista antes de pulsar.
+   *
+   * Respuestas: 200 con el archivo · 404 si el correo no es suyo, no existe, o
+   * el adjunto no es de ese correo.
+   */
+  async downloadAttachment(
+    userId: string,
+    emailId: string,
+    attachmentId: string,
+  ): Promise<AttachmentDownload> {
+    const email = await this.prisma.email.findFirst({
+      where: { id: emailId, userId },
+      select: { gmailMessageId: true, attachments: true },
+    });
+
+    if (!email) {
+      throw new NotFoundException(`No existe el correo ${emailId}`);
+    }
+
+    const ficha = fichasDeAdjuntos(email.attachments).find(
+      (a) => a.attachmentId === attachmentId,
+    );
+
+    if (!ficha) {
+      // 404 y no 403: decir «ese adjunto existe pero no es de este correo»
+      // confirmaría su existencia a quien esté probando ids.
+      throw new NotFoundException(
+        `El correo ${emailId} no tiene un adjunto ${attachmentId}`,
+      );
+    }
+
+    const contenido = await this.gmail.fetchAttachment(
+      userId,
+      email.gmailMessageId,
+      attachmentId,
+    );
+
+    this.logger.log(
+      `Adjunto ${ficha.filename} (${contenido.length} B) servido desde el correo ${emailId}`,
+    );
+
+    return { filename: ficha.filename, mimeType: ficha.mimeType, contenido };
   }
 
   /**

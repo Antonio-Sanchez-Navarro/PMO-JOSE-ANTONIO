@@ -10,6 +10,7 @@ import {
   esperaSugeridaMs,
 } from '../../common/anthropic/anthropic-client';
 import { BANCOS, EMPRESAS, canonico } from '@pmo/shared';
+import { FormaDeBloque } from './attachment-budget';
 
 export interface ExtractedTask {
   title: string;
@@ -43,6 +44,20 @@ export interface EmailAnalysisResult {
    */
   company: string | null;
   bank: string | null;
+}
+
+/** Un adjunto ya descargado y listo para acompañar al correo. */
+export interface AdjuntoParaElModelo {
+  filename: string;
+  mimeType: string;
+  forma: FormaDeBloque;
+  contenido: Buffer;
+}
+
+/** Un adjunto que existe pero que el modelo NO va a ver, y por qué. */
+export interface AdjuntoAusente {
+  filename: string;
+  motivo: string;
 }
 
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
@@ -246,15 +261,56 @@ export class AiService {
     subject: string,
     bodyText: string,
     receivedAt: Date,
-    options?: { hasAttachments?: boolean; threadContext?: string },
+    options?: {
+      hasAttachments?: boolean;
+      threadContext?: string;
+      /** Adjuntos ya descargados que acompañan al correo (Fase 8). */
+      adjuntos?: AdjuntoParaElModelo[];
+      /** Adjuntos que existen pero no viajan, con el motivo. */
+      ausentes?: AdjuntoAusente[];
+    },
   ): Promise<EmailAnalysisResult> {
     const fecha = receivedAt.toISOString().slice(0, 10);
     const hasAttachments = options?.hasAttachments ?? false;
     const threadContext = options?.threadContext;
+    const adjuntos = options?.adjuntos ?? [];
+    const ausentes = options?.ausentes ?? [];
 
+    // ─── Lo que el modelo ve y lo que no ────────────────────────────────
+    //
+    // Hasta la Fase 8 esto decia siempre «NO puedes ver su contenido», porque
+    // era verdad: no se le mandaba ninguno. Ahora depende, y **el aviso tiene
+    // que seguir al hecho**, no al reves.
+    //
+    // Un correo puede traer tres PDF de los que se manden dos y se quede fuera
+    // uno de 20 MB. Quitar el aviso del todo haria que el modelo escribiera
+    // «segun el documento adjunto...» sobre el que no vio; dejarlo puesto
+    // cuando si lo ve le prohibe usar justo lo que acabamos de pagar por
+    // mandarle. Por eso se nombran los ausentes uno a uno.
     let systemPrompt = SYSTEM_PROMPT;
-    if (hasAttachments) {
-      systemPrompt += '\n\nIMPORTANTE: El correo contiene archivos adjuntos pero NO puedes ver su contenido. NUNCA propongas una tarea que implique leer, revisar o procesar un documento adjunto directamente, ya que no tienes acceso a él.';
+
+    if (adjuntos.length > 0) {
+      systemPrompt +=
+        '\n\nADJUNTOS: este correo trae archivos y te los paso junto al texto. ' +
+        'Leelos y extrae de ellos las tareas, fechas e importes que encuentres, ' +
+        'igual que del cuerpo. Puedes referirte a ellos por su nombre.';
+    }
+
+    if (ausentes.length > 0) {
+      const lista = ausentes.map((a) => `- ${a.filename} (${a.motivo})`).join('\n');
+      systemPrompt +=
+        '\n\nADJUNTOS QUE NO PUEDES VER: el correo trae ademas estos archivos, ' +
+        'cuyo contenido NO te he pasado:\n' +
+        lista +
+        '\nNUNCA afirmes nada sobre lo que contienen ni propongas una tarea que ' +
+        'dependa de haberlos leido. Si el correo da a entender que lo importante ' +
+        'esta en uno de ellos, proponlo como una tarea de revisarlo a mano.';
+    } else if (hasAttachments && adjuntos.length === 0) {
+      // El caso de siempre, y el unico en el que el aviso de antes valia entero.
+      systemPrompt +=
+        '\n\nIMPORTANTE: El correo contiene archivos adjuntos pero NO puedes ver su ' +
+        'contenido. NUNCA propongas una tarea que implique leer, revisar o procesar un ' +
+        'documento adjunto directamente, ya que no tienes acceso a el.';
     }
 
     let userContent = `Fecha de recepción: ${fecha}\nSubject: ${subject}\n\n`;
@@ -263,6 +319,37 @@ export class AiService {
       userContent += `NUEVO MENSAJE (Analiza SOLO esto y no repitas tareas del historial):\n`;
     }
     userContent += `Body:\n${bodyText}`;
+
+    // ─── El texto va primero, los archivos detras ───────────────────────
+    //
+    // El orden importa: el cuerpo del correo es lo que dice **para que** sirve
+    // el adjunto, y leerlo antes le da al modelo el marco con el que mirar el
+    // documento. Al reves, el PDF llega sin contexto.
+    const contenido: Anthropic.ContentBlockParam[] = [{ type: 'text', text: userContent }];
+
+    for (const adjunto of adjuntos) {
+      const datos = adjunto.contenido.toString('base64');
+
+      if (adjunto.forma === 'document') {
+        contenido.push({
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: datos },
+          // El nombre viaja con el archivo para que el modelo pueda citarlo y
+          // para que una tarea diga «revisar Cotizacion-obra.pdf» en vez de
+          // «revisar el documento adjunto».
+          title: adjunto.filename,
+        });
+      } else {
+        contenido.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: adjunto.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+            data: datos,
+          },
+        });
+      }
+    }
 
     let response: Anthropic.Message;
     try {
@@ -273,7 +360,7 @@ export class AiService {
         messages: [
           {
             role: 'user',
-            content: userContent,
+            content: contenido,
           },
         ],
         tools: [EXTRACTION_TOOL],

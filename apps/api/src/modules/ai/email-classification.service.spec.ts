@@ -2,6 +2,8 @@ import { TaskSource } from '@prisma/client';
 import { EmailClassificationService } from './email-classification.service';
 import { AiService } from './ai.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { GmailService } from '../gmail/gmail.service';
+import { GmailQuotaError } from '../gmail/gmail-quota';
 import {
   emailConFechaRelativa,
   emailNoAccionable,
@@ -15,6 +17,8 @@ import {
 describe('EmailClassificationService', () => {
   let service: EmailClassificationService;
   let ai: { analyzeEmail: jest.Mock };
+  /** Solo se toca cuando el correo trae adjuntos. */
+  let gmail: { fetchAttachment: jest.Mock };
   let prisma: any;
   let tx: any;
 
@@ -47,8 +51,16 @@ describe('EmailClassificationService', () => {
    */
   const propuestas = () => tx.email.update.mock.calls[0][0].data.proposedTasks;
 
-  /** El cuarto argumento de `analyzeEmail`, nuevo en la Fase 6. */
-  const sinHiloNiAdjuntos = { hasAttachments: false, threadContext: undefined };
+  /**
+   * El cuarto argumento de `analyzeEmail`, nuevo en la Fase 6 y ampliado en la
+   * Fase 8 con los adjuntos que viajan y los que no.
+   */
+  const sinHiloNiAdjuntos = {
+    hasAttachments: false,
+    threadContext: undefined,
+    adjuntos: [],
+    ausentes: [],
+  };
 
   beforeEach(() => {
     tx = {
@@ -65,11 +77,13 @@ describe('EmailClassificationService', () => {
       },
       $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
+    gmail = { fetchAttachment: jest.fn().mockResolvedValue(Buffer.from('bytes')) };
     ai = { analyzeEmail: jest.fn().mockResolvedValue(analisisConTarea) };
 
     service = new EmailClassificationService(
       ai as unknown as AiService,
       prisma as unknown as PrismaService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -197,7 +211,7 @@ describe('EmailClassificationService', () => {
       expect.any(String),
       expect.any(String),
       expect.any(Date),
-      { hasAttachments: true, threadContext: 'Mensaje anterior del hilo' },
+      expect.objectContaining({ hasAttachments: true, threadContext: 'Mensaje anterior del hilo' }),
     );
   });
 
@@ -498,6 +512,8 @@ describe('EmailClassificationService', () => {
 describe('EmailClassificationService — prefijo de contexto en los títulos', () => {
   let service: EmailClassificationService;
   let ai: { analyzeEmail: jest.Mock };
+  /** Solo se toca cuando el correo trae adjuntos. */
+  let gmail: { fetchAttachment: jest.Mock };
   let prisma: any;
   let tx: any;
 
@@ -533,11 +549,13 @@ describe('EmailClassificationService — prefijo de contexto en los títulos', (
       },
       $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
+    gmail = { fetchAttachment: jest.fn().mockResolvedValue(Buffer.from('bytes')) };
     ai = { analyzeEmail: jest.fn().mockResolvedValue(analisis({})) };
 
     service = new EmailClassificationService(
       ai as unknown as AiService,
       prisma as unknown as PrismaService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -583,5 +601,173 @@ describe('EmailClassificationService — prefijo de contexto en los títulos', (
       '[Astrid R. - Citrotarte 1/2] Solicitar inmueble en garantía',
       '[Astrid R. - Citrotarte 2/2] Confirmar tipo de cambio',
     ]);
+  });
+});
+
+describe('EmailClassificationService — adjuntos para el modelo (Fase 8)', () => {
+  let service: EmailClassificationService;
+  let prisma: any;
+  let ai: { analyzeEmail: jest.Mock };
+  let gmail: { fetchAttachment: jest.Mock };
+  let tx: any;
+
+  const ficha = (extra: Record<string, unknown> = {}) => ({
+    attachmentId: 'att-1',
+    filename: 'contrato.pdf',
+    mimeType: 'application/pdf',
+    size: 50_000,
+    inline: false,
+    ...extra,
+  });
+
+  /** El correo que lee `analyze`, con las fichas que pida cada prueba. */
+  const conAdjuntos = (attachments: unknown) => ({
+    ...emailConFechaRelativa,
+    hasAttachments: true,
+    gmailMessageId: 'gmail-msg-1',
+    attachments,
+  });
+
+  beforeEach(() => {
+    tx = {
+      task: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({}),
+      },
+      email: { update: jest.fn().mockResolvedValue({}) },
+    };
+    prisma = {
+      email: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(conAdjuntos([ficha()])),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    };
+    ai = {
+      analyzeEmail: jest.fn().mockResolvedValue({
+        isActionable: false,
+        category: 'OTHER',
+        aiConfidence: 0.5,
+        tasks: [],
+        senderName: null,
+        project: null,
+        company: null,
+        bank: null,
+      }),
+    };
+    gmail = { fetchAttachment: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4 de mentira')) };
+
+    service = new EmailClassificationService(
+      ai as unknown as AiService,
+      prisma as unknown as PrismaService,
+      gmail as unknown as GmailService,
+    );
+  });
+
+  const clasificar = () =>
+    service.classifyAndPersist(emailConFechaRelativa.id, {
+      replaceExisting: true,
+      forceActionable: false,
+    });
+
+  it('baja el adjunto y se lo pasa al modelo', async () => {
+    await clasificar();
+
+    expect(gmail.fetchAttachment).toHaveBeenCalledWith(
+      emailConFechaRelativa.userId,
+      'gmail-msg-1',
+      'att-1',
+    );
+
+    const opciones = ai.analyzeEmail.mock.calls[0][3];
+    expect(opciones.adjuntos).toHaveLength(1);
+    expect(opciones.adjuntos[0]).toEqual(
+      expect.objectContaining({ filename: 'contrato.pdf', forma: 'document' }),
+    );
+    expect(opciones.ausentes).toEqual([]);
+  });
+
+  it('un correo sin fichas no gasta ni una llamada a Gmail', async () => {
+    // Es el caso mayoritario: la epica no puede costar una peticion por correo.
+    prisma.email.findUniqueOrThrow.mockResolvedValue(conAdjuntos(null));
+
+    await clasificar();
+
+    expect(gmail.fetchAttachment).not.toHaveBeenCalled();
+  });
+
+  describe('un adjunto que falla no puede tumbar la clasificación', () => {
+    it('si no se deja bajar, se clasifica igual y se dice que falta', async () => {
+      // Una excepcion que suba aqui es un correo que no se clasifica en
+      // absoluto, y encima uno que el worker reintentara hasta cansarse.
+      gmail.fetchAttachment.mockRejectedValue(new Error('Gmail dijo que no'));
+
+      await expect(clasificar()).resolves.toBeDefined();
+
+      const opciones = ai.analyzeEmail.mock.calls[0][3];
+      expect(opciones.adjuntos).toEqual([]);
+      expect(opciones.ausentes).toEqual([
+        { filename: 'contrato.pdf', motivo: 'no se pudo descargar' },
+      ]);
+    });
+
+    it('el que falla no arrastra al que sí bajó', async () => {
+      prisma.email.findUniqueOrThrow.mockResolvedValue(
+        conAdjuntos([
+          ficha({ attachmentId: 'a', filename: 'bueno.pdf' }),
+          ficha({ attachmentId: 'b', filename: 'roto.pdf' }),
+        ]),
+      );
+      gmail.fetchAttachment.mockImplementation((_u: string, _m: string, id: string) =>
+        id === 'b' ? Promise.reject(new Error('no')) : Promise.resolve(Buffer.from('ok')),
+      );
+
+      await clasificar();
+
+      const opciones = ai.analyzeEmail.mock.calls[0][3];
+      expect(opciones.adjuntos.map((a: { filename: string }) => a.filename)).toEqual([
+        'bueno.pdf',
+      ]);
+      expect(opciones.ausentes[0].filename).toBe('roto.pdf');
+    });
+
+    it('pero la cuota SÍ sube: no es este adjunto, es que Google paró', async () => {
+      // Seguir bajando los otros cuatro solo hunde mas el cubo. Sube para que
+      // el worker frene la cola, igual que hace la ingesta.
+      gmail.fetchAttachment.mockRejectedValue(new GmailQuotaError({ code: 429 }, 'bajando'));
+
+      await expect(clasificar()).rejects.toBeInstanceOf(GmailQuotaError);
+    });
+  });
+
+  it('lo incrustado no llega al modelo: es el logo de la firma', async () => {
+    prisma.email.findUniqueOrThrow.mockResolvedValue(
+      conAdjuntos([ficha({ mimeType: 'image/png', filename: 'logo.png', inline: true })]),
+    );
+
+    await clasificar();
+
+    expect(gmail.fetchAttachment).not.toHaveBeenCalled();
+    const opciones = ai.analyzeEmail.mock.calls[0][3];
+    expect(opciones.adjuntos).toEqual([]);
+    expect(opciones.ausentes).toEqual([]);
+  });
+
+  it('lo que no cabe se nombra como ausente sin llegar a bajarse', async () => {
+    prisma.email.findUniqueOrThrow.mockResolvedValue(
+      conAdjuntos([ficha({ filename: 'planos.pdf', size: 30 * 1024 * 1024 })]),
+    );
+
+    await clasificar();
+
+    expect(gmail.fetchAttachment).not.toHaveBeenCalled();
+    expect(ai.analyzeEmail.mock.calls[0][3].ausentes[0].filename).toBe('planos.pdf');
+  });
+
+  it('una fila corrupta en la columna no rompe nada', async () => {
+    prisma.email.findUniqueOrThrow.mockResolvedValue(conAdjuntos(['no soy una ficha', 42]));
+
+    await expect(clasificar()).resolves.toBeDefined();
+    expect(gmail.fetchAttachment).not.toHaveBeenCalled();
   });
 });

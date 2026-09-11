@@ -169,6 +169,120 @@ describe('AiService', () => {
     });
   });
 
+
+  /**
+   * Fase 8 · los adjuntos que el modelo ve, y el aviso sobre los que no.
+   *
+   * Hasta ahora el prompt decia siempre «NO puedes ver su contenido», y era
+   * verdad. Ahora depende, y **el aviso tiene que seguir al hecho**: quitarlo
+   * del todo hace que el modelo escriba «segun el documento adjunto...» sobre
+   * uno que no vio; dejarlo puesto cuando si lo ve le prohibe usar justo lo que
+   * acabamos de pagar por mandarle.
+   */
+  describe('adjuntos', () => {
+    const pdf = {
+      filename: 'contrato.pdf',
+      mimeType: 'application/pdf',
+      forma: 'document' as const,
+      contenido: Buffer.from('%PDF-1.4'),
+    };
+
+    const analizarCon = (opciones: Record<string, unknown>) =>
+      service.analyzeEmail(
+        emailConFechaRelativa.subject!,
+        emailConFechaRelativa.bodyText!,
+        emailConFechaRelativa.receivedAt,
+        opciones,
+      );
+
+    beforeEach(() => {
+      create.mockResolvedValue(comoRespuestaDeHerramienta(R.respuestaAccionable));
+    });
+
+    it('el texto va primero y los archivos detras', async () => {
+      // El cuerpo dice PARA QUE sirve el adjunto: leerlo antes le da al modelo
+      // el marco con el que mirar el documento. Al reves, el PDF llega solo.
+      await analizarCon({ hasAttachments: true, adjuntos: [pdf] });
+
+      const bloques = create.mock.calls[0][0].messages[0].content;
+      expect(bloques[0].type).toBe('text');
+      expect(bloques[1].type).toBe('document');
+      expect(bloques[1].source.media_type).toBe('application/pdf');
+      expect(bloques[1].title).toBe('contrato.pdf');
+    });
+
+    it('una imagen viaja como bloque image con su tipo', async () => {
+      await analizarCon({
+        hasAttachments: true,
+        adjuntos: [{ ...pdf, filename: 'plano.png', mimeType: 'image/png', forma: 'image' }],
+      });
+
+      const bloques = create.mock.calls[0][0].messages[0].content;
+      expect(bloques[1]).toEqual(
+        expect.objectContaining({
+          type: 'image',
+          source: expect.objectContaining({ media_type: 'image/png' }),
+        }),
+      );
+    });
+
+    it('el contenido viaja en base64', async () => {
+      await analizarCon({ hasAttachments: true, adjuntos: [pdf] });
+
+      const bloque = create.mock.calls[0][0].messages[0].content[1];
+      expect(bloque.source.data).toBe(Buffer.from('%PDF-1.4').toString('base64'));
+    });
+
+    it('con adjuntos mandados, el prompt le dice que los lea', async () => {
+      await analizarCon({ hasAttachments: true, adjuntos: [pdf] });
+
+      const system = create.mock.calls[0][0].system as string;
+      expect(system).toContain('ADJUNTOS');
+      expect(system).not.toContain('NO puedes ver su contenido');
+    });
+
+    it('con adjuntos ausentes, los nombra uno a uno', async () => {
+      // Es lo que impide que el modelo hable de lo que no ha visto.
+      await analizarCon({
+        hasAttachments: true,
+        adjuntos: [pdf],
+        ausentes: [{ filename: 'planos.pdf', motivo: 'demasiado grande (20.0 MB)' }],
+      });
+
+      const system = create.mock.calls[0][0].system as string;
+      expect(system).toContain('planos.pdf');
+      expect(system).toContain('demasiado grande');
+      expect(system).toContain('ADJUNTOS QUE NO PUEDES VER');
+      // Y la orden explicita: nombrarlos no basta si no se le prohibe hablar
+      // de lo que contienen.
+      expect(system).toContain('NUNCA afirmes');
+    });
+
+    it('si no se mando ninguno, sigue el aviso de siempre', async () => {
+      // El unico caso en el que el texto anterior valia entero.
+      await analizarCon({ hasAttachments: true, adjuntos: [], ausentes: [] });
+
+      const system = create.mock.calls[0][0].system as string;
+      expect(system).toContain('NO puedes ver su contenido');
+    });
+
+    it('sin adjuntos, el prompt no habla de adjuntos', async () => {
+      await analizarCon({ hasAttachments: false });
+
+      const system = create.mock.calls[0][0].system as string;
+      expect(system).not.toContain('ADJUNTOS');
+      expect(system).not.toContain('adjuntos pero NO puedes ver');
+    });
+
+    it('sin opciones se comporta como siempre: un solo bloque de texto', async () => {
+      await analizarCon({});
+
+      const bloques = create.mock.calls[0][0].messages[0].content;
+      expect(bloques).toHaveLength(1);
+      expect(bloques[0].type).toBe('text');
+    });
+  });
+
   describe('extracción de dueDate', () => {
     it('convierte la fecha del modelo en Date', async () => {
       create.mockResolvedValue(comoRespuestaDeHerramienta(R.respuestaAccionable));
@@ -197,8 +311,14 @@ describe('AiService', () => {
       create.mockResolvedValue(comoRespuestaDeHerramienta(R.respuestaAccionable));
       await analizar(service);
 
+      // Desde la Fase 8 el contenido es una lista de bloques —el texto y, si
+      // los hay, los adjuntos— y no una cadena suelta: el ancla vive en el
+      // primer bloque, que es el de texto y va siempre delante.
       const enviado = create.mock.calls[0][0];
-      expect(enviado.messages[0].content).toContain('Fecha de recepción: 2026-07-22');
+      expect(enviado.messages[0].content[0]).toEqual(
+        expect.objectContaining({ type: 'text' }),
+      );
+      expect(enviado.messages[0].content[0].text).toContain('Fecha de recepción: 2026-07-22');
     });
   });
 

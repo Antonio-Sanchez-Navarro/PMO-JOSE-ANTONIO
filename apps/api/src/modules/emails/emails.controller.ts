@@ -2,16 +2,19 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Headers,
   HttpCode,
   Param,
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   BulkDismissResult,
   ClassificationResult,
@@ -26,6 +29,7 @@ import { QueryEmailsDto } from './dto/query-emails.dto';
 import { QueryThreadsDto } from './dto/query-threads.dto';
 import { BulkDismissDto } from './dto/bulk-dismiss.dto';
 import { UpdateEmailStatusDto } from './dto/update-email-status.dto';
+import { contentDisposition, contentTypeSeguro } from './attachment-headers';
 import { SOCKET_ID_HEADER } from '../tasks/tasks.gateway';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -133,6 +137,53 @@ export class EmailsController {
     @Param('id') id: string,
   ): Promise<EmailDetail> {
     return this.emailsService.findOne(user.userId, id);
+  }
+
+  /**
+   * Baja un adjunto y se lo entrega al navegador (Fase 8).
+   *
+   * El contenido **no está en nuestra base**: se guarda la ficha —nombre, tipo,
+   * tamaño— y el binario se le pide a Gmail en el momento de pulsar. Un correo
+   * con tres PDF de 8 MB nos cuesta tres fichas de doscientos bytes.
+   *
+   * `attachmentId` es el de la lista que trae `GET /emails/:id`, y solo vale
+   * para **ese** correo: Gmail los emite por mensaje. Por eso la ruta cuelga
+   * del correo en vez de ser `/attachments/:id` a secas.
+   *
+   * **Se comprueba que el adjunto sea de ese correo**, no solo que el correo sea
+   * del usuario. Sin eso, la ruta serviría para bajar cualquier adjunto del
+   * buzón conociendo su id, saltándose la bandeja.
+   *
+   * Respuestas: 200 con el archivo · 404 si el correo no es suyo, no existe o el
+   * adjunto no es de ese correo · 401 sin cookie.
+   *
+   * Se responde con `@Res()` porque hay que escribir cabeceras que dependen del
+   * archivo —el tipo y el nombre— y eso un `return` no lo puede hacer. El
+   * `Content-Type` se recalcula sobre lo que declaró quien mandó el correo, y
+   * los tipos que no se pueden enseñar sin riesgo salen como descarga: un
+   * `text/html` servido en línea se ejecutaría en nuestro origen, con la cookie
+   * de sesión al alcance.
+   */
+  @Get(':id/attachments/:attachmentId')
+  // Sin caché compartida: es contenido privado de un buzón y pasa por una
+  // cookie de sesión. `private` deja que el navegador lo reutilice al volver
+  // atrás sin que ningún intermediario lo guarde.
+  @Header('Cache-Control', 'private, max-age=0, no-store')
+  // Evita que el navegador adivine el tipo y acabe ejecutando como HTML algo
+  // que declaramos de otra forma.
+  @Header('X-Content-Type-Options', 'nosniff')
+  async downloadAttachment(
+    @CurrentUser() user: CurrentUserContext,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const adjunto = await this.emailsService.downloadAttachment(user.userId, id, attachmentId);
+
+    res.setHeader('Content-Type', contentTypeSeguro(adjunto.mimeType));
+    res.setHeader('Content-Disposition', contentDisposition(adjunto.filename, adjunto.mimeType));
+    res.setHeader('Content-Length', adjunto.contenido.length);
+    res.send(adjunto.contenido);
   }
 
   /**

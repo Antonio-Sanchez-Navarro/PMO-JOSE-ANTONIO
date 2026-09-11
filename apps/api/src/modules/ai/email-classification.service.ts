@@ -4,6 +4,15 @@ import { AiService } from './ai.service';
 import { adjustPriority } from './priority.rules';
 import { senderFromHeader, withContextPrefix } from './title.prefix';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { GmailService } from '../gmail/gmail.service';
+import { GmailQuotaError } from '../gmail/gmail-quota';
+import { describirError } from '../../common/observability/describir-error';
+import {
+  AdjuntoCandidato,
+  MAX_BYTES_POR_ADJUNTO,
+  repartirAdjuntos,
+} from './attachment-budget';
+import type { AdjuntoAusente, AdjuntoParaElModelo } from './ai.service';
 
 /**
  * Cuántos mensajes anteriores del hilo entran como contexto, y cuánto texto
@@ -111,6 +120,21 @@ export function aJsonDeBorradores(tasks: TaskDraft[]): Prisma.InputJsonValue {
   }));
 }
 
+/**
+ * Lee la columna `attachments` como lo que es: fichas, o nada.
+ *
+ * Mismo criterio que `aJsonDeBorradores` en sentido contrario: una columna
+ * `Json` puede traer cualquier cosa, y un `as` a ciegas convertiria una fila
+ * rara en un fallo varias capas mas abajo. Un correo anterior a la Fase 8 tiene
+ * `null` aqui y sale como lista vacia.
+ */
+function fichasDeAdjuntos(valor: Prisma.JsonValue | null | undefined): AdjuntoCandidato[] {
+  if (!Array.isArray(valor)) return [];
+  return (valor as unknown as AdjuntoCandidato[]).filter(
+    (f) => typeof f?.attachmentId === "string",
+  );
+}
+
 /** Resultado del análisis sin tocar la base de datos. */
 export interface ClassificationDraft {
   emailId: string;
@@ -141,7 +165,73 @@ export class EmailClassificationService {
   constructor(
     private readonly ai: AiService,
     private readonly prisma: PrismaService,
+    private readonly gmail: GmailService,
   ) {}
+
+  /**
+   * Baja los adjuntos que el modelo va a poder mirar (Fase 8).
+   *
+   * **Nada de lo que pase aquí puede tumbar la clasificación.** Un adjunto que
+   * no se deja bajar es un correo que se clasifica un poco peor; una excepción
+   * que suba es un correo que no se clasifica en absoluto, y encima uno que el
+   * worker reintentará hasta cansarse. Por eso cada descarga va en su propio
+   * `try` y lo que falla se convierte en un ausente **con nombre**: el prompt
+   * puede decirle al modelo qué no vio, que es lo que evita que se lo invente.
+   *
+   * La cuota sí sube: un `GmailQuotaError` no es «este adjunto falla», es que
+   * Google dejó de atendernos, y seguir bajando los otros cuatro solo hunde más
+   * el cubo. Se deja pasar para que el worker frene la cola, igual que hace la
+   * ingesta.
+   */
+  private async descargarAdjuntos(
+    userId: string,
+    gmailMessageId: string,
+    fichas: AdjuntoCandidato[],
+  ): Promise<{ adjuntos: AdjuntoParaElModelo[]; ausentes: AdjuntoAusente[] }> {
+    const { elegidos, descartados } = repartirAdjuntos(fichas);
+
+    const adjuntos: AdjuntoParaElModelo[] = [];
+    const ausentes: AdjuntoAusente[] = [...descartados];
+
+    for (const { candidato, forma } of elegidos) {
+      try {
+        const contenido = await this.gmail.fetchAttachment(
+          userId,
+          gmailMessageId,
+          candidato.attachmentId,
+        );
+
+        // Gmail declara el tamaño en la ficha, pero lo que cuenta para el
+        // límite de Anthropic es lo que pesa de verdad. Se comprueba después de
+        // bajarlo porque antes no se sabe, y mandar de más aquí no da un aviso:
+        // da un 400 que tira la clasificación entera.
+        if (contenido.length > MAX_BYTES_POR_ADJUNTO) {
+          ausentes.push({
+            filename: candidato.filename,
+            motivo: 'demasiado grande al descargarlo',
+          });
+          continue;
+        }
+
+        adjuntos.push({
+          filename: candidato.filename,
+          mimeType: candidato.mimeType,
+          forma,
+          contenido,
+        });
+      } catch (err) {
+        if (err instanceof GmailQuotaError) throw err;
+
+        this.logger.warn(
+          `No se pudo bajar el adjunto ${candidato.filename} del mensaje ${gmailMessageId}: ` +
+            `${describirError(err)}. Se clasifica sin él.`,
+        );
+        ausentes.push({ filename: candidato.filename, motivo: 'no se pudo descargar' });
+      }
+    }
+
+    return { adjuntos, ausentes };
+  }
 
   /**
    * Analiza el correo y devuelve lo que propondría, **sin escribir nada**.
@@ -288,6 +378,10 @@ export class EmailClassificationService {
       from: string;
       hasAttachments: boolean;
       threadId: string;
+      /** Hace falta para pedirle los adjuntos a Gmail: son ids por mensaje. */
+      gmailMessageId: string;
+      /** Fichas de los adjuntos. `null` en correos anteriores a la Fase 8. */
+      attachments: Prisma.JsonValue | null;
     },
     forceActionable: boolean,
   ): Promise<ClassificationDraft> {
@@ -298,11 +392,26 @@ export class EmailClassificationService {
 
     const threadContext = await this.buildThreadContext(email);
 
+    // Solo se baja nada si el correo trae fichas. Un correo sin adjuntos no
+    // gasta ni una llamada a Gmail, que es el caso mayoritario.
+    const fichas = fichasDeAdjuntos(email.attachments);
+    const { adjuntos, ausentes } =
+      fichas.length > 0
+        ? await this.descargarAdjuntos(email.userId, email.gmailMessageId, fichas)
+        : { adjuntos: [], ausentes: [] };
+
+    if (adjuntos.length > 0 || ausentes.length > 0) {
+      this.logger.log(
+        `Correo ${email.id}: ${adjuntos.length} adjunto(s) al modelo, ` +
+          `${ausentes.length} fuera (${ausentes.map((a) => a.motivo).join('; ') || 'ninguno'})`,
+      );
+    }
+
     const analysis = await this.ai.analyzeEmail(
       email.subject || '(Sin Asunto)',
       textToAnalyze,
       email.receivedAt,
-      { hasAttachments: email.hasAttachments, threadContext }
+      { hasAttachments: email.hasAttachments, threadContext, adjuntos, ausentes }
     );
 
     const isActionable = analysis.isActionable || forceActionable;

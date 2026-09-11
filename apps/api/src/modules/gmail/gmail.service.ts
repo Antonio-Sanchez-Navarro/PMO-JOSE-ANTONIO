@@ -4,6 +4,7 @@ import { google, gmail_v1 } from 'googleapis';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { AuthService } from '../auth/auth.service';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { describirError, stackDe } from '../../common/observability/describir-error';
 import { AlertService } from '../../common/alerts/alert.service';
@@ -22,6 +23,39 @@ export interface ResultadoDeWatch {
   motivo?: string;
 }
 
+/**
+ * Un archivo adjunto, **sin su contenido**.
+ *
+ * Lo que se guarda es la ficha: con `attachmentId` se pide el binario a Gmail
+ * cuando alguien lo necesita —al pulsar «descargar» o al clasificar— y mientras
+ * tanto no ocupa nada en nuestra base. Un correo con tres PDF de 8 MB son tres
+ * fichas de doscientos bytes.
+ *
+ * ⚠️ **`attachmentId` no es estable entre mensajes ni para siempre.** Es válido
+ * para el `messageId` del que salió, así que la descarga siempre necesita los
+ * dos — y por eso el endpoint de descarga cuelga del correo y no es una ruta
+ * suelta de adjuntos.
+ */
+export interface AttachmentMeta {
+  /** Lo que hay que darle a `messages.attachments.get` junto al id del mensaje. */
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  /** Tamaño en bytes que declara Gmail. */
+  size: number;
+  /**
+   * Va incrustado en el cuerpo (logo de la firma, imagen citada) en vez de ser
+   * un archivo que alguien adjuntó a propósito.
+   *
+   * **Se distingue porque cuesta dinero.** Casi todas las firmas corporativas
+   * llevan un logo, y sin esta marca la clasificación le mandaría a Claude el
+   * logotipo de la empresa en **cada correo**, pagando tokens de imagen por
+   * mirar un PNG de 4 KB que no dice nada. También ensucia la lista de
+   * descargas con archivos que la persona nunca adjuntó.
+   */
+  inline: boolean;
+}
+
 export interface EmailSnippet {
   id: string;
   threadId: string;
@@ -35,6 +69,14 @@ export interface EmailSnippet {
   bodyText?: string;
   /** Indica si el correo trae algún archivo adjunto. */
   hasAttachments: boolean;
+  /**
+   * Fichas de los adjuntos, sin contenido. Vacío si no hay ninguno.
+   *
+   * `hasAttachments` se queda porque lo leen la bandeja y el prompt desde el
+   * Sprint 3, y porque responde a otra pregunta: «¿enseño el clip?» no necesita
+   * cargar la lista.
+   */
+  attachments: AttachmentMeta[];
 }
 
 export interface SyncResult {
@@ -509,7 +551,8 @@ export class GmailService {
     }
 
     const allParts = this.collectParts(message.payload);
-    const hasAttachments = allParts.some((p) => p.body?.attachmentId != null);
+    const attachments = this.collectAttachments(allParts);
+    const hasAttachments = attachments.length > 0;
 
     return {
       id: message.id!,
@@ -521,7 +564,82 @@ export class GmailService {
       labels: message.labelIds ?? [],
       bodyText: bodyText || undefined,
       hasAttachments,
+      attachments,
     };
+  }
+
+  /**
+   * Las fichas de los adjuntos de un mensaje ya descargado.
+   *
+   * ⚠️ **Solo sirve con `format: 'full'`.** Con `'metadata'` Gmail no manda el
+   * árbol MIME, así que esto devuelve `[]` — que es correcto para una lista
+   * pero no significa «este correo no tiene adjuntos». Los dos sitios que
+   * guardan en la base piden `'full'`.
+   */
+  private collectAttachments(parts: gmail_v1.Schema$MessagePart[]): AttachmentMeta[] {
+    const fichas: AttachmentMeta[] = [];
+
+    for (const parte of parts) {
+      const attachmentId = parte.body?.attachmentId;
+      if (!attachmentId) continue;
+
+      const cabeceras = parte.headers ?? [];
+      const cabecera = (nombre: string) =>
+        cabeceras.find((h) => h.name?.toLowerCase() === nombre)?.value ?? '';
+
+      // Incrustado si el propio correo lo dice (`inline`) o si tiene un
+      // `Content-ID` al que apunta el HTML del cuerpo. Se miran los dos porque
+      // no todos los clientes de correo escriben los dos.
+      const disposicion = cabecera('content-disposition').toLowerCase();
+      const inline = disposicion.startsWith('inline') || cabecera('content-id') !== '';
+
+      fichas.push({
+        attachmentId,
+        // Sin nombre no es descargable de forma util; se le pone uno antes que
+        // enseñar una fila en blanco en la lista de adjuntos.
+        filename: parte.filename || '(sin nombre)',
+        mimeType: parte.mimeType || 'application/octet-stream',
+        size: parte.body?.size ?? 0,
+        inline,
+      });
+    }
+
+    return fichas;
+  }
+
+  /**
+   * Baja el contenido de un adjunto, ya decodificado.
+   *
+   * Lo usan la descarga desde el frontend y la lectura por IA. Devuelve el
+   * binario y no el base64url de Gmail porque los dos consumidores quieren
+   * bytes: uno para mandarlos al navegador y otro para volver a codificarlos
+   * como bloque de Anthropic.
+   *
+   * La cuota se reconoce igual que en `fetchMessages` —un 429 aquí no es «este
+   * adjunto falla», es «Google dejó de atendernos»— y se relanza envuelta para
+   * que quien la reciba pueda parar en vez de insistir.
+   */
+  async fetchAttachment(
+    userId: string,
+    gmailMessageId: string,
+    attachmentId: string,
+  ): Promise<Buffer> {
+    const gmail = await this.getGmailClient(userId);
+
+    try {
+      const res = await gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId: gmailMessageId,
+        id: attachmentId,
+      });
+
+      return Buffer.from(res.data.data ?? '', 'base64url');
+    } catch (err) {
+      if (esCuotaAgotada(err)) {
+        throw new GmailQuotaError(err, `descargando el adjunto ${attachmentId}`);
+      }
+      throw err;
+    }
   }
 
 
@@ -1045,6 +1163,10 @@ export class GmailService {
             labels: email.labels,
             receivedAt: new Date(email.date),
             hasAttachments: email.hasAttachments,
+            // Se reescriben en cada pasada: un reproceso del mismo tramo trae
+            // las fichas otra vez y son las buenas. Y va como `Json` sin
+            // ceremonia porque `AttachmentMeta` ya es JSON plano.
+            attachments: email.attachments as unknown as Prisma.InputJsonValue,
           },
           create: {
             gmailMessageId: email.id,
@@ -1057,6 +1179,7 @@ export class GmailService {
             receivedAt: new Date(email.date),
             userId,
             hasAttachments: email.hasAttachments,
+            attachments: email.attachments as unknown as Prisma.InputJsonValue,
           },
         });
       } catch (err) {

@@ -153,6 +153,11 @@ model Email {
   proposedTasks     Json?
   /// Indica si el correo trae archivos adjuntos (cuyo contenido no bajamos).
   hasAttachments    Boolean     @default(false)
+  /// Fichas de los adjuntos (`attachmentId`, `filename`, `mimeType`, `size`,
+  /// `inline`), **sin contenido**. El binario se le pide a Gmail cuando hace
+  /// falta: un correo con tres PDF de 8 MB son tres fichas de doscientos bytes.
+  /// `null` = correo ingerido antes de la Fase 8, que no es lo mismo que `[]`.
+  attachments       Json?
   /// Empresa del grupo a la que pertenece el correo (`Urbazepto`, `Tecnoresin`).
   /// Vocabulario cerrado en `@pmo/shared`; `null` = ninguna de las nuestras.
   company           String?

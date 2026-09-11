@@ -5,6 +5,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailClassificationService } from '../ai/email-classification.service';
 import { TasksGateway } from '../tasks/tasks.gateway';
 import { TagsService } from '../tags/tags.service';
+import { GmailService } from '../gmail/gmail.service';
 import { emailNoAccionable, emailSinTexto } from '../ai/__fixtures__/emails.fixture';
 
 const USER_ID = 'user-1';
@@ -25,12 +26,18 @@ let gateway: {
  * espera Prisma.
  */
 let tags: { resolveIds: jest.Mock };
+/**
+ * Gmail solo hace falta para bajar adjuntos; el resto de pruebas no lo tocan.
+ * Por defecto devuelve un binario cualquiera.
+ */
+let gmail: { fetchAttachment: jest.Mock };
 beforeEach(() => {
   gateway = {
     emitTaskCreated: jest.fn(),
     emitEmailUpdated: jest.fn(),
     emitEmailsBulkUpdated: jest.fn(),
   };
+  gmail = { fetchAttachment: jest.fn().mockResolvedValue(Buffer.from('PDF-de-mentira')) };
   tags = {
     resolveIds: jest.fn().mockImplementation((_userId: string, ids?: string[]) =>
       Promise.resolve((ids ?? []).map((id) => ({ id }))),
@@ -96,6 +103,7 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
       classification as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -315,6 +323,7 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
       classification as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -527,6 +536,7 @@ describe('EmailsService — POST /emails/:id/classify', () => {
       classification as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -729,6 +739,7 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -937,6 +948,7 @@ describe('EmailsService — GET /emails/:id (vista de lectura)', () => {
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -1054,6 +1066,7 @@ describe('EmailsService — PATCH /emails/:id/status (Inbox Zero)', () => {
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -1234,6 +1247,7 @@ describe('EmailsService — filtro por estado en el listado', () => {
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -1308,6 +1322,7 @@ describe('EmailsService — aviso a la bandeja al mover un correo', () => {
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -1459,6 +1474,7 @@ describe('EmailsService — GET /emails/threads (bandeja por hilos, Fase 7)', ()
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -1612,6 +1628,7 @@ describe('EmailsService — POST /emails/bulk-dismiss (Fase 7)', () => {
       {} as unknown as EmailClassificationService,
       gateway as unknown as TasksGateway,
       tags as unknown as TagsService,
+      gmail as unknown as GmailService,
     );
   });
 
@@ -1717,5 +1734,99 @@ describe('EmailsService — POST /emails/bulk-dismiss (Fase 7)', () => {
     await service.bulkDismiss(USER_ID, ['fantasma']);
 
     expect(gateway.emitEmailsBulkUpdated).not.toHaveBeenCalled();
+  });
+});
+
+describe('EmailsService — descarga de adjuntos (Fase 8)', () => {
+  let service: EmailsService;
+  let prisma: any;
+
+  const FICHAS = [
+    {
+      attachmentId: 'att-contrato',
+      filename: 'Cotización obra.pdf',
+      mimeType: 'application/pdf',
+      size: 120_000,
+      inline: false,
+    },
+  ];
+
+  beforeEach(() => {
+    prisma = {
+      email: {
+        findFirst: jest.fn().mockResolvedValue({
+          gmailMessageId: 'gmail-msg-1',
+          attachments: FICHAS,
+        }),
+      },
+    };
+
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      {} as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
+      gmail as unknown as GmailService,
+    );
+  });
+
+  it('baja el adjunto de Gmail y devuelve nombre y tipo de NUESTRA ficha', async () => {
+    // El nombre y el tipo salen de lo que la persona vio en la lista antes de
+    // pulsar, no de lo que conteste Gmail en ese momento.
+    const r = await service.downloadAttachment(USER_ID, 'email-1', 'att-contrato');
+
+    expect(r.filename).toBe('Cotización obra.pdf');
+    expect(r.mimeType).toBe('application/pdf');
+    expect(r.contenido).toBeInstanceOf(Buffer);
+    expect(gmail.fetchAttachment).toHaveBeenCalledWith(USER_ID, 'gmail-msg-1', 'att-contrato');
+  });
+
+  it('el contenido NO sale de nuestra base: se le pide a Gmail', async () => {
+    // Es la decision que hace que un correo con tres PDF de 8 MB nos cueste
+    // tres fichas de doscientos bytes.
+    await service.downloadAttachment(USER_ID, 'email-1', 'att-contrato');
+
+    const { select } = prisma.email.findFirst.mock.calls[0][0];
+    expect(select).toEqual({ gmailMessageId: true, attachments: true });
+  });
+
+  describe('lo que impide que esto sea un proxy al buzon entero', () => {
+    it('404 si el correo no es del usuario o no existe', async () => {
+      prisma.email.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.downloadAttachment(USER_ID, 'de-otro', 'att-contrato'),
+      ).rejects.toThrow(NotFoundException);
+      expect(gmail.fetchAttachment).not.toHaveBeenCalled();
+    });
+
+    it('filtra por userId ademas de por id', async () => {
+      await service.downloadAttachment(USER_ID, 'email-1', 'att-contrato');
+
+      expect(prisma.email.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'email-1', userId: USER_ID } }),
+      );
+    });
+
+    it('404 si el adjunto NO es de ese correo, aunque el correo si sea suyo', async () => {
+      // Sin esta comprobacion, la ruta sirve para bajar cualquier adjunto del
+      // buzon sabiendo su id y saltandose la bandeja: el userId protege el
+      // correo, pero es la lista de fichas la que dice que adjuntos son suyos.
+      await expect(
+        service.downloadAttachment(USER_ID, 'email-1', 'att-de-otro-correo'),
+      ).rejects.toThrow(NotFoundException);
+      expect(gmail.fetchAttachment).not.toHaveBeenCalled();
+    });
+
+    it('un correo anterior a la Fase 8 (attachments null) no revienta: da 404', async () => {
+      prisma.email.findFirst.mockResolvedValue({
+        gmailMessageId: 'gmail-viejo',
+        attachments: null,
+      });
+
+      await expect(
+        service.downloadAttachment(USER_ID, 'email-viejo', 'att-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
   });
 });
