@@ -22,11 +22,13 @@ import { useDashboardMetrics } from "../dashboard/hooks/useDashboardMetrics";
 import { useEmailSelection, type EstadoDeSeleccion } from "./useEmailSelection";
 import { BulkActionBar } from "./components/BulkActionBar";
 import { ConfirmDismissDialog } from "./components/ConfirmDismissDialog";
+import { ScopeTabs, type Ambito } from "./components/ScopeTabs";
 import { bulkDismissEmails } from "./api/emails.api";
 import { ApiError } from "../../lib/api";
 
 export function InboxPage() {
   const [activeTab, setActiveTab] = useState<'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED'>('PENDING');
+  const [ambito, setAmbito] = useState<Ambito>({ tipo: "general" });
 
   /**
    * Los contadores de las pestañas salen de `/dashboard/metrics`, no de la
@@ -55,7 +57,7 @@ export function InboxPage() {
     loadMore,
     applyEmailUpdate,
     removeEmails,
-  } = useInbox(activeTab);
+  } = useInbox(activeTab, ambito);
 
   useSocket({
     onEmailUpdated: (email) => {
@@ -239,7 +241,14 @@ export function InboxPage() {
           { id: 'COMPLETED', label: 'Completados' },
           { id: 'DISMISSED', label: 'Descartados' }
         ].map(tab => {
-          const count = metrics?.inbox.byStatus[tab.id as keyof typeof metrics.inbox.byStatus];
+          /* Las métricas cuentan la bandeja entera, así que con un ámbito
+             puesto no corresponden con lo que hay debajo: enseñar «Pendientes
+             728» mientras se ven los doce de Tecnoresin es peor que no enseñar
+             nada. La cabecera sí lleva los totales del filtro activo. */
+          const count =
+            ambito.tipo === "general"
+              ? metrics?.inbox.byStatus[tab.id as keyof typeof metrics.inbox.byStatus]
+              : undefined;
           return (
             <button
               key={tab.id}
@@ -267,6 +276,8 @@ export function InboxPage() {
         })}
       </div>
 
+      <ScopeTabs ambito={ambito} onChange={setAmbito} />
+
       {status === "ready" && labels.length > 0 && (
         <LabelFilterBar labels={labels} active={labelFilter} onChange={setLabelFilter} />
       )}
@@ -289,7 +300,11 @@ export function InboxPage() {
         <p className="px-6 py-12 text-center text-sm text-slate-400">
           {labelFilter
             ? "Ningún correo con esta etiqueta."
-            : "No hay correos en la bandeja de entrada."}
+            : ambito.tipo === "general"
+              ? "No hay correos en la bandeja de entrada."
+              : /* Nombrar el ámbito evita el susto de creer vacía la bandeja
+                   entera cuando lo que está vacía es una pestaña. */
+                `No hay correos de ${ambito.valor} en esta pestaña.`}
         </p>
       )}
 
@@ -607,8 +622,21 @@ function EmailRow({
         </p>
         <p className="truncate text-sm text-slate-500">{email.snippet}</p>
 
-        {(hasProposals || noAccionable || labels.length > 0) && (
+        {(hasProposals || noAccionable || email.company || email.bank || labels.length > 0) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {/* Empresa y banco: es lo que separa la bandeja en pestañas, así que
+                conviene verlo también en la vista General, donde no hay filtro
+                que lo diga. */}
+            {email.company && (
+              <span className="rounded-full border border-sky-300 bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
+                {email.company}
+              </span>
+            )}
+            {email.bank && (
+              <span className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800">
+                {email.bank}
+              </span>
+            )}
             {noAccionable && (
               <span
                 className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600"

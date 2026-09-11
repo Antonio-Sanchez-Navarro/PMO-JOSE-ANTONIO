@@ -112,5 +112,33 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return (await response.json()) as T;
 }
 
+/**
+ * Descarga un binario de la API (adjuntos) como `Blob`.
+ *
+ * **No vale un `<a href>` ni un `<a download>` a pelo.** La ruta va autenticada
+ * por cookie y en producción la API vive en otro origen —Cloud Run, no Vercel—,
+ * así que una navegación normal sale sin credenciales y la respuesta es un 401
+ * que el navegador enseña como una pestaña en blanco. Aquí se pide con
+ * `credentials: "include"`, como todo lo demás, y se entrega ya en memoria.
+ *
+ * Comparte el reintento con refresco de `apiFetch`: una sesión que caduca justo
+ * al pulsar «descargar» se renueva sola en vez de mandar a nadie a iniciar
+ * sesión otra vez.
+ */
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  let response = await request(path);
+
+  if (response.status === 401) {
+    const ok = await doRefresh();
+    if (ok) response = await request(path);
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, `GET ${path} → ${response.status}`);
+  }
+
+  return response.blob();
+}
+
 /** URL de inicio del login con Google (navegación completa, no fetch). */
 export const GOOGLE_LOGIN_URL = `${API_BASE}/auth/google`;

@@ -4,6 +4,7 @@ import { fetchEmailThreads } from "./api/emails.api";
 import { visibleLabels } from "./format";
 import { useGmailLabels } from "./useGmailLabels";
 import type { EmailSnippet, InboxThread } from "./types";
+import type { Ambito } from "./components/ScopeTabs";
 
 export type InboxStatus = "loading" | "ready" | "error";
 
@@ -30,7 +31,11 @@ export interface LabelFacet {
  * La sesión viaja en cookies httpOnly: `apiFetch` ya usa `credentials: "include"`
  * y renueva el token una vez si la API responde 401.
  */
-export function useInbox(activeStatus: string = "PENDING", initialMaxResults = 20) {
+export function useInbox(
+  activeStatus: string = "PENDING",
+  ambito: Ambito = { tipo: "general" },
+  initialMaxResults = 20,
+) {
   const [threads, setThreads] = useState<InboxThread[]>([]);
   const [total, setTotal] = useState(0);
   const [totalEmails, setTotalEmails] = useState(0);
@@ -44,6 +49,12 @@ export function useInbox(activeStatus: string = "PENDING", initialMaxResults = 2
   const labelNames = useGmailLabels();
   const reqIdRef = useRef(0);
 
+  // El ámbito se desmenuza aquí y no en el `useCallback` para que la
+  // dependencia sea el valor y no el objeto: `{ tipo: "general" }` es uno nuevo
+  // en cada render y recargaría la bandeja en bucle.
+  const company = ambito.tipo === "empresa" ? ambito.valor : undefined;
+  const bank = ambito.tipo === "banco" ? ambito.valor : undefined;
+
   const load = useCallback(
     async (limit: number, { silent = false } = {}) => {
       const currentReqId = ++reqIdRef.current;
@@ -52,7 +63,12 @@ export function useInbox(activeStatus: string = "PENDING", initialMaxResults = 2
       setError(null);
 
       try {
-        const page = await fetchEmailThreads({ status: activeStatus, take: limit });
+        const page = await fetchEmailThreads({
+          status: activeStatus,
+          take: limit,
+          company,
+          bank,
+        });
         if (currentReqId !== reqIdRef.current) return;
         setThreads(page.items);
         setTotal(page.total);
@@ -72,12 +88,12 @@ export function useInbox(activeStatus: string = "PENDING", initialMaxResults = 2
         }
       }
     },
-    [activeStatus],
+    [activeStatus, company, bank],
   );
 
   useEffect(() => {
     void load(maxResults, { silent: false });
-  }, [load, maxResults, activeStatus]);
+  }, [load, maxResults]);
 
   /**
    * Etiquetas presentes en los resultados, ordenadas por frecuencia.

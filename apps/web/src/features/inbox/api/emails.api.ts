@@ -1,5 +1,5 @@
 import type { ProposedTask } from "@pmo/shared";
-import { apiFetch } from "../../../lib/api";
+import { apiFetch, apiFetchBlob } from "../../../lib/api";
 import { getSocketId } from "../../kanban/hooks/useSocket";
 import type { EmailSnippet, ThreadPage } from "../types";
 
@@ -24,10 +24,66 @@ export interface EmailDetail extends EmailSnippet {
    * trabajo.
    */
   proposedTasks?: ProposedTask[] | null;
+  /**
+   * Las fichas de los adjuntos. Va en el detalle y no en el listado a propósito:
+   * la bandeja ya sabe con `hasAttachments` si pintar el clip.
+   *
+   * ⚠️ **Vacío no quiere decir «sin adjuntos».** Las fichas se empezaron a
+   * guardar en la Fase 8, así que un correo ingerido antes llega con `[]`
+   * aunque tenga archivos. Cuando `hasAttachments` es `true` y esto está vacío,
+   * la interfaz dice «no disponibles», que es lo que pasa de verdad.
+   */
+  attachments?: EmailAttachment[];
 }
 
 export async function fetchEmail(id: string): Promise<EmailDetail> {
   return apiFetch<EmailDetail>(`/emails/${id}`);
+}
+
+/**
+ * Una ficha de adjunto. **El contenido no viaja aquí**: `size` son los bytes que
+ * declara Gmail, para poder enseñar el peso sin bajarse el archivo.
+ */
+export interface EmailAttachment {
+  /** Lo emite Gmail por mensaje: **solo sirve para este correo**. */
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  /**
+   * Incrustado en el cuerpo —el logo de la firma, una imagen citada—, no
+   * adjuntado por una persona. `verDescargables()` los esconde.
+   */
+  inline: boolean;
+}
+
+/**
+ * Los adjuntos que merece la pena enseñar: los que alguien adjuntó de verdad.
+ *
+ * Sin este filtro, cada correo con firma corporativa enseña un «logo.png» que
+ * nadie mandó, y el clip deja de significar «aquí hay un documento».
+ */
+export function verDescargables(attachments: EmailAttachment[] = []): EmailAttachment[] {
+  return attachments.filter((a) => !a.inline);
+}
+
+/** Se pueden enseñar sin bajar: el backend los sirve con `Content-Disposition: inline`. */
+export function sePuedeVerEnPantalla(mimeType: string): boolean {
+  return mimeType === "application/pdf" || mimeType.startsWith("image/");
+}
+
+/**
+ * Baja un adjunto y lo entrega como `blob:` local.
+ *
+ * Quien lo llame es responsable de soltar la URL con `URL.revokeObjectURL`
+ * cuando acabe: un `blob:` vivo retiene el archivo entero en memoria.
+ */
+export async function fetchAttachment(
+  emailId: string,
+  attachmentId: string,
+): Promise<{ blob: Blob; url: string }> {
+  const blob = await apiFetchBlob(`/emails/${emailId}/attachments/${attachmentId}`);
+  return { blob, url: URL.createObjectURL(blob) };
 }
 
 /**
@@ -60,12 +116,18 @@ export async function fetchEmailThreads(params: {
   status: string;
   take: number;
   skip?: number;
+  /** Vocabulario cerrado (`EMPRESAS`): un valor de fuera da 400, no lista vacía. */
+  company?: string;
+  /** Vocabulario cerrado (`BANCOS`). Filtra por uno; no hay «cualquier banco». */
+  bank?: string;
 }): Promise<ThreadPage> {
   const query = new URLSearchParams({
     status: params.status,
     take: String(params.take),
   });
   if (params.skip) query.set("skip", String(params.skip));
+  if (params.company) query.set("company", params.company);
+  if (params.bank) query.set("bank", params.bank);
   return apiFetch<ThreadPage>(`/emails/threads?${query.toString()}`);
 }
 

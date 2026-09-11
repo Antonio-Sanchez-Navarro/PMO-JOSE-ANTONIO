@@ -44,6 +44,17 @@ export interface EmailSnippet {
    * no para barrer.
    */
   isActionable?: boolean;
+  /**
+   * Empresa del grupo mencionada en el correo (`EMPRESAS`), o `null`.
+   *
+   * ⚠️ **`null` no es «sin clasificar»**: es «no menciona ninguna de las que nos
+   * importan», y es el caso normal. No hay valor de respaldo a propósito —un
+   * `OTHER` aquí sería un cajón de cosas sin nada en común—. Para saber si un
+   * correo llegó a analizarse, `processedAt` en el detalle.
+   */
+  company?: string | null;
+  /** Banco o financiera (`BANCOS`), o `null`. Misma advertencia que `company`. */
+  bank?: string | null;
 }
 
 /**

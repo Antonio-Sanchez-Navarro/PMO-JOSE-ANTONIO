@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { EmailDetail, fetchEmail } from "../api/emails.api";
 import { formatFullDate, initialOf, parseSender, visibleLabels } from "../format";
 import { useGmailLabels } from "../useGmailLabels";
+import { AttachmentList } from "./AttachmentList";
 
 
 export interface EmailDetailModalProps {
@@ -105,15 +106,16 @@ export function EmailDetailModal({ isOpen, onClose, emailId, onAnalyze, readOnly
                 )}
               </div>
 
-              {email.hasAttachments && (
-                <div className="mb-6 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  <span aria-hidden="true">📎</span>
-                  <p>
-                    Este correo trae adjuntos. No descargamos su contenido, así que lo que proponga
-                    la IA sale solo del texto del mensaje.
-                  </p>
-                </div>
-              )}
+              {/* Decía que la IA solo leía el texto del mensaje. Dejó de ser
+                  verdad en la Fase 8: ahora se le mandan los PDF y las imágenes,
+                  con topes por archivo, por correo y de número. Lo que se queda
+                  fuera se le dice por su nombre, así que una propuesta del tipo
+                  «revisar planos.pdf a mano» es correcta, no un despiste. */}
+              <AttachmentList
+                emailId={email.id}
+                attachments={email.attachments}
+                hasAttachments={Boolean(email.hasAttachments)}
+              />
 
               {pendingCount > 0 && (
                 <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
