@@ -42,6 +42,17 @@ export interface TriageEmail {
   hasAttachments: boolean;
   /** Hilo de Gmail, para agrupar la lista como hace la bandeja. */
   threadId: string;
+  /**
+   * Empresa del grupo y banco que la IA reconoció en el correo, del vocabulario
+   * cerrado de `@pmo/shared`. Son las pestañas de la bandeja.
+   *
+   * `null` es el caso normal y **no** significa «sin clasificar»: significa que
+   * el correo no menciona ninguno de los que nos importan. Un correo que nadie
+   * ha procesado tiene los dos en `null` igual que uno analizado sin banco —
+   * para separarlos está `processedAt`, la misma trampa que con `isActionable`.
+   */
+  company: string | null;
+  bank: string | null;
   /** Etiquetas de Gmail (`INBOX`, `UNREAD`, `CATEGORY_*`…), para los filtros. */
   labels: string[];
   /** Vista previa corta. Cadena vacía si el correo no la trae. */
@@ -68,6 +79,8 @@ const SELECT_TRIAGE = {
   category: true,
   status: true,
   isActionable: true,
+  company: true,
+  bank: true,
   threadId: true,
   labels: true,
   snippet: true,
@@ -85,6 +98,8 @@ type FilaTriage = {
   category: string | null;
   status: EmailStatus;
   isActionable: boolean;
+  company: string | null;
+  bank: string | null;
   threadId: string;
   labels: string[];
   snippet: string | null;
@@ -105,6 +120,8 @@ function aTriageEmail(email: FilaTriage): TriageEmail {
     category: email.category,
     status: email.status,
     isActionable: email.isActionable,
+    company: email.company,
+    bank: email.bank,
     taskCount: email._count.tasks,
     isConverted: email._count.tasks > 0,
     proposedTaskCount: Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0,
@@ -130,6 +147,8 @@ function filtroDeBandeja(userId: string, query: QueryEmailsDto): Prisma.EmailWhe
     userId,
     ...(query.actionable === undefined ? {} : { isActionable: query.actionable }),
     ...(query.status === undefined ? {} : { status: query.status }),
+    ...(query.company === undefined ? {} : { company: query.company }),
+    ...(query.bank === undefined ? {} : { bank: query.bank }),
     // `converted` se traduce a "tiene o no tiene tareas", que es justo lo
     // que hace que `to-task` responda 409. `processedAt` no sirve para
     // esto: el worker lo marca aunque no crease ni una tarea.
@@ -370,6 +389,16 @@ export interface ClassificationResult {
   isActionable: boolean;
   aiConfidence: number;
   tasks: ProposedTask[];
+  /**
+   * Empresa y banco que el modelo acaba de reconocer, o `null`.
+   *
+   * Viajan en la propuesta y no solo en la fila guardada porque la cuarentena
+   * enseña lo que va a pasar **antes** de que pase: si `?force=true` cambia el
+   * banco de un correo, quien está mirando la pantalla tiene que verlo ahí, no
+   * descubrirlo al recargar la bandeja.
+   */
+  company: string | null;
+  bank: string | null;
 }
 
 @Injectable()
@@ -492,6 +521,8 @@ export class EmailsService {
         status: true,
         bodyText: true,
         isActionable: true,
+        company: true,
+        bank: true,
         processedAt: true,
         proposedTasks: true,
         hasAttachments: true,
@@ -513,6 +544,9 @@ export class EmailsService {
       date: email.receivedAt.toISOString(),
       category: email.category,
       status: email.status,
+      isActionable: email.isActionable,
+      company: email.company,
+      bank: email.bank,
       threadId: email.threadId,
       labels: email.labels,
       snippet: email.snippet ?? '',
@@ -528,7 +562,6 @@ export class EmailsService {
       // guardado" de "el cuerpo está vacío", y así la vista sabe cuándo caer
       // al snippet en vez de enseñar un panel en blanco.
       bodyText: email.bodyText,
-      isActionable: email.isActionable,
       processedAt: email.processedAt?.toISOString() ?? null,
       proposedTasks: tareasPropuestas(email.proposedTasks),
       tasks: email.tasks,
@@ -765,7 +798,16 @@ export class EmailsService {
   ): Promise<ClassificationResult> {
     const email = await this.prisma.email.findFirst({
       where: { id: emailId, userId },
-      select: { id: true, bodyText: true, snippet: true, category: true, isActionable: true, proposedTasks: true },
+      select: {
+        id: true,
+        bodyText: true,
+        snippet: true,
+        category: true,
+        isActionable: true,
+        company: true,
+        bank: true,
+        proposedTasks: true,
+      },
     });
 
     if (!email) {
@@ -797,6 +839,9 @@ export class EmailsService {
         // de inventar un 1 que la cuarentena leería como certeza absoluta.
         aiConfidence: guardadas[0]?.aiConfidence ?? 0,
         tasks: guardadas,
+        // Los guardados, no los del modelo: aqui no se ha llamado a nadie.
+        company: email.company,
+        bank: email.bank,
       };
     }
 
@@ -816,7 +861,15 @@ export class EmailsService {
     // correo, y marcarlo aquí haría que el worker se lo saltara.
     await this.prisma.email.update({
       where: { id: email.id },
-      data: { proposedTasks: aJsonDeBorradores(draft.tasks) },
+      data: {
+        proposedTasks: aJsonDeBorradores(draft.tasks),
+        // Van con el borrador, no aparte. Sin esto, un `?force=true` que
+        // corrigiera el banco lo devolveria en la respuesta y dejaria el viejo
+        // en la base: la bandeja seguiria enseñando la pestaña equivocada
+        // justo despues de que alguien pagara por corregirla.
+        company: draft.company,
+        bank: draft.bank,
+      },
     });
 
     return {
@@ -824,6 +877,8 @@ export class EmailsService {
       category: draft.category,
       isActionable: draft.isActionable,
       aiConfidence: draft.aiConfidence,
+      company: draft.company,
+      bank: draft.bank,
       tasks: draft.tasks.map(
         ({ title, description, priority, tags, dueDate, source, aiConfidence }) => ({
           title,

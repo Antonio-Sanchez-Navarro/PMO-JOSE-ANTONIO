@@ -44,6 +44,9 @@ export interface ClassifyResult {
   tasks: TaskDraft[];
   /** `true` si el modelo no extrajo tareas y se generó una desde el asunto. */
   usedFallback: boolean;
+  /** Empresa y banco reconocidos, o `null`. Ver {@link ClassificationDraft}. */
+  company: string | null;
+  bank: string | null;
 }
 
 /**
@@ -116,7 +119,12 @@ export interface ClassificationDraft {
   aiConfidence: number;
   tasks: TaskDraft[];
   /** `true` si el modelo no extrajo tareas y se generó una desde el asunto. */
-  usedFallback: boolean;
+  usedFallback: boolean;  /**
+   * Empresa del grupo y banco detectados, del vocabulario cerrado de
+   * `@pmo/shared`. `null` = el correo no menciona ninguno de los nuestros.
+   */
+  company: string | null;
+  bank: string | null;
 }
 
 /**
@@ -157,7 +165,7 @@ export class EmailClassificationService {
   async classifyAndPersist(emailId: string, options: ClassifyOptions): Promise<ClassifyResult> {
     const email = await this.prisma.email.findUniqueOrThrow({ where: { id: emailId } });
     const draft = await this.analyze(email, options.forceActionable);
-    const { isActionable, category, aiConfidence, usedFallback } = draft;
+    const { isActionable, category, aiConfidence, usedFallback, company, bank } = draft;
 
     await this.prisma.$transaction(async (tx) => {
       // Human-in-the-loop: la IA ya no crea filas en `Task`. La propuesta se
@@ -173,6 +181,12 @@ export class EmailClassificationService {
         data: {
           isActionable,
           category,
+          // Se escriben **siempre**, tambien cuando son `null`. Dejar el valor
+          // viejo por no pisarlo con `null` convertiria un banco corregido en
+          // un banco pegado para siempre: la propuesta se reemplaza entera, y
+          // estos dos son parte de la propuesta.
+          company,
+          bank,
           processedAt: new Date(),
           proposedTasks: aJsonDeBorradores(draft.tasks),
         },
@@ -181,7 +195,15 @@ export class EmailClassificationService {
 
     // Se devuelven los borradores, no filas: todavía no existen. Quien los
     // materialice lo hará al aprobarlos con `POST /emails/:id/to-task`.
-    return { isActionable, category, aiConfidence, tasks: draft.tasks, usedFallback };
+    return {
+      isActionable,
+      category,
+      aiConfidence,
+      tasks: draft.tasks,
+      usedFallback,
+      company,
+      bank,
+    };
   }
 
   /**
@@ -360,6 +382,8 @@ export class EmailClassificationService {
       aiConfidence: analysis.aiConfidence,
       tasks,
       usedFallback,
+      company: analysis.company,
+      bank: analysis.bank,
     };
   }
 

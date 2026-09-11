@@ -308,3 +308,61 @@ export const SESSION_EVENTS = {
 export interface SesionRechazadaEvento {
   codigo: CodigoSesion;
 }
+
+// ─── Vocabularios cerrados de banco y empresa (Fase 8) ──────────────────────
+//
+// Viven aquí porque los necesitan los tres lados y tienen que decir lo mismo:
+// el backend para pedírselos al modelo y validar lo que devuelve, el frontend
+// para pintar las pestañas de la bandeja, y el filtro de `GET /emails` para
+// rechazar lo que no esté en la lista.
+//
+// **Son listas cerradas a propósito, no texto libre.** Es la lección que ya
+// costó una vez con `category`: mientras fue `type: string` en la herramienta,
+// la API aceptó salidas corruptas del modelo —trozos de la serialización dentro
+// del valor— y `priority`, que siempre fue `enum`, nunca se corrompió. Un banco
+// escrito de tres maneras distintas no es un dato, es tres pestañas.
+
+/**
+ * Los bancos y financieras que interesa reconocer.
+ *
+ * Si aparece uno nuevo se añade aquí y se acabó: la herramienta de extracción,
+ * la validación y el filtro leen todos de esta constante.
+ */
+export const BANCOS = [
+  "Konfio",
+  "Aspiria",
+  "Banregio",
+  "Clara",
+  "Kapital",
+  "Santander",
+  "PDN",
+] as const;
+
+export type Banco = (typeof BANCOS)[number];
+
+/** Las empresas del grupo. */
+export const EMPRESAS = ["Urbazepto", "Tecnoresin"] as const;
+
+export type Empresa = (typeof EMPRESAS)[number];
+
+/**
+ * Devuelve el valor canónico de la lista, o `null` si no está.
+ *
+ * Compara sin distinguir mayúsculas ni espacios sobrantes porque el modelo
+ * escribe lo que ve en el correo —"SANTANDER", "santander"— y tres grafías del
+ * mismo banco parten la bandeja en tres pestañas que deberían ser una. Lo que
+ * se guarda es siempre la forma de esta lista.
+ *
+ * Lo que no esté, devuelve `null` y **no** un valor de respaldo: un banco fuera
+ * de la lista no es "otro banco", es que en ese correo no hay ninguno de los
+ * que nos importan.
+ */
+export function canonico<T extends string>(
+  valor: unknown,
+  vocabulario: readonly T[],
+): T | null {
+  if (typeof valor !== "string") return null;
+  const limpio = valor.trim().toLowerCase();
+  if (limpio === "") return null;
+  return vocabulario.find((v) => v.toLowerCase() === limpio) ?? null;
+}

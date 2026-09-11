@@ -128,42 +128,48 @@ model CopilotAuditLog {
 }
 
 model Email {
-  id             String      @id @default(cuid())
-  userId         String
-  user           User        @relation(fields: [userId], references: [id])
-  gmailMessageId String      @unique
-  threadId       String
-  from           String
-  subject        String?
-  snippet        String?
-  bodyText       String?
-  labels         String[]
-  category       String?
-  isActionable   Boolean     @default(false)
+  id                String      @id @default(cuid())
+  userId            String
+  user              User        @relation(fields: [userId], references: [id])
+  gmailMessageId    String      @unique
+  threadId          String
+  from              String
+  subject           String?
+  snippet           String?
+  bodyText          String?
+  labels            String[]
+  category          String?
+  isActionable      Boolean     @default(false)
   /// Triage de la persona. Nace `PENDING` y solo lo mueve ella.
-  status         EmailStatus @default(PENDING)
-  receivedAt     DateTime
-  processedAt    DateTime?
+  status            EmailStatus @default(PENDING)
+  receivedAt        DateTime
+  processedAt       DateTime?
   /// Por qué la IA no llegó a clasificarlo, cuando `processedAt` está puesto
   /// pero no hubo clasificación de verdad. `null` = clasificado con normalidad.
   /// Valores en `SKIP_REASON` (`ai.processor.ts`).
-  skipReason     String?
-  tasks          Task[]
+  skipReason        String?
+  tasks             Task[]
   /// Tareas propuestas por la IA, pendientes de revisión humana.
-  proposedTasks  Json?
+  proposedTasks     Json?
   /// Indica si el correo trae archivos adjuntos (cuyo contenido no bajamos).
-  hasAttachments Boolean @default(false)
+  hasAttachments    Boolean     @default(false)
+  /// Empresa del grupo a la que pertenece el correo (`Urbazepto`, `Tecnoresin`).
+  /// Vocabulario cerrado en `@pmo/shared`; `null` = ninguna de las nuestras.
+  company           String?
+  /// Banco o financiera que aparece en el correo. Vocabulario cerrado en
+  /// `@pmo/shared`; `null` = ninguno de los que nos importan.
+  bank              String?
   /// Veces que el barrido de reconciliación lo ha reencolado sin que llegara a
   /// procesarse. Es lo que separa «se perdió una vez» de «este correo no se
   /// clasifica nunca», que piden cosas distintas.
-  reconcileAttempts Int @default(0)
+  reconcileAttempts Int         @default(0)
   /// No volver a reencolarlo antes de esta hora. `null` = elegible ya.
   ///
   /// Sin esto el barrido cogía los 100 más antiguos con `processedAt: null`,
   /// los reencolaba, fallaban todos —clasificación caída— y quince minutos
   /// después cogía **exactamente los mismos 100**, para siempre y sin avanzar
   /// uno. 96 vueltas al día de 200 operaciones de Redis en bucle cerrado.
-  reconcileAfter DateTime?
+  reconcileAfter    DateTime?
 
   @@index([threadId])
   /// El barrido pregunta por «lo que sigue sin procesar y ya toca reintentar».

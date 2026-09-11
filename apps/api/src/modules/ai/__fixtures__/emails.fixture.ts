@@ -25,6 +25,8 @@ const BASE: Email = {
   skipReason: null,
   proposedTasks: null,
   hasAttachments: false,
+  company: null,
+  bank: null,
   reconcileAttempts: 0,
   reconcileAfter: null,
 };

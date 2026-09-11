@@ -700,6 +700,8 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
       snippet: 'Adjunto el borrador de la escritura…',
       gmailMessageId: '19f95edbf2b0650a',
       isActionable: true,
+      company: 'Urbazepto',
+      bank: 'Konfio',
       _count: { tasks: 3 },
     },
     {
@@ -713,6 +715,8 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
       snippet: null,
       gmailMessageId: '19f95edbf2b0650b',
       isActionable: false,
+      company: null,
+      bank: null,
       _count: { tasks: 0 },
     },
   ];
@@ -760,6 +764,40 @@ describe('EmailsService — GET /emails (bandeja de triage)', () => {
 
     const { select } = prisma.email.findMany.mock.calls[0][0];
     expect(select.isActionable).toBe(true);
+  });
+
+  it('entrega company y bank en cada fila (Fase 8)', async () => {
+    const [conBanco, sinBanco] = await service.listForTriage(USER_ID, {});
+
+    expect(conBanco.company).toBe('Urbazepto');
+    expect(conBanco.bank).toBe('Konfio');
+    // `null` no es «sin clasificar»: es «este correo no menciona ninguno de
+    // los nuestros», que es el caso normal.
+    expect(sinBanco.company).toBeNull();
+    expect(sinBanco.bank).toBeNull();
+  });
+
+  it('filtra por empresa', async () => {
+    await service.listForTriage(USER_ID, { company: 'Urbazepto' });
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    expect(where.company).toBe('Urbazepto');
+  });
+
+  it('filtra por banco', async () => {
+    await service.listForTriage(USER_ID, { bank: 'Clara' });
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    expect(where.bank).toBe('Clara');
+  });
+
+  it('sin filtro de empresa ni banco no acota por ellos', async () => {
+    // Que no aparezcan como `undefined` en el `where`: Prisma lo trataria como
+    // «da igual», pero la prueba de «sin filtros» compara el objeto entero.
+    await service.listForTriage(USER_ID, {});
+
+    const { where } = prisma.email.findMany.mock.calls[0][0];
+    expect(where).toEqual({ userId: USER_ID });
   });
 
   it('da un asunto que pintar cuando el correo no lo trae', async () => {
@@ -1339,6 +1377,8 @@ describe('EmailsService — GET /emails/threads (bandeja por hilos, Fase 7)', ()
     status: EmailStatus.PENDING,
     labels: [],
     snippet: null,
+    company: null,
+    bank: null,
     proposedTasks: null,
     hasAttachments: false,
     processedAt: new Date('2026-09-01T00:00:00.000Z'),

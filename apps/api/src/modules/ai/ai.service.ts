@@ -9,6 +9,7 @@ import {
   describirFallo,
   esperaSugeridaMs,
 } from '../../common/anthropic/anthropic-client';
+import { BANCOS, EMPRESAS, canonico } from '@pmo/shared';
 
 export interface ExtractedTask {
   title: string;
@@ -31,6 +32,17 @@ export interface EmailAnalysisResult {
    */
   senderName: string | null;
   project: string | null;
+  /**
+   * Empresa del grupo y banco o financiera que aparecen en el correo, del
+   * vocabulario cerrado de `@pmo/shared`.
+   *
+   * `null` no es "no lo sé": es **"en este correo no hay ninguno de los que nos
+   * importan"**, que es el caso mayoritario y perfectamente normal. No hay
+   * valor de respaldo a propósito — un `OTHER` aquí crearía una pestaña llena
+   * de correos que no tienen nada en común.
+   */
+  company: string | null;
+  bank: string | null;
 }
 
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
@@ -112,8 +124,34 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
         description:
           'Proyecto, obra, cliente o asunto al que pertenece el correo, en una o dos palabras, por ejemplo "Citrotarte" o "Lote 36". null si no hay ninguno claro.',
       },
+      // ─── Vocabularios cerrados, y por el mismo motivo que `category` ────
+      //
+      // Van como `enum` y no como texto libre porque ya sabemos lo que pasa
+      // cuando no: mientras `category` fue `type: string`, la API acepto
+      // salidas corruptas del modelo dentro del valor. Y aqui hay un motivo
+      // extra: estos dos campos se convierten en pestañas de la bandeja, asi
+      // que "Santander", "SANTANDER" y "Banco Santander" serian tres.
+      company: {
+        anyOf: [{ type: 'string', enum: [...EMPRESAS] }, { type: 'null' }],
+        description:
+          'Empresa del grupo a la que pertenece el correo. Devuelve exactamente uno de los valores permitidos, o null si el correo no es de ninguna de ellas.',
+      },
+      bank: {
+        anyOf: [{ type: 'string', enum: [...BANCOS] }, { type: 'null' }],
+        description:
+          'Banco o financiera que aparece en el correo. Devuelve exactamente uno de los valores permitidos, o null si no aparece ninguno de ellos.',
+      },
     },
-    required: ['isActionable', 'category', 'tasks', 'aiConfidence', 'senderName', 'project'],
+    required: [
+      'isActionable',
+      'category',
+      'tasks',
+      'aiConfidence',
+      'senderName',
+      'project',
+      'company',
+      'bank',
+    ],
     additionalProperties: false,
   },
 };
@@ -140,6 +178,17 @@ Sobre las fechas: el mensaje del usuario incluye la fecha de recepción del corr
 Resuelve contra ella cualquier fecha relativa o incompleta ("el viernes", "31 de julio",
 "la próxima semana") y devuélvela como YYYY-MM-DD. Si el correo no menciona una fecha
 límite, devuelve null: no inventes ninguna.
+
+Sobre la empresa y el banco (company y bank): sirven para separar la bandeja en
+pestañas, así que solo valen los nombres de estas dos listas y escritos tal cual.
+
+- bank: extráelo SOLO si el correo menciona uno de estos: ${BANCOS.join(', ')}.
+- company: extráelo SOLO si el correo pertenece a una de estas: ${EMPRESAS.join(', ')}.
+
+Si el correo no menciona ninguno de esa lista, devuelve null. Es la respuesta
+correcta y la más frecuente: no busques el banco más parecido ni traduzcas otro
+nombre al de la lista, y no deduzcas la empresa por el tipo de asunto. Mencionar
+un banco de pasada ("transferencia recibida") sin nombrarlo no cuenta.
 
 Usa la herramienta ${TOOL_NAME} para devolver el resultado.`;
 
@@ -320,7 +369,37 @@ export class AiService {
       // mejor que perder la extracción entera.
       senderName: this.parseContexto(raw.senderName, 'senderName'),
       project: this.parseContexto(raw.project, 'project'),
+      // Segunda barrera tras el `enum`, igual que con `category`, pero con un
+      // final distinto: lo que no esta en la lista degrada a `null` y no a un
+      // valor de respaldo. Un banco que no reconocemos no es "otro banco" — es
+      // que en ese correo no hay ninguno de los nuestros, y meterlo en una
+      // pestaña de respaldo seria inventarse una agrupacion.
+      //
+      // `canonico` compara sin mayusculas: el modelo escribe lo que ve en el
+      // correo, y tres grafias del mismo banco parten en tres una pestaña que
+      // deberia ser una.
+      company: this.parseVocabulario(raw.company, EMPRESAS, 'company'),
+      bank: this.parseVocabulario(raw.bank, BANCOS, 'bank'),
     };
+  }
+
+  /** Un valor de lista cerrada, en su forma canónica, o `null`. */
+  private parseVocabulario<T extends string>(
+    value: unknown,
+    vocabulario: readonly T[],
+    campo: string,
+  ): T | null {
+    if (value === null || value === undefined) return null;
+
+    const limpio = canonico(value, vocabulario);
+    if (limpio === null && value !== '') {
+      // Se avisa pero no se lanza: el resto del analisis —las tareas, que es
+      // lo que de verdad importa— sigue siendo utilizable.
+      this.logger.warn(
+        `Campo "${campo}" fuera del vocabulario: ${JSON.stringify(value)} → null`,
+      );
+    }
+    return limpio;
   }
 
   /** Remitente y proyecto: texto útil o `null`. Nunca cadena vacía. */

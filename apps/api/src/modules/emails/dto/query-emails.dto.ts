@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { EmailStatus } from '@prisma/client';
+import { BANCOS, EMPRESAS } from '@pmo/shared';
 
 /**
  * Convierte el `?flag=true` de la query en booleano.
@@ -47,6 +48,24 @@ export class QueryEmailsDto {
   @IsOptional()
   @IsEnum(EmailStatus)
   status?: EmailStatus;
+
+  /**
+   * Empresa del grupo, para la pestaña de la bandeja. Vocabulario cerrado: un
+   * valor fuera de la lista da **400** en vez de devolver cero resultados.
+   *
+   * Es la misma elección que `status`, y por el mismo motivo: con una lista
+   * cerrada, «no hay correos de ese banco» y «has escrito mal el nombre del
+   * banco» se ven idénticos desde el cliente —los dos son una pestaña vacía— y
+   * solo uno de los dos es un error de programación que conviene ver pronto.
+   */
+  @IsOptional()
+  @IsIn([...EMPRESAS])
+  company?: string;
+
+  /** Banco o financiera. Mismas reglas que `company`. */
+  @IsOptional()
+  @IsIn([...BANCOS])
+  bank?: string;
 
   @IsOptional()
   @Type(() => Number)

@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { AiService } from './ai.service';
 import { emailConFechaRelativa } from './__fixtures__/emails.fixture';
 import * as R from './__fixtures__/ai-responses.fixture';
+import { BANCOS, EMPRESAS } from '@pmo/shared';
 
 /**
  * El SDK se sustituye por un doble: estas pruebas verifican **nuestro** contrato
@@ -50,6 +51,122 @@ describe('AiService', () => {
       getOrThrow: jest.fn().mockReturnValue('claude-sonnet-5'),
     } as unknown as ConfigService;
     expect(() => new AiService(config, costesDeMentira())).toThrow(/ANTHROPIC_API_KEY/);
+  });
+
+
+  /**
+   * Fase 8 · banco y empresa.
+   *
+   * Van como vocabulario cerrado por lo mismo que `category`: mientras fue
+   * texto libre, la API acepto salidas corruptas del modelo dentro del valor. Y
+   * aqui hay un motivo extra — estos dos campos se convierten en pestañas de la
+   * bandeja, asi que "Santander", "SANTANDER" y "santander" serian tres.
+   */
+  describe('banco y empresa (vocabularios cerrados)', () => {
+    /** La salida minima del modelo, con lo que pida cada prueba encima. */
+    const salida = (extra: Record<string, unknown>) => ({
+      isActionable: false,
+      category: 'OTHER',
+      aiConfidence: 0.5,
+      tasks: [],
+      senderName: null,
+      project: null,
+      company: null,
+      bank: null,
+      ...extra,
+    });
+
+    it('acepta un banco y una empresa de la lista', async () => {
+      create.mockResolvedValue(
+        comoRespuestaDeHerramienta(salida({ bank: 'Konfio', company: 'Tecnoresin' })),
+      );
+
+      const result = await analizar(service);
+
+      expect(result.bank).toBe('Konfio');
+      expect(result.company).toBe('Tecnoresin');
+    });
+
+    it('normaliza mayusculas y espacios a la forma canonica', async () => {
+      // El modelo escribe lo que ve en el correo. Tres grafias del mismo banco
+      // parten en tres una pestaña que deberia ser una.
+      create.mockResolvedValue(
+        comoRespuestaDeHerramienta(salida({ bank: '  SANTANDER ', company: 'urbazepto' })),
+      );
+
+      const result = await analizar(service);
+
+      expect(result.bank).toBe('Santander');
+      expect(result.company).toBe('Urbazepto');
+    });
+
+    it('lo que no esta en la lista degrada a null, no a un valor de respaldo', async () => {
+      // Un banco que no reconocemos no es «otro banco»: es que en ese correo no
+      // hay ninguno de los nuestros. Un OTHER aqui seria una pestaña llena de
+      // correos que no tienen nada en comun.
+      create.mockResolvedValue(
+        comoRespuestaDeHerramienta(salida({ bank: 'BBVA', company: 'Otra SA' })),
+      );
+
+      const result = await analizar(service);
+
+      expect(result.bank).toBeNull();
+      expect(result.company).toBeNull();
+    });
+
+    it('null se queda en null: es la respuesta correcta y la mas frecuente', async () => {
+      create.mockResolvedValue(comoRespuestaDeHerramienta(salida({})));
+
+      const result = await analizar(service);
+
+      expect(result.bank).toBeNull();
+      expect(result.company).toBeNull();
+    });
+
+    it('un valor que no es texto no tira la extraccion entera', async () => {
+      // Las tareas son lo que de verdad importa: un banco raro no puede
+      // llevarse por delante el analisis completo.
+      create.mockResolvedValue(
+        comoRespuestaDeHerramienta(salida({ bank: 42, tasks: [] })),
+      );
+
+      const result = await analizar(service);
+
+      expect(result.bank).toBeNull();
+      expect(result.category).toBe('OTHER');
+    });
+
+    it('los dos campos van en el esquema Y en su required', async () => {
+      // `strict: true` exige que `required` liste **todas** las propiedades del
+      // objeto: añadir una al esquema y olvidarla aqui hace que la API rechace
+      // la llamada entera, no solo ese campo.
+      create.mockResolvedValue(comoRespuestaDeHerramienta(salida({})));
+
+      await analizar(service);
+
+      const esquema = create.mock.calls[0][0].tools[0].input_schema as {
+        required: string[];
+        properties: Record<string, unknown>;
+      };
+
+      expect(esquema.required).toEqual(expect.arrayContaining(['company', 'bank']));
+      expect(Object.keys(esquema.properties)).toEqual(
+        expect.arrayContaining(['company', 'bank']),
+      );
+    });
+
+    it('el prompt nombra las listas completas', async () => {
+      // Si se añade un banco a `@pmo/shared` y el prompt no lo menciona, el
+      // modelo no lo va a devolver nunca: el enum lo permitiria y nadie se
+      // enteraria de que falta.
+      create.mockResolvedValue(comoRespuestaDeHerramienta(salida({})));
+
+      await analizar(service);
+
+      const system = create.mock.calls[0][0].system as string;
+      for (const banco of BANCOS) expect(system).toContain(banco);
+      for (const empresa of EMPRESAS) expect(system).toContain(empresa);
+    });
   });
 
   describe('extracción de dueDate', () => {
