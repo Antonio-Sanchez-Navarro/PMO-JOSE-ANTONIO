@@ -77,6 +77,56 @@ export function esCuotaAgotada(error: unknown): boolean {
   return /quota exceeded|rate limit|too many requests/.test(mensaje);
 }
 
+/**
+ * Estados con los que Gmail dice «ese mensaje ya no está», y que **no se
+ * arreglan reintentando**.
+ *
+ * - `404` — el mensaje se borró, o se vació la papelera. Es el caso normal.
+ * - `410` — Gone. Lo mismo dicho de otra forma.
+ *
+ * **El 400 se queda fuera a propósito, y es la decisión que importa aquí.** Un
+ * 400 puede significar «ese id está malformado» —un mensaje, permanente— pero
+ * también «el parámetro `format` no vale», que afectaría a **todos** los
+ * mensajes de la tanda por igual. Tratarlo como omisión permanente convertiría
+ * un fallo global en «la tanda entera no existía»: se saltarían todos, el
+ * marcador avanzaría, y el tramo se perdería en silencio. Contado como fallo
+ * normal, lo peor que pasa es que el marcador se atasque y avise, que es el
+ * lado seguro por el que equivocarse.
+ *
+ * Por el mismo motivo no entran ni el 401 ni el 403 de permisos: un OAuth roto
+ * no es un correo borrado, y saltárselos vaciaría la bandeja sin decir nada.
+ */
+const ESTADOS_DE_OMISION = new Set([404, 410]);
+
+/**
+ * ¿Este mensaje no se va a poder descargar **nunca**?
+ *
+ * Nace del P0 de la cuota: `fetchMessages` contaba como `fallidos` cualquier
+ * error por mensaje, y `syncHistory` retiene el marcador cuando hay `fallidos`
+ * para no perder correos. Con un correo **borrado** en el tramo, eso significa
+ * retener el marcador para siempre — el 404 se repite en cada pasada, el
+ * marcador no avanza nunca, y cada notificación de Pub/Sub vuelve a descargar
+ * el tramo entero hasta agotar la cuota de Gmail.
+ *
+ * **Retener protege de perder lo que existe; no sirve de nada con lo que ya no
+ * existe.** Un correo borrado no va a aparecer por reintentarlo: lo único que
+ * consigue el reintento es gastar la cuota que necesitan los correos que sí
+ * están. Por eso estos se omiten, se registran y **dejan avanzar el marcador**.
+ *
+ * La distinción es la misma que ya hacía {@link esCuotaAgotada}, en un tercer
+ * escalón: «para del todo» (cuota), «reintenta esto» (fallo pasajero) y «esto
+ * no vuelve» (omisión permanente). Meterlos en el mismo saco fue el bug.
+ */
+export function esOmisionPermanente(error: unknown): boolean {
+  const estado = estadoHttp(error);
+  if (estado === null || !ESTADOS_DE_OMISION.has(estado)) return false;
+
+  // Un 404 por cuota no existe, pero si algun dia Google mezclara las dos
+  // cosas, «para» gana sobre «saltatelo»: parar de mas cuesta un retraso;
+  // saltarse de mas cuesta correos.
+  return !esCuotaAgotada(error);
+}
+
 /** Cuánto pide esperar Google, en milisegundos, o `null` si no lo dice. */
 export function esperaSugeridaGmailMs(error: unknown, ahora: number = Date.now()): number | null {
   const cabeceras = (error as { response?: { headers?: Record<string, unknown> } } | null)?.response

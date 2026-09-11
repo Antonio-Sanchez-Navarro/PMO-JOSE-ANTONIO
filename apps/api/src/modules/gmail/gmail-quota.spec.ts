@@ -1,4 +1,4 @@
-import { esCuotaAgotada, esperaSugeridaGmailMs, GmailQuotaError } from './gmail-quota';
+import { GmailQuotaError, esCuotaAgotada, esOmisionPermanente, esperaSugeridaGmailMs } from './gmail-quota';
 
 /**
  * El incendio del 2026-09-08 no fue que Gmail nos cortara: fue que **no
@@ -104,5 +104,51 @@ describe('GmailQuotaError', () => {
     expect(error.esperaMs).toBe(45_000);
     expect(error.causaOriginal).toBe(original);
     expect(error.message).toContain('descargando el mensaje abc');
+  });
+});
+
+describe('esOmisionPermanente — lo que no va a volver por insistir', () => {
+  it('un 404 es un mensaje borrado: se omite', () => {
+    expect(esOmisionPermanente({ code: 404 })).toBe(true);
+  });
+
+  it('un 410 tambien', () => {
+    expect(esOmisionPermanente({ code: 410 })).toBe(true);
+  });
+
+  it('lo lee de response.status igual que del code', () => {
+    expect(esOmisionPermanente({ response: { status: 404 } })).toBe(true);
+  });
+
+  it('un 500 NO se omite: puede ser pasajero y ahi retener si salva el correo', () => {
+    expect(esOmisionPermanente({ code: 500 })).toBe(false);
+  });
+
+  it('un 400 NO se omite, aunque no se arregle reintentando', () => {
+    // Un 400 puede ser «ese id esta malformado» (un mensaje) o «el parametro
+    // format no vale» (todos). Tratarlo como omision convertiria un fallo
+    // global en «la tanda entera no existia»: se saltarian todos, el marcador
+    // avanzaria y el tramo se perderia callando. Atascarse y avisar es el lado
+    // seguro por el que equivocarse.
+    expect(esOmisionPermanente({ code: 400 })).toBe(false);
+  });
+
+  it('un 401 NO se omite: un OAuth roto no es un correo borrado', () => {
+    expect(esOmisionPermanente({ code: 401 })).toBe(false);
+  });
+
+  it('un 403 de permisos NO se omite', () => {
+    expect(
+      esOmisionPermanente({ code: 403, errors: [{ reason: 'insufficientPermissions' }] }),
+    ).toBe(false);
+  });
+
+  it('un 429 NO se omite: «para» gana sobre «saltatelo»', () => {
+    expect(esOmisionPermanente({ code: 429 })).toBe(false);
+  });
+
+  it('sin estado reconocible no se omite nada', () => {
+    expect(esOmisionPermanente(new Error('se cayo la red'))).toBe(false);
+    expect(esOmisionPermanente(null)).toBe(false);
   });
 });

@@ -167,6 +167,8 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
     correos?: number;
     /** Correos que Gmail no dejo descargar. Nunca llegan a `persistEmails`. */
     sinDescargar?: number;
+    /** Correos borrados en Gmail: 404 en cada intento, para siempre. */
+    omitidos?: number;
     /** Google corta por cuota al descargar (el incendio del 09-08). */
     cuotaAgotada?: boolean;
   }
@@ -243,6 +245,7 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
           :
         Promise.resolve({
           fallidos: opciones.sinDescargar ?? 0,
+          omitidos: opciones.omitidos ?? 0,
           correos: ids.map((id) => ({
             id,
             threadId: 't',
@@ -299,6 +302,54 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
         expect.stringContaining(MARCADOR_VIEJO),
         `gmail-cuota-agotada:${USUARIO}`,
       );
+    });
+  });
+
+  /**
+   * P0 del 2026-09-11 · el bucle que alimentaba un correo borrado.
+   *
+   * Retener el marcador cuando un correo no se descarga es correcto mientras el
+   * correo **exista**. Con uno borrado, el 404 se repite en cada pasada: el
+   * marcador no avanza nunca, cada notificacion de Pub/Sub redescarga el tramo
+   * entero, y la cuota de Gmail se va en volver a encontrar el mismo 404. El
+   * bucle no lo causaba el borrado, lo causaba tratarlo como recuperable.
+   */
+  describe('correos borrados: se omiten y el marcador avanza', () => {
+    it('un mensaje omitido NO retiene el marcador', async () => {
+      const { service, prisma } = crear({ omitidos: 1 });
+
+      const res = await service.syncHistory(USUARIO);
+
+      expect(prisma.user.update).toHaveBeenCalled();
+      expect(res.historyId).not.toBe(MARCADOR_VIEJO);
+    });
+
+    it('y no avisa: un correo borrado es algo normal en cualquier buzon', async () => {
+      // Avisar de lo normal es la forma de que nadie lea los avisos de verdad.
+      const { service, alertas } = crear({ omitidos: 3 });
+
+      await service.syncHistory(USUARIO);
+
+      expect(alertas.avisar).not.toHaveBeenCalled();
+    });
+
+    it('pero un fallo de descarga de verdad SIGUE reteniendo', async () => {
+      // La mitad que no se puede perder: si el correo existe y no se bajo, el
+      // marcador tiene que esperarlo.
+      const { service, prisma } = crear({ sinDescargar: 1 });
+
+      const res = await service.syncHistory(USUARIO);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(res.historyId).toBe(MARCADOR_VIEJO);
+    });
+
+    it('con omitidos Y fallidos manda el fallido: retiene', async () => {
+      const { service, prisma } = crear({ omitidos: 2, sinDescargar: 1 });
+
+      await service.syncHistory(USUARIO);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
   });
 
@@ -853,5 +904,118 @@ describe('GmailService · listLabels', () => {
   it('un buzon sin etiquetas devuelve lista vacia, no revienta', async () => {
     const { service } = crear([]);
     await expect(service.listLabels('user-1')).resolves.toEqual([]);
+  });
+});
+
+describe('GmailService · fetchMessages distingue los tres desenlaces', () => {
+  /**
+   * Un cliente de Gmail que contesta lo que se le diga por id.
+   *
+   * Se prueba `fetchMessages` sin doble a proposito: el reparto entre
+   * `correos`, `fallidos` y `omitidos` es justo lo que se rompio, y un doble de
+   * `fetchMessages` —como el que usan las pruebas del marcador— lo daria por
+   * bueno sin ejecutarlo.
+   */
+  function crearServicio(respuestas: Record<string, unknown>) {
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn() } as never,
+      {} as never,
+      { add: jest.fn() } as never,
+      { avisar: jest.fn() } as never,
+    );
+
+    const get = jest.fn().mockImplementation(({ id }: { id: string }) => {
+      const respuesta = respuestas[id];
+      if (respuesta instanceof Error || (respuesta && typeof respuesta === 'object' && 'code' in respuesta)) {
+        return Promise.reject(respuesta);
+      }
+      return Promise.resolve({
+        data: {
+          id,
+          threadId: 't',
+          snippet: '',
+          labelIds: [],
+          payload: { headers: [{ name: 'From', value: 'a@b.c' }, { name: 'Subject', value: 's' }] },
+        },
+      });
+    });
+
+    const gmail = { users: { messages: { get } } };
+
+    const llamar = (ids: string[]) =>
+      (
+        service as unknown as {
+          fetchMessages: (
+            g: unknown,
+            ids: string[],
+            f: string,
+          ) => Promise<{ correos: unknown[]; fallidos: number; omitidos: number }>;
+        }
+      ).fetchMessages(gmail, ids, 'metadata');
+
+    return { llamar, get };
+  }
+
+  it('un 404 cuenta como omitido, no como fallido', async () => {
+    const { llamar } = crearServicio({ vivo: {}, borrado: { code: 404 } });
+
+    const res = await llamar(['vivo', 'borrado']);
+
+    expect(res.correos).toHaveLength(1);
+    expect(res.omitidos).toBe(1);
+    // Lo que cerraba el bucle: este cero es el que deja avanzar el marcador.
+    expect(res.fallidos).toBe(0);
+  });
+
+  it('un 410 igual', async () => {
+    const { llamar } = crearServicio({ ido: { code: 410 } });
+
+    const res = await llamar(['ido']);
+
+    expect(res.omitidos).toBe(1);
+    expect(res.fallidos).toBe(0);
+  });
+
+  it('un 500 sigue contando como fallido: puede ser pasajero', async () => {
+    const { llamar } = crearServicio({ roto: { code: 500 } });
+
+    const res = await llamar(['roto']);
+
+    expect(res.fallidos).toBe(1);
+    expect(res.omitidos).toBe(0);
+  });
+
+  it('un 400 cuenta como fallido, no como omitido', async () => {
+    // Podria ser un id malformado (un mensaje) o un `format` invalido (todos).
+    // Omitirlo se saltaria la tanda entera y avanzaria el marcador callando.
+    const { llamar } = crearServicio({ raro: { code: 400 } });
+
+    const res = await llamar(['raro']);
+
+    expect(res.fallidos).toBe(1);
+    expect(res.omitidos).toBe(0);
+  });
+
+  it('la cuota sigue parando la ingesta entera, por encima de todo', async () => {
+    const { llamar } = crearServicio({
+      vivo: {},
+      sinCuota: { code: 429 },
+    });
+
+    await expect(llamar(['vivo', 'sinCuota'])).rejects.toBeInstanceOf(GmailQuotaError);
+  });
+
+  it('una tanda entera de borrados no deja ningun fallido detras', async () => {
+    // El caso que atascaba de verdad: un tramo viejo cuyos correos ya se
+    // vaciaron de la papelera. Con todo contado como fallido, ese tramo no
+    // avanzaba nunca.
+    const ids = ['a', 'b', 'c'];
+    const { llamar } = crearServicio({ a: { code: 404 }, b: { code: 404 }, c: { code: 404 } });
+
+    const res = await llamar(ids);
+
+    expect(res).toEqual(expect.objectContaining({ fallidos: 0, omitidos: 3 }));
+    expect(res.correos).toEqual([]);
   });
 });

@@ -8,7 +8,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { describirError, stackDe } from '../../common/observability/describir-error';
 import { AlertService } from '../../common/alerts/alert.service';
 import type { ClassifyEmailJob } from '../ai/classify-email.job';
-import { esCuotaAgotada, GmailQuotaError } from './gmail-quota';
+import { GmailQuotaError, esCuotaAgotada, esOmisionPermanente } from './gmail-quota';
 
 /**
  * Qué pasó al intentar poner el `watch` de un buzón.
@@ -73,6 +73,20 @@ export interface GmailLabel {
   name: string;
   type: 'system' | 'user';
 }
+
+/**
+ * «Este mensaje ya no está en Gmail», como resultado de una descarga.
+ *
+ * Es un `Symbol` y no `null` porque `null` ya significa otra cosa —«falló, quizá
+ * se recupere»— y de la diferencia entre las dos depende que el marcador de
+ * historial avance o se quede clavado. Un tercer estado disfrazado del segundo
+ * fue exactamente el P0 de la cuota; con un símbolo propio, confundirlos deja de
+ * compilar.
+ */
+const OMITIDO = Symbol('mensaje omitido: Gmail ya no lo tiene');
+
+/** Lo que puede salir de intentar bajar un mensaje suelto. */
+type ResultadoDescarga = EmailSnippet | typeof OMITIDO | null;
 
 /** Cuántos correos trae la primera sincronización cuando no hay `historyId` previo. */
 const BACKFILL_SIZE = 25;
@@ -318,14 +332,32 @@ export class GmailService {
    *
    * Ahora el recuento sube, y {@link syncHistory} retiene el marcador si falta
    * algo: el mismo criterio que ya se aplica al `upsert` y al `add`.
+   *
+   * ⚠️ **`omitidos` no es `fallidos`, y confundirlos era el P0 de la cuota.**
+   * Un mensaje **borrado** responde 404 en cada intento, para siempre. Contarlo
+   * como fallo hacía que {@link syncHistory} retuviera el marcador para no
+   * perderlo — y retener no salva lo que ya no existe: solo garantiza que la
+   * siguiente notificación vuelva a descargar el tramo entero, encuentre el
+   * mismo 404 y retenga otra vez. Un bucle cerrado que se come la cuota de
+   * Gmail, con el agravante de que **cuanta menos cuota queda, más se repite**.
+   *
+   * Así que hay tres desenlaces por mensaje y no dos:
+   *
+   * - **Cuota agotada** → se relanza y para la ingesta entera. No es este
+   *   correo el que falla, es que Google dejó de atendernos.
+   * - **Omisión permanente** (404/410) → se registra, no cuenta, y el marcador
+   *   **avanza**. El correo no va a volver por insistir.
+   * - **Cualquier otro fallo** → cuenta en `fallidos` y retiene el marcador,
+   *   como hasta ahora. Puede ser pasajero, y ahí retener sí salva el correo.
    */
   private async fetchMessages(
     gmail: GmailClient,
     ids: string[],
     format: 'full' | 'metadata',
-  ): Promise<{ correos: EmailSnippet[]; fallidos: number }> {
+  ): Promise<{ correos: EmailSnippet[]; fallidos: number; omitidos: number }> {
     const correos: EmailSnippet[] = [];
     let fallidos = 0;
+    let omitidos = 0;
 
     // ─── De tandas, no todos a la vez ──────────────────────────────
     //
@@ -351,7 +383,7 @@ export class GmailService {
       }
 
       const resultados = await Promise.all(
-        tanda.map(async (id) => {
+        tanda.map(async (id): Promise<ResultadoDescarga> => {
           try {
             const detail = await gmail.users.messages.get({
               userId: 'me',
@@ -379,6 +411,26 @@ export class GmailService {
               throw new GmailQuotaError(err, `descargando el mensaje ${id}`);
             }
 
+            // ─── Lo que no va a volver ─────────────────────────────────
+            //
+            // Un mensaje borrado da 404 hoy, mañana y la semana que viene.
+            // Contarlo como fallo retiene el marcador, y el marcador retenido
+            // vuelve a pedir este mismo mensaje en la siguiente pasada: el
+            // bucle no lo provocaba el borrado, lo provocaba tratarlo como si
+            // fuera recuperable.
+            //
+            // Se registra —no desaparece del relato— pero deja pasar al
+            // marcador. `info` y no `warn`: un correo borrado es una cosa
+            // normal que pasa en cualquier buzón, y llenar de avisos lo normal
+            // es la forma de que nadie lea los avisos de verdad.
+            if (esOmisionPermanente(err)) {
+              this.logger.log(
+                `Mensaje ${id} omitido: Gmail ya no lo tiene (${describirError(err)}). ` +
+                  'No cuenta como fallo y el marcador avanza.',
+              );
+              return OMITIDO;
+            }
+
             this.logger.warn(
               `Error obteniendo detalle del mensaje ${id}: ${describirError(err)}`,
               stackDe(err),
@@ -389,12 +441,20 @@ export class GmailService {
       );
 
       for (const r of resultados) {
-        if (r) correos.push(r);
+        if (r === OMITIDO) omitidos++;
+        else if (r) correos.push(r);
         else fallidos++;
       }
     }
 
-    return { correos, fallidos };
+    if (omitidos > 0) {
+      this.logger.warn(
+        `${omitidos} mensaje(s) de ${ids.length} ya no estan en Gmail y se omiten. ` +
+          'El marcador avanza igual: reintentarlos solo gastaria cuota.',
+      );
+    }
+
+    return { correos, fallidos, omitidos };
   }
 
   private toEmailSnippet(message: gmail_v1.Schema$Message): EmailSnippet {
@@ -684,7 +744,7 @@ export class GmailService {
       const descarga =
         messageIds.length > 0
           ? await this.fetchMessages(gmail, messageIds, 'full')
-          : { correos: [], fallidos: 0 };
+          : { correos: [], fallidos: 0, omitidos: 0 };
 
       const recuento = await this.persistEmails(userId, descarga.correos);
 
@@ -741,6 +801,13 @@ export class GmailService {
       // ninguna parte— y `descarga.fallidos` es uno que Gmail no dejó bajar,
       // que tampoco llegó a la base. Si el marcador avanzara, ninguno de los
       // dos se volvería a ver: `users.history.list` ya no los mencionaría.
+      // ⚠️ **`descarga.omitidos` tampoco retiene, y es el arreglo del P0 de la
+      // cuota (2026-09-11).** Son los 404: mensajes que Gmail ya no tiene
+      // porque se borraron. Retener el marcador existe para no perder un correo
+      // que sigue ahí; con uno borrado no hay nada que salvar, y lo único que
+      // se consigue es que la siguiente notificación redescargue el tramo
+      // entero, se encuentre el mismo 404 y retenga otra vez. El bucle no lo
+      // causaba el borrado: lo causaba tratarlo como recuperable.
       const quedaPendiente = descarga.fallidos > 0 || recuento.fallidos > 0;
       const newHistoryId = quedaPendiente
         ? startHistoryId
@@ -753,7 +820,7 @@ export class GmailService {
       this.logger.log(
         `Sync incremental para ${userId}: ${recuento.encolados} encolado(s), ` +
           `${recuento.guardados} guardado(s), ${descarga.fallidos} sin descargar, ` +
-          `${recuento.fallidos} fallido(s), ` +
+          `${descarga.omitidos} omitido(s), ${recuento.fallidos} fallido(s), ` +
           `${recuento.sinEncolar} sin encolar · historyId ${startHistoryId} → ${newHistoryId}` +
           (quedaPendiente ? ' (marcador RETENIDO: se reintentara el mismo tramo)' : ''),
       );
@@ -807,8 +874,12 @@ export class GmailService {
           `Usuario ${userId}: Google responde 403/429 por cuota. La ingesta se para y el ` +
             `historyId se queda en ${startHistoryId} sin avanzar, asi que no se pierde el ` +
             'tramo. Se reanuda sola cuando el cubo se rellene. Si esto se repite sin parar, ' +
-            'mira si algo esta reintentando en bucle: la causa tipica es un fallo aguas ' +
-            'abajo (clasificacion caida) que retiene el marcador y hace repetir el tramo.',
+            'busca que esta reteniendo el marcador: un marcador que no avanza hace que cada ' +
+            'notificacion redescargue el mismo tramo, y eso agota la cuota por si solo. ' +
+            'Hoy solo lo retienen un correo que no se pudo descargar o un upsert que fallo ' +
+            '(mira el aviso gmail-sync-incompleta, que dice cuantos son de cada). Los ' +
+            'correos guardados sin encolar dejaron de retenerlo el 2026-09-09, y los ' +
+            'mensajes borrados en Gmail el 2026-09-11.',
           `gmail-cuota-agotada:${userId}`,
         );
 
@@ -879,7 +950,9 @@ export class GmailService {
 
     const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
     const descarga =
-      ids.length > 0 ? await this.fetchMessages(gmail, ids, 'full') : { correos: [], fallidos: 0 };
+      ids.length > 0
+        ? await this.fetchMessages(gmail, ids, 'full')
+        : { correos: [], fallidos: 0, omitidos: 0 };
     const recuento = await this.persistEmails(userId, descarga.correos);
 
     // El historyId del perfil marca "todo lo anterior ya está sincronizado".
@@ -897,7 +970,7 @@ export class GmailService {
     this.logger.log(
       `Backfill para ${userId}: ${recuento.encolados} encolado(s), ` +
         `${recuento.guardados} guardado(s), ${descarga.fallidos} sin descargar, ` +
-        `${recuento.fallidos} fallido(s), ` +
+        `${descarga.omitidos} omitido(s), ${recuento.fallidos} fallido(s), ` +
         `${recuento.sinEncolar} sin encolar · historyId → ${historyId}`,
     );
 
