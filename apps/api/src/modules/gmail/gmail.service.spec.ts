@@ -1173,3 +1173,122 @@ describe('GmailService · fichas de los adjuntos (Fase 8)', () => {
     expect(r.attachments[0].size).toBe(0);
   });
 });
+
+describe('GmailService · el goteo entre tandas (Fase 8.1)', () => {
+  /**
+   * Estas pruebas usan relojes falsos: la pausa de fondo son 5 s de verdad, y
+   * una suite que los espere deja de ejecutarse en cada commit.
+   *
+   * `advanceTimersByTime` no basta por si solo —hay `await` de promesas entre
+   * medias— asi que se avanza en bucle cediendo el turno al bucle de eventos
+   * hasta que la promesa resuelve.
+   */
+  function crearServicio(respuestaPorId: () => unknown) {
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn() } as never,
+      {} as never,
+      { add: jest.fn() } as never,
+      { avisar: jest.fn() } as never,
+    );
+
+    const get = jest.fn().mockImplementation(({ id }: { id: string }) =>
+      Promise.resolve({
+        data: {
+          id,
+          threadId: 't',
+          snippet: '',
+          labelIds: [],
+          payload: { headers: [{ name: 'From', value: 'a@b.c' }] },
+          ...(respuestaPorId() as object),
+        },
+      }),
+    );
+
+    return { service, gmail: { users: { messages: { get } } }, get };
+  }
+
+  const llamar = (
+    service: GmailService,
+    gmail: unknown,
+    ids: string[],
+    pausa?: number,
+  ) =>
+    (
+      service as unknown as {
+        fetchMessages: (g: unknown, i: string[], f: string, p?: number) => Promise<unknown>;
+      }
+    ).fetchMessages(gmail, ids, 'metadata', pausa);
+
+  /** Deja correr los temporizadores falsos hasta que la promesa termine. */
+  async function resolverConRelojFalso<T>(promesa: Promise<T>): Promise<T> {
+    let viva = true;
+    const acabada = promesa.finally(() => {
+      viva = false;
+    });
+
+    while (viva) {
+      await Promise.resolve();
+      jest.advanceTimersByTime(1_000);
+      await Promise.resolve();
+    }
+
+    return acabada;
+  }
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it('una sola tanda NO espera: un correo nuevo no paga la pausa', async () => {
+    // Es el caso normal de la ingesta —llega un correo, se descarga— y el que
+    // mantiene la latencia baja pese a que la pausa sea de 5 s.
+    const { service, gmail } = crearServicio(() => ({}));
+
+    const ids = Array.from({ length: 10 }, (_, i) => `m${i}`);
+    await resolverConRelojFalso(llamar(service, gmail, ids));
+
+    // Cero temporizadores pendientes = no se llamo a `esperar` ni una vez.
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('entre dos tandas si espera, y lo que diga la pausa que le pasen', async () => {
+    const { service, gmail, get } = crearServicio(() => ({}));
+
+    const ids = Array.from({ length: 25 }, (_, i) => `m${i}`);
+    await resolverConRelojFalso(llamar(service, gmail, ids, 5_000));
+
+    // 25 ids en tandas de 10 son tres tandas y, por tanto, dos pausas.
+    expect(get).toHaveBeenCalledTimes(25);
+  });
+
+  it('la bandeja interactiva pasa su propia pausa, no la de la ingesta', async () => {
+    // `getInbox` contesta a alguien que esta mirando: con la pausa de fondo,
+    // `?maxResults=100` serian 45 s de spinner.
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn() } as never,
+      {} as never,
+      { add: jest.fn() } as never,
+      { avisar: jest.fn() } as never,
+    );
+
+    const fetchMessages = jest
+      .fn()
+      .mockResolvedValue({ correos: [], fallidos: 0, omitidos: 0 });
+    (service as unknown as { fetchMessages: unknown }).fetchMessages = fetchMessages;
+    (service as unknown as { getGmailClient: unknown }).getGmailClient = jest
+      .fn()
+      .mockResolvedValue({
+        users: {
+          messages: {
+            list: jest.fn().mockResolvedValue({ data: { messages: [{ id: 'a' }] } }),
+          },
+        },
+      });
+
+    await service.getInbox('user-1', 20, { includeBody: false });
+
+    // El cuarto argumento es la pausa, y tiene que ser la corta.
+    expect(fetchMessages.mock.calls[0][3]).toBe(1_000);
+  });
+});

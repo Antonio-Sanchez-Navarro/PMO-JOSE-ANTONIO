@@ -152,9 +152,16 @@ const BACKFILL_SIZE = 25;
  * que ya no merece la pena alcanzarlo pagina a pagina"**.
  *
  * El limite real no es este numero, es el tiempo: 20 llamadas a Gmail mas el
- * `fetchMessages` de lo que traigan caben con holgura en los 300 s que Cloud Run
- * da por defecto, y el objetivo es **decidir nosotros** antes de que la
- * plataforma decida por nosotros a mitad de escritura.
+ * `fetchMessages` de lo que traigan tienen que caber en el timeout del
+ * servicio, y el objetivo es **decidir nosotros** antes de que la plataforma
+ * decida por nosotros a mitad de escritura.
+ *
+ * ⚠️ _Corregido el 2026-09-11:_ aqui ponia «los 300 s que Cloud Run da por
+ * defecto». El despliegue pasa `--timeout=900s` desde que el copiloto lo
+ * necesito, asi que el margen real es el triple del que decia este parrafo. Y
+ * el margen ya no sobra como sobraba: con `PAUSA_ENTRE_TANDAS_MS` en 5 s, una
+ * pasada de mas de ~1.100 mensajes no cabe. 20 paginas de historial pueden
+ * traer muchos mas.
  *
  * Si algun dia hay mas de un usuario o el buzon recibe mucho mas, esto es lo
  * primero que hay que revisar -junto con el `--timeout` del servicio-.
@@ -188,13 +195,56 @@ const TANDA_DESCARGA = 10;
 /**
  * Pausa entre tandas de descarga.
  *
- * La cuota de Gmail se mide en unidades **por minuto y por usuario**, así que
- * lo que la agota es el ritmo, no el tamaño del lote. Con 10 mensajes por tanda
- * y esta pausa salen ~450 peticiones/minuto sostenidas, muy por debajo del
- * techo, y el coste para el usuario es invisible: un tramo de 25 correos tarda
- * dos segundos más y nadie lo está mirando —la ingesta es de fondo—.
+ * La cuota de Gmail se mide por ritmo, no por tamaño del lote, así que lo que
+ * la agota es la velocidad a la que se encadenan las tandas. Con 10 mensajes
+ * por tanda y esta pausa salen **unas 85 peticiones por minuto** sostenidas
+ * (10 mensajes cada ~7 s contando lo que tarda la descarga en sí), frente a las
+ * ~240 de cuando esto valía 1 s.
+ *
+ * **Subió a 5 s el 2026-09-11 para digerir el atasco de dos días** sin que
+ * Google corte. El coste sigue siendo invisible para quien usa el tablero: la
+ * ingesta es de fondo y nadie la está mirando.
+ *
+ * ⚠️ **El techo de este número no es la cuota: es el timeout de Cloud Run.**
+ * El marcador de historial solo avanza **al final** de `syncHistory`, así que
+ * una pasada que no termine no avanza nada — y Pub/Sub reintenta desde el mismo
+ * sitio. Exactamente el bucle que esto viene a evitar, por la otra puerta.
+ *
+ * La cuenta, con el servicio desplegado a `--timeout=900s`:
+ *
+ * ```text
+ * tandas = ceil(mensajes / 10)
+ * tiempo ≈ (tandas - 1) × PAUSA + tandas × (lo que tarde la descarga, ~2 s)
+ * ```
+ *
+ * Con 5 s salen **~1.100 mensajes por pasada** antes de rozar el timeout; con
+ * 8 s, unos 800. Por eso 5 y no 8: el atasco es de dos días y no sabemos
+ * cuántos correos son, así que entre los dos valores que se pidieron se elige
+ * el que deja más margen mientras frena igual (1/5 del ritmo anterior).
+ *
+ * Si una pasada empieza a morir por timeout, **subir esto lo empeora**: lo que
+ * hay que tocar entonces es cuántos mensajes entran en una pasada, no cuánto se
+ * espera entre tandas.
  */
-const PAUSA_ENTRE_TANDAS_MS = 1_000;
+const PAUSA_ENTRE_TANDAS_MS = 5_000;
+
+/**
+ * Pausa entre tandas **cuando hay una persona esperando la respuesta**.
+ *
+ * `fetchMessages` lo usan dos clases de trabajo que no se parecen: la ingesta,
+ * que es de fondo y puede tardar lo que haga falta, y `getInbox`, que contesta
+ * a `GET /gmail/inbox` con alguien mirando la pantalla.
+ *
+ * **Sin esta separación, subir la pausa de fondo castiga al usuario**: con
+ * `maxResults` en 20 son dos tandas, o sea una espera de 5 s añadida a cada
+ * carga de la bandeja; con `?maxResults=100`, diez tandas y **45 s** mirando un
+ * spinner. La ingesta puede permitirse gotear porque nadie la mira; esto no.
+ *
+ * Se queda en el segundo de siempre: es el ritmo que la bandeja llevaba hasta
+ * hoy sin dar problemas, y una carga puntual de 20 correos no es lo que atasca
+ * la cuota — lo que la atasca es el goteo sostenido de la recuperación.
+ */
+const PAUSA_INTERACTIVA_MS = 1_000;
 
 /** `setTimeout` en forma de promesa. Sin dependencias: no hace falta más. */
 const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -351,7 +401,14 @@ export class GmailService {
 
     // Lectura para la vista: aqui un fallo de descarga solo significa una fila
     // menos en la lista, no un correo perdido. No hay marcador que retener.
-    const { correos } = await this.fetchMessages(gmail, ids, options.includeBody ? 'full' : 'metadata');
+    const { correos } = await this.fetchMessages(
+      gmail,
+      ids,
+      options.includeBody ? 'full' : 'metadata',
+      // Aqui hay alguien mirando: la pausa larga de la ingesta convertiria una
+      // carga de 20 correos en cinco segundos de spinner.
+      PAUSA_INTERACTIVA_MS,
+    );
     return correos;
   }
 
@@ -396,6 +453,9 @@ export class GmailService {
     gmail: GmailClient,
     ids: string[],
     format: 'full' | 'metadata',
+    // Por defecto, el ritmo de fondo. Quien conteste a una persona pasa
+    // `PAUSA_INTERACTIVA_MS` y lo dice en la llamada, que es donde se entiende.
+    pausaEntreTandasMs: number = PAUSA_ENTRE_TANDAS_MS,
   ): Promise<{ correos: EmailSnippet[]; fallidos: number; omitidos: number }> {
     const correos: EmailSnippet[] = [];
     let fallidos = 0;
@@ -421,7 +481,7 @@ export class GmailService {
       // lote sino la velocidad a la que se encadenan. Esta pausa —solo entre
       // tandas, nunca antes de la primera— convierte una ráfaga en un goteo.
       if (i > 0) {
-        await esperar(PAUSA_ENTRE_TANDAS_MS);
+        await esperar(pausaEntreTandasMs);
       }
 
       const resultados = await Promise.all(
