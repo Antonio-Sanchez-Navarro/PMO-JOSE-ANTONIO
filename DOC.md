@@ -287,6 +287,8 @@ Con esto el código y la documentación están inmaculados, el CI/CD en verde, y
 - **El campo `Estado` de un encargo lo decide solo Doc:** Ha fallado dos veces: trabajo entrando con el documento en pausa, y encargos pidiendo cosas ya entregadas. **Desde el 2026-08-20, con Doc escribiendo solo en este archivo, el valor lo dicta Doc y lo transcribe el dueño de la bitácora.** El ejecutor no lo elige; lo copia.
 - **Un estado verificado caduca en cuanto alguien actúa sobre él:** lección de @Alana el 2026-08-20, que publicó una propuesta de tres capas y descubrió que la Capa 2 se había entregado mientras la escribía. Antes de publicar cualquier cosa que describa el estado del sistema, `git log` otra vez.
 - **Verificar en el código antes de dar una casilla por cerrada:** Nunca confiar ciegamente en el reporte sin evidencia (logs, HTTP 200 o el monitor en vivo).
+- **Doc escribe los encargos en los buzones (PROMPT_*.md) y da el comando exacto al Jefe:** Repartir no significa decirle al Jefe "dile a Claude que haga esto". Repartir significa que Doc va al archivo `PROMPT_CLAUDE.md` o `PROMPT_GRAVITY.md`, escribe el encargo detallado (basado en la investigación previa), y le entrega al Jefe la orden exacta de consola (ej. `! Lee tu buzón en PROMPT_CLAUDE.md`) para despertar al agente. Lo que no está escrito y listo para correr, no está repartido.
+- **Resumen ejecutivo de Doc en el chat:** Siempre que Doc proponga una estrategia y escriba un encargo en los buzones, **debe dejar en el chat un resumen en lenguaje claro para el Jefe.** El Jefe necesita entender exactamente qué se está proponiendo *antes* de dar la orden en consola, para poder vetar o cambiar el plan si la estrategia no le encaja.
 
 ---
 
