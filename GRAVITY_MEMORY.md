@@ -391,3 +391,70 @@ camino manual. Los otros dos no tienen nada que el Jefe pueda hacer.
 - **La cabecera sigue sin poder decir la verdad**: dice «N correos cargados»
   porque no hay `total` hasta que se consuma la ruta de hilos.
 - **No hay UI de `bulk-approve`.** Fuera de alcance por decisión de Doc.
+
+## Fase 7 — Conectada la bandeja por hilos del servidor · `9265415` · 2026-09-11
+
+Cierra el frontend de la fase: `GET /emails/threads` consumido, `email.bulk_updated`
+escuchado y el atajo masivo corregido.
+
+### 1. Me equivoqué de trampa, y el contrato ajeno me lo enseñó
+
+En `c172d3f` escribí el atajo de no accionables como `isActionable === false`, y
+escribí al lado por qué: para no tragarme el `undefined` del campo que aún no
+viajaba. **El razonamiento estaba bien y el criterio estaba mal.** El contrato de
+@Claude documentaba la trampa de verdad:
+
+> La columna `isActionable` nace en `false` y se queda ahí hasta que alguien
+> clasifique el correo.
+
+O sea que en cuanto el campo empezara a viajar, mi `=== false` —el que puse *por
+prudencia*— habría metido en el lote todos los correos sin analizar. Y el lote
+los descarta. El fallo habría llegado **al encenderse el botón**, no al
+escribirlo: código que pasa revisión, compila y se estrena roto meses después.
+
+**Lo que me llevo:** defenderse de la forma de un dato (`undefined`) no es lo
+mismo que defenderse de su significado. Antes de escribir un predicado sobre un
+campo ajeno hay que preguntar **cuál es su valor por defecto y quién lo escribe**,
+y eso no está en el tipo — está en el contrato o en la migración. Un `boolean`
+nunca te va a avisar de que su `false` significa dos cosas.
+
+El criterio bueno es `allNonActionable`, que es del hilo y exige tres cosas por
+correo: worker despachado, IA con opinión y veredicto negativo. La regla general:
+**si un atajo barre en bloque, el campo que lo alimenta tiene que distinguir «no»
+de «todavía no sé»**. Si no lo distingue, no sirve, por muy booleano que sea.
+
+### 2. La agrupación de cliente era verdad y engañaba igual
+
+La cabecera decía «20 correos cargados». Nunca fue falso. Pero con 728 detrás,
+quien lo leía no podía saberlo, y la agrupación juntaba dos mensajes de la misma
+conversación **solo si la casualidad los ponía en la misma página**.
+
+Ahora con `total` y `totalEmails` dice «401 conversaciones · 728 correos». La
+lección no es sobre hilos: **un dato correcto puede desinformar si el que lo lee
+no puede situarlo**, y el arreglo no es cambiar el número sino darle el contexto
+que le falta.
+
+### 3. El hilo dejó de desplegarse, a propósito
+
+`GET /emails/threads` manda el correo más reciente y **los ids del resto**, no los
+mensajes. Desplegar exigiría un `GET /emails/:id` por respuesta. Se quitó el
+plegado: la fila es la unidad de decisión y la casilla marca el hilo entero. Es
+menos interfaz y más capacidad — despachar 401 conversaciones sin abrir 728
+correos era justo el encargo.
+
+### 4. Dos avisos del contrato que la interfaz obedece
+
+- **`messageCount` son los correos que deja el filtro**, no los de la
+  conversación: con `?status=PENDING`, un hilo de seis con dos pendientes llega
+  con 2. No se pinta como «mensajes del hilo» porque mentiría siempre que haya
+  filtro, que es siempre.
+- **Las facetas de etiqueta se cuentan sobre `latest`**, el único correo que
+  viaja. El número bajó respecto a antes y no es una regresión: ahora cuenta
+  hilos. Queda escrito en el propio `useMemo` para que nadie lo «arregle».
+
+### Deuda que queda
+
+- **El filtro de etiqueta es de página**, no de servidor: filtra los hilos
+  cargados. Lo era antes también, pero ahora se nota más porque la página es de
+  hilos. Si hace falta de verdad, es un filtro nuevo en `GET /emails/threads`.
+- **No hay UI de `bulk-approve`.** Fuera de alcance por decisión de Doc.
