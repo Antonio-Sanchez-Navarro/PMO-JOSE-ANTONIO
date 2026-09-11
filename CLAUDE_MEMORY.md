@@ -1,3 +1,127 @@
+## Fase 8 — cuota, adjuntos y las dos listas cerradas (2026-09-11)
+
+**885 pruebas en 40 suites**, en verde. `tsc` y ESLint limpios. Tres commits:
+el P0 de la cuota, los vocabularios de banco y empresa, y la épica de adjuntos.
+
+### El P0: un correo borrado se comía la cuota de Gmail
+
+`fetchMessages` contaba como `fallidos` **cualquier** error por mensaje, y
+`syncHistory` retiene el marcador cuando hay `fallidos` para no perder correos.
+Con un correo borrado en el tramo, eso es retener para siempre: el 404 se repite
+en cada pasada, el marcador no avanza nunca, y cada notificación de Pub/Sub
+redescarga el tramo entero para encontrarse el mismo 404.
+
+**Retener protege de perder lo que existe; no sirve de nada con lo que ya no
+existe.** Esa es la frase entera del arreglo. Ahora hay tres desenlaces por
+mensaje y no dos: cuota (para la ingesta), omisión permanente 404/410 (se
+registra, no cuenta, el marcador avanza) y cualquier otro fallo (cuenta y
+retiene, como siempre).
+
+**Es la tercera vez que este bucle aparece con otra cara.** El 08-09 fue la
+clasificación caída dejando todo `sinEncolar`; el 09-09 se sacó `sinEncolar` de
+los que retienen; hoy, el 404. Cada vez, el mismo patrón: algo que no se puede
+arreglar reintentando, tratado como si se pudiera. **La pregunta que ahorra la
+próxima no es «¿esto falló?» sino «¿reintentarlo puede cambiar el resultado?»**
+— si no, retener no es prudencia, es un bucle.
+
+**Y el 400 se quedó fuera de las omisiones a propósito.** Un 400 puede ser «ese
+id está malformado» —un mensaje— o «el parámetro `format` no vale», que
+afectaría a la tanda entera. Tratarlo como omisión convertiría un fallo global
+en «la tanda entera no existía»: se saltarían todos, el marcador avanzaría y el
+tramo se perdería en silencio. **Atascarse y avisar es el lado seguro por el que
+equivocarse**, y por eso el 401 y el 403 de permisos tampoco entran.
+
+El centinela es un `Symbol` y no `null` porque `null` ya significaba «falló,
+quizá se recupere». Confundir los dos era el bug; ahora no compila.
+
+De paso, la alerta `gmail-cuota-agotada` decía que la causa típica es una
+clasificación caída aguas abajo. Dejó de ser cierto el 09-09. Un texto de alerta
+que describe el mundo de hace dos semanas manda a mirar donde ya no está.
+
+### Banco y empresa: `null` no es «no lo sé»
+
+Las listas van en `@pmo/shared` y como `enum` en la herramienta, que es la
+lección de `category` aplicada antes de que cueste: mientras fue `type: string`,
+la API aceptó salidas corruptas del modelo dentro del valor.
+
+Aquí hubo un motivo propio y más fuerte: **estos campos se convierten en
+pestañas**, así que «Santander», «SANTANDER» y «santander» serían tres. Por eso
+`canonico()` normaliza en vez de guardar lo que llegue.
+
+**Lo que no está en la lista degrada a `null` y no a un valor de respaldo, al
+revés que `category` con su `OTHER`.** Y la diferencia no es estética: un
+`OTHER` en `category` es una categoría legítima —«este correo no encaja»— pero
+un «otro banco» sería una pestaña con correos que no tienen nada en común. La
+regla que me llevo: **un valor de respaldo solo vale cuando el respaldo
+significa algo**; si no, el hueco es más honesto.
+
+Se persisten siempre, también en `null`. Dejar el valor viejo por no pisarlo
+convertiría un banco corregido en un banco pegado para siempre.
+
+### Adjuntos: lo caro no era el código, era decidir qué se manda
+
+La ficha se guarda, el contenido no. Un correo con tres PDF de 8 MB son tres
+fichas de doscientos bytes, y el binario se le pide a Gmail cuando alguien lo
+necesita.
+
+**`attachment-budget.ts` vive aparte porque equivocarse ahí no da un error: da
+una factura.** Y el filtro que más ahorra es el que no estaba en el encargo:
+
+⚠️ **Los adjuntos incrustados no se mandan.** Casi toda firma corporativa lleva
+un logo, y el logo tiene `attachmentId` igual que un contrato. Sin ese filtro,
+la clasificación le mandaría a Claude el logotipo de la empresa **en cada correo
+que entra**, pagando tokens de imagen por mirar un PNG de 4 KB. Se distinguen
+por `Content-Disposition: inline` o por tener `Content-ID`, y se miran los dos
+porque no todos los clientes de correo escriben los dos.
+
+El tope por archivo es 4,5 MB y no 5: lo que se cuenta es el tamaño que declara
+Gmail, y lo que viaja es base64, que abulta un tercio más.
+
+### El aviso tiene que seguir al hecho
+
+El prompt decía siempre «NO puedes ver su contenido». Era verdad y dejó de
+serlo, y **quitarlo del todo habría sido el error fácil**: un correo puede traer
+tres PDF de los que se manden dos y se quede fuera uno de 20 MB. Sin aviso, el
+modelo escribe «según el documento adjunto…» sobre el que no vio; con el aviso
+puesto siempre, se le prohíbe usar justo lo que acabamos de pagar por mandarle.
+
+Por eso los ausentes viajan **con nombre y motivo** desde el reparto hasta el
+prompt, y se nombran uno a uno. Es la mitad del trabajo que no se ve en la
+respuesta de la API y sin la cual el resto no vale.
+
+### La ruta de descarga es la parte con superficie de ataque
+
+Dos cosas que no son opcionales:
+
+1. **Se comprueba que el adjunto sea de ese correo**, no solo que el correo sea
+   del usuario. El `userId` protege el correo; es la lista de fichas la que dice
+   qué adjuntos son suyos. Sin eso, la ruta es un proxy para bajar cualquier
+   adjunto del buzón conociendo su id.
+2. **`Content-Disposition: inline` va por lista de permitidos, no de
+   prohibidos.** Un adjunto `text/html` servido en línea se ejecuta en
+   **nuestro** origen, con la cookie de sesión a mano: bastaría mandarle un
+   correo al Jefe para robarle la sesión en cuanto lo abriera. Y el nombre del
+   archivo lo escribió el remitente y acaba dentro de una cabecera HTTP, así que
+   un salto de línea ahí la parte en dos.
+
+### Lo que **no** está verificado
+
+Lo mismo que la Fase 7, y ahora pesa más: **Docker sigue parado, así que nada de
+esto se ha ejecutado contra un Postgres ni contra Gmail ni contra Anthropic.**
+Las dos migraciones están escritas a mano —`prisma migrate dev` necesita base— y
+las aplica el Job de `deploy.yml` antes de publicar la revisión, que es donde se
+sabrá si están bien.
+
+Lo que más conviene mirar en la primera ejecución real, por orden:
+
+1. Que `migrate deploy` pase. Si falla, la revisión vieja sigue sirviendo.
+2. El primer correo con adjunto de verdad: que `messages.attachments.get`
+   conteste y que Anthropic acepte el bloque `document`. El formato del bloque
+   está escrito contra el SDK y comprobado por tipos, no por una llamada.
+3. El coste de la primera tanda con adjuntos. Los topes son una apuesta.
+
+---
+
 ## Fase 7 — el despacho masivo de la bandeja (2026-09-10)
 
 Dos rutas nuevas para vaciar los 728 `PENDING` de producción: `GET /emails/threads`

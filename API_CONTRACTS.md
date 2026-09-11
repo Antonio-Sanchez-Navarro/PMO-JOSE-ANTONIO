@@ -266,6 +266,154 @@ con `400 INVALID_ARGUMENT`.
 > que ya entregaste —los ids de correo de ejemplo puede que ya no existan—,
 > pero **los contratos de las rutas siguen vigentes**.
 
+# Fase 8 — adjuntos, banco y empresa · contrato vigente (2026-09-11)
+
+Tres cosas que el frontend puede conectar ya: la lista de adjuntos con su
+descarga, y los dos campos nuevos con los que separar la bandeja en pestañas.
+
+---
+
+## `isActionable`, `company` y `bank` en la fila
+
+`TriageEmail` gana `company` y `bank`, así que salen en `GET /emails`,
+`GET /emails/:id`, `GET /emails/threads` (dentro de `latest`) y en la respuesta
+de `PATCH /emails/:id/status`.
+
+```json
+{ "company": "Urbazepto", "bank": "Konfio" }
+```
+
+**Son vocabularios cerrados y viven en `@pmo/shared`** — `BANCOS` y `EMPRESAS`—
+para que las pestañas se pinten desde la misma lista que usa el backend:
+
+- `bank`: `Konfio`, `Aspiria`, `Banregio`, `Clara`, `Kapital`, `Santander`, `PDN`
+- `company`: `Urbazepto`, `Tecnoresin`
+
+Importa la constante, no copies la lista. El día que se añada un banco, el
+backend lo extraerá y tu pestaña aparecerá sola.
+
+### ⚠️ `null` no significa «sin clasificar»
+
+Significa **«este correo no menciona ninguno de los que nos importan»**, que es
+el caso mayoritario y perfectamente normal. No hay valor de respaldo a
+propósito: un `OTHER` aquí sería una pestaña llena de correos que no tienen nada
+en común.
+
+Es la misma trampa que ya conoces de `isActionable`: un correo que nadie ha
+procesado tiene los dos en `null` igual que uno analizado sin banco. Para
+separarlos, `processedAt` en el detalle.
+
+Como son cerrados, el backend **normaliza**: si el modelo escribe `SANTANDER` se
+guarda `Santander`. No vas a recibir tres grafías del mismo banco.
+
+### Filtros `?company=` y `?bank=`
+
+Valen en `GET /emails` y en `GET /emails/threads`. **Un valor fuera de la lista
+da 400**, no una lista vacía — igual que `?status=`. Es deliberado: «no hay
+correos de ese banco» y «has escrito mal el nombre» se ven idénticos desde el
+cliente, y solo uno de los dos es un error que conviene ver pronto.
+
+---
+
+## Adjuntos — la lista va en el detalle
+
+`GET /emails/:id` gana `attachments`:
+
+```json
+{
+  "attachments": [
+    {
+      "attachmentId": "ANGjdJ_x...",
+      "filename": "Cotización obra.pdf",
+      "mimeType": "application/pdf",
+      "size": 124500,
+      "inline": false
+    }
+  ]
+}
+```
+
+**Va en el detalle y no en el listado a propósito.** La bandeja ya sabe con
+`hasAttachments` si pintar el clip, y cargar la lista de las 50 filas de una
+página para enseñar un icono sería pagar por lo que no se mira.
+
+`size` son los bytes que declara Gmail, para que puedas enseñar el peso sin
+descargar nada.
+
+### ⚠️ `inline` es el logo de la firma, no un archivo
+
+Los adjuntos incrustados —el logotipo de la firma, una imagen citada— llegan con
+`inline: true`. **Escóndelos de la lista de descargas**: la persona nunca los
+adjuntó y ver «logo.png» en cada correo ensucia la vista. Están en la respuesta
+porque son reales y descargables, no porque haya que enseñarlos.
+
+### ⚠️ `attachments: []` en correos anteriores al 2026-09-11
+
+Las fichas se empezaron a guardar en la Fase 8. Un correo ingerido antes llega
+con la lista vacía **aunque tenga adjuntos**, y su `hasAttachments` puede ser
+`true`. No es un fallo tuyo y no se arregla desde el frontend: haría falta
+volver a pedirle esos mensajes a Gmail.
+
+Si `hasAttachments` es `true` y `attachments` está vacío, di «adjuntos no
+disponibles» en vez de «sin adjuntos» — lo segundo es mentira.
+
+---
+
+## `GET /emails/:id/attachments/:attachmentId` — la descarga · **nuevo**
+
+Devuelve el archivo, no JSON. `attachmentId` es el de la lista de arriba y
+**solo vale para ese correo**: Gmail los emite por mensaje, y por eso la ruta
+cuelga del correo en vez de ser `/attachments/:id` a secas.
+
+El contenido **no está en nuestra base**: se le pide a Gmail en el momento de
+pulsar, así que esta llamada tarda lo que tarde Google.
+
+Cabeceras que devuelve:
+
+| Cabecera | Valor |
+|---|---|
+| `Content-Type` | El del adjunto, saneado. Lo que no tiene forma de tipo MIME sale como `application/octet-stream` |
+| `Content-Disposition` | `inline` para PDF e imágenes; `attachment` para todo lo demás. El nombre va en ASCII y en UTF-8 (RFC 5987) |
+| `Content-Length` | Bytes reales |
+| `Cache-Control` | `private, max-age=0, no-store` |
+| `X-Content-Type-Options` | `nosniff` |
+
+**Un PDF y las imágenes se pueden enseñar en un visor sin bajarlos** (llegan
+`inline`). Cualquier otra cosa se descarga, y no es una limitación que convenga
+saltarse: un adjunto `text/html` servido en línea se ejecutaría en **nuestro**
+origen, con la cookie de sesión al alcance.
+
+Respuestas: **200** con el archivo · **404** si el correo no es suyo, no existe,
+o el adjunto no pertenece a ese correo · **401** sin cookie.
+
+El 404 del adjunto ajeno es deliberado y no un 403: decir «existe pero no es de
+este correo» confirmaría su existencia a quien esté probando ids.
+
+### Cómo enlazarlo
+
+Es una ruta autenticada por cookie, así que un `<a href>` normal funciona
+siempre que la petición vaya con credenciales al mismo origen de la API. Si la
+abres desde otro origen, bájala con `fetch(..., { credentials: 'include' })` y
+crea un `blob:` — un `<a download>` a pelo no lleva la cookie.
+
+---
+
+## La IA ya lee los adjuntos
+
+Desde la Fase 8, la clasificación **le manda a Claude los PDF e imágenes** del
+correo, así que las tareas propuestas pueden salir de dentro de un documento.
+Para ti cambia poco, pero conviene saberlo por dos cosas:
+
+1. **Una clasificación con adjuntos tarda más y cuesta más.** Si enseñas un
+   contador de coste o un spinner, un correo con tres PDF no se parece a uno de
+   texto.
+2. **No todos viajan.** Lo incrustado se salta, y hay topes por archivo (4,5 MB),
+   por correo (10 MB) y de número (5). Lo que se queda fuera se le dice al modelo
+   por su nombre, para que no hable de lo que no vio — así que si una propuesta
+   dice «revisar planos.pdf a mano», es correcto: ese archivo no se pudo leer.
+
+---
+
 # Fase 7 — despacho masivo de la bandeja · contrato vigente (2026-09-10)
 
 **El problema que resuelven estas dos rutas es una cuenta.** En producción hay
