@@ -2,6 +2,7 @@ import {
   AdjuntoCandidato,
   MAX_ADJUNTOS_POR_CORREO,
   MAX_BYTES_POR_ADJUNTO,
+  MAX_BYTES_POR_CORREO,
   repartirAdjuntos,
 } from './attachment-budget';
 
@@ -101,15 +102,28 @@ describe('repartirAdjuntos — qué ve el modelo y qué no (Fase 8)', () => {
     });
 
     it('corta al llegar al tope de tamaño sumado', () => {
+      // Dos archivos, no tres: con el tope de archivos en 2, un tercero lo
+      // cortaria antes la regla del numero y esta prueba dejaria de mirar lo
+      // que dice mirar. Dos de 4 MB pasan de los 6 MB sumados sin pasarse
+      // ninguno del tope por archivo.
       const { elegidos, descartados } = repartirAdjuntos([
         ficha({ attachmentId: 'a', filename: 'a.pdf', size: 4 * MB }),
         ficha({ attachmentId: 'b', filename: 'b.pdf', size: 4 * MB }),
-        ficha({ attachmentId: 'c', filename: 'c.pdf', size: 4 * MB }),
       ]);
 
-      expect(elegidos).toHaveLength(2);
-      expect(descartados[0].filename).toBe('c.pdf');
+      expect(elegidos).toHaveLength(1);
+      expect(descartados[0].filename).toBe('b.pdf');
       expect(descartados[0].motivo).toContain('tamaño total');
+    });
+
+    it('los dos topes estan atados: el de tamaño sigue siendo alcanzable', () => {
+      // Guardarrail contra el fallo que acaba de pasar: al bajar el tope de
+      // archivos a 2, el de bytes (10 MB) se quedo inalcanzable —2 x 4,5 MB son
+      // 9— y su regla paso a ser codigo muerto sin que nada se pusiera rojo.
+      // Si alguien vuelve a tocar uno de los dos sin mirar el otro, esto avisa.
+      expect(MAX_ADJUNTOS_POR_CORREO * MAX_BYTES_POR_ADJUNTO).toBeGreaterThan(
+        MAX_BYTES_POR_CORREO,
+      );
     });
 
     it('respeta el orden del correo, no el tamaño', () => {

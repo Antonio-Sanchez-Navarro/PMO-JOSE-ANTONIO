@@ -51,11 +51,39 @@ export const MAX_BYTES_POR_ADJUNTO = 4.5 * 1024 * 1024;
  * lo pone la factura. Un correo con diez PDF de 4 MB es una clasificación
  * carísima para un tablero de tareas, y el valor de leer el décimo documento no
  * se parece al del primero.
+ *
+ * ⚠️ **Bajado de 10 a 6 MB el 2026-09-14, y no por ahorrar: por coherencia.**
+ * Al recortar {@link MAX_ADJUNTOS_POR_CORREO} a 2, el tope de 10 MB se volvió
+ * **inalcanzable** —dos archivos de 4,5 MB como mucho son 9— así que dejaba de
+ * ser un techo para pasar a ser código muerto, con su prueba convertida en un
+ * adorno que ya no comprobaba nada. Seis lo devuelve a la vida: corta el caso
+ * caro de verdad, que son dos PDF grandes en el mismo correo.
+ *
+ * Los dos números van atados. Si algún día sube el de archivos, hay que volver
+ * a mirar este, o vuelve a sobrar.
  */
-export const MAX_BYTES_POR_CORREO = 10 * 1024 * 1024;
+export const MAX_BYTES_POR_CORREO = 6 * 1024 * 1024;
 
-/** Tope de archivos por correo, por el mismo motivo que el de bytes. */
-export const MAX_ADJUNTOS_POR_CORREO = 5;
+/**
+ * Tope de archivos por correo.
+ *
+ * **Este número no es solo dinero de Anthropic: es cuota de Gmail.** Cada
+ * archivo que se manda al modelo cuesta antes un `messages.attachments.get`, y
+ * ese método se paga del mismo cubo por usuario que la ingesta. Cinco archivos
+ * por correo eran cinco llamadas más por cada clasificación, justo mientras la
+ * recuperación del atasco necesitaba ese cubo para bajar mensajes.
+ *
+ * **Bajado de 5 a 2 el 2026-09-14** (Fase 8.2), con la ingesta parada por 429
+ * en producción y 258 pausas consecutivas. Junto con el recorte del limitador
+ * del worker, el gasto máximo por minuto en adjuntos baja un ~88%.
+ *
+ * Dos y no uno porque el segundo archivo sigue teniendo valor real —el par
+ * «contrato + anexo», «factura + comprobante» es corriente— y el reparto
+ * respeta el orden del correo, así que los dos que entran son los que quien
+ * escribió puso primero. Del tercero en adelante el valor cae rápido y el coste
+ * no.
+ */
+export const MAX_ADJUNTOS_POR_CORREO = 2;
 
 /** Un adjunto que sí se va a mandar. */
 export interface AdjuntoElegido {

@@ -1,4 +1,5 @@
 import { AiProcessor } from './ai.processor';
+import { GmailQuotaError } from '../gmail/gmail-quota';
 
 /**
  * El correo sin texto — el caso que puso el barrido en bucle infinito.
@@ -239,5 +240,114 @@ describe('AiProcessor · el credito agotado se dice con su nombre', () => {
     await processor.process(job).catch(() => undefined);
 
     expect(alertas.avisar).not.toHaveBeenCalled();
+  });
+});
+
+describe('AiProcessor · la cuota de GMAIL frena esta cola (Fase 8.2)', () => {
+  /**
+   * El agujero que esto cierra, y que costo el atasco del 2026-09-14:
+   *
+   * Desde la Fase 8, clasificar un correo con adjuntos los baja antes de Gmail,
+   * asi que `classifyAndPersist` puede lanzar `GmailQuotaError`. Aqui no se
+   * reconocia, caia al `throw` generico y BullMQ lo reintentaba **tres veces**
+   * — cada reintento volviendo a pedir los mismos adjuntos del mismo cubo
+   * agotado. El 429 de Gmail no solo no frenaba esta cola: la hacia pedir el
+   * triple, y la ingesta —que si frenaba bien— volvia 258 veces seguidas a
+   * encontrarse el cubo vacio.
+   */
+  function crear(error: unknown) {
+    const prisma = {
+      email: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'e1',
+          userId: 'u1',
+          processedAt: null,
+          bodyText: 'hola',
+          snippet: 'hola',
+          labels: [],
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const classification = { classifyAndPersist: jest.fn().mockRejectedValue(error) };
+    const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
+    const gateway = { emitEmailUpdated: jest.fn() };
+    const processor = new AiProcessor(
+      classification as never,
+      prisma as never,
+      alertas as never,
+      gateway as never,
+    );
+
+    // `worker` lo inyecta BullMQ en produccion; aqui se pone a mano para poder
+    // comprobar que se llama a `rateLimit` y con cuanto.
+    const rateLimit = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(processor, 'worker', { value: { rateLimit }, writable: true });
+
+    return { processor, rateLimit, classification };
+  }
+
+  const job = { data: { emailId: 'e1' } } as never;
+
+  it('pausa la cola y devuelve el job SIN gastarle un intento', async () => {
+    const { processor, rateLimit } = crear(new GmailQuotaError({ code: 429 }, 'bajando adjuntos'));
+
+    // `RateLimitError` es la señal convenida de BullMQ: el job vuelve a la
+    // espera como si no se hubiera ejecutado. Con un error normal gastaria uno
+    // de sus tres intentos y volveria a bajar los adjuntos en el siguiente.
+    await expect(processor.process(job)).rejects.toThrow();
+    expect(rateLimit).toHaveBeenCalledTimes(1);
+  });
+
+  it('respeta el plazo que pida Google', async () => {
+    const error = new GmailQuotaError({ code: 429 }, 'bajando adjuntos');
+    Object.defineProperty(error, 'esperaMs', { value: 90_000 });
+
+    const { processor, rateLimit } = crear(error);
+
+    await processor.process(job).catch(() => undefined);
+
+    expect(rateLimit).toHaveBeenCalledWith(90_000);
+  });
+
+  it('sin plazo de Google espera cinco minutos, no un minuto', async () => {
+    // Cuando esto salta de verdad, el cubo lleva vacio un buen rato porque lo
+    // esta vaciando la propia recuperacion: volver al minuto es volver a chocar.
+    const { processor, rateLimit } = crear(new GmailQuotaError({ code: 429 }, 'bajando'));
+
+    await processor.process(job).catch(() => undefined);
+
+    expect(rateLimit).toHaveBeenCalledWith(5 * 60_000);
+  });
+
+  it('tambien reconoce el 429 crudo de Google, no solo el envuelto', async () => {
+    // `fetchAttachment` envuelve, pero cualquier otra llamada a googleapis en
+    // el camino podria subir el error tal cual.
+    const { processor, rateLimit } = crear(
+      Object.assign(new Error('Quota exceeded'), { code: 429 }),
+    );
+
+    await processor.process(job).catch(() => undefined);
+
+    expect(rateLimit).toHaveBeenCalledTimes(1);
+  });
+
+  it('un fallo normal NO frena la cola: se relanza para que se reintente', async () => {
+    const { processor, rateLimit } = crear(new Error('el modelo dijo una tonteria'));
+
+    await expect(processor.process(job)).rejects.toThrow('tonteria');
+    expect(rateLimit).not.toHaveBeenCalled();
+  });
+
+  it('un 404 de Gmail tampoco frena la cola: no es cuota', async () => {
+    // Un adjunto borrado no tiene nada que ver con el cubo, y dormir la cola
+    // cinco minutos por el pararia la digestion del atasco sin motivo.
+    const { processor, rateLimit } = crear(
+      Object.assign(new Error('Not Found'), { code: 404 }),
+    );
+
+    await processor.process(job).catch(() => undefined);
+
+    expect(rateLimit).not.toHaveBeenCalled();
   });
 });
