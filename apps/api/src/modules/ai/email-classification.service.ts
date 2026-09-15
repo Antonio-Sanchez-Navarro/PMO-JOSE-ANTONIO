@@ -394,7 +394,21 @@ export class EmailClassificationService {
 
     // Solo se baja nada si el correo trae fichas. Un correo sin adjuntos no
     // gasta ni una llamada a Gmail, que es el caso mayoritario.
-    const fichas = fichasDeAdjuntos(email.attachments);
+    let fichas = fichasDeAdjuntos(email.attachments);
+
+    // Filtro de cuota: evitar descargar PDFs masivos de remitentes ruidosos
+    const fromLower = email.from.toLowerCase();
+    const isNoisy = ['noreply@banregio.com', 'donotreply@smartsheet.com', 'publicidad', 'ishop', 'konfio'].some(s => fromLower.includes(s));
+    
+    if (isNoisy) {
+      const textLower = textToAnalyze.toLowerCase();
+      const hasException = ['actualizacion de datos', 'actualización de datos', 'pdn', 'bim'].some(kw => textLower.includes(kw));
+      if (!hasException) {
+        this.logger.log(`Correo ${email.id}: Ignorando ${fichas.length} adjunto(s) por regla de remitente ruidoso (${email.from})`);
+        fichas = [];
+      }
+    }
+
     const { adjuntos, ausentes } =
       fichas.length > 0
         ? await this.descargarAdjuntos(email.userId, email.gmailMessageId, fichas)
