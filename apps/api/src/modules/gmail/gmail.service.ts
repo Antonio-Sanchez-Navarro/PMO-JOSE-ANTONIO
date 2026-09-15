@@ -396,10 +396,13 @@ export class GmailService {
   ): Promise<EmailSnippet[]> {
     const gmail = await this.getGmailClient(userId);
 
+    const labelId = await this.getLabelIdByName(gmail, 'PMO');
+    if (!labelId) throw new Error('La etiqueta PMO no existe en Gmail');
+
     const res = await gmail.users.messages.list({
       userId: 'me',
       maxResults,
-      q: 'label:PMO',
+      labelIds: [labelId],
     });
 
     const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
@@ -1131,10 +1134,13 @@ export class GmailService {
 
   /** Primera sincronización: trae los últimos correos y fija el marcador de historial. */
   private async backfill(userId: string, gmail: GmailClient): Promise<SyncResult> {
+    const labelId = await this.getLabelIdByName(gmail, 'PMO');
+    if (!labelId) throw new Error('La etiqueta PMO no existe en Gmail. Abortando resincronización.');
+
     const res = await gmail.users.messages.list({
       userId: 'me',
       maxResults: BACKFILL_SIZE,
-      q: 'label:PMO',
+      labelIds: [labelId],
     });
 
     const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
