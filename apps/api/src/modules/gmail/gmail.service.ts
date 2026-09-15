@@ -376,6 +376,15 @@ export class GmailService {
 
   // ─── Lectura ───────────────────────────────────────────────────────────
 
+  private async getLabelIdByName(gmail: GmailClient, name: string): Promise<string | undefined> {
+    try {
+      const res = await gmail.users.labels.list({ userId: 'me' });
+      return res.data.labels?.find((l) => l.name === name)?.id;
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
    * Lista la bandeja de entrada.
    *
@@ -393,7 +402,7 @@ export class GmailService {
     const res = await gmail.users.messages.list({
       userId: 'me',
       maxResults,
-      q: 'in:inbox',
+      q: 'label:PMO',
     });
 
     const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
@@ -1083,6 +1092,7 @@ export class GmailService {
     let pageToken: string | undefined;
     let latestHistoryId: string | undefined;
     let paginas = 0;
+    const labelId = await this.getLabelIdByName(gmail, 'PMO') ?? 'INBOX';
 
     do {
       paginas++;
@@ -1090,7 +1100,7 @@ export class GmailService {
         userId: 'me',
         startHistoryId,
         historyTypes: ['messageAdded'],
-        labelId: 'INBOX',
+        labelId,
         maxResults: 500,
         pageToken,
       });
@@ -1123,7 +1133,7 @@ export class GmailService {
     const res = await gmail.users.messages.list({
       userId: 'me',
       maxResults: BACKFILL_SIZE,
-      q: 'in:inbox',
+      q: 'label:PMO',
     });
 
     const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
@@ -1644,9 +1654,13 @@ export class GmailService {
 
     let historyIdInicial: string | null | undefined;
     try {
+      let labelIds = ['INBOX'];
+      const pmoLabelId = await this.getLabelIdByName(gmail, 'PMO');
+      if (pmoLabelId) labelIds = [pmoLabelId];
+
       const res = await gmail.users.watch({
         userId: 'me',
-        requestBody: { labelIds: ['INBOX'], topicName },
+        requestBody: { labelIds, topicName },
       });
       historyIdInicial = res.data.historyId;
     } catch (err) {

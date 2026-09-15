@@ -49,9 +49,10 @@ describe('GmailService · watchInbox', () => {
 
     // Se simula el cliente de Gmail en vez del módulo `googleapis` entero: lo
     // que hay que probar es la lógica de esta clase, no que Google sepa hablar.
+    const labels = { list: jest.fn().mockResolvedValue({ data: { labels: [{ name: 'PMO', id: 'Label_PMO' }] } }) };
     (service as unknown as { getGmailClient: unknown }).getGmailClient = jest
       .fn()
-      .mockResolvedValue({ users: { stop, watch } });
+      .mockResolvedValue({ users: { stop, watch, labels } });
 
     return { service, stop, watch, prisma, alertas };
   }
@@ -225,6 +226,7 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
 
     const getProfile = jest.fn().mockResolvedValue({ data: { historyId: '9999' } });
     const messagesList = jest.fn().mockResolvedValue({ data: { messages: [{ id: 'bf-1' }] } });
+    const labels = { list: jest.fn().mockResolvedValue({ data: { labels: [{ name: 'PMO', id: 'Label_PMO' }] } }) };
 
     (service as unknown as { getGmailClient: unknown }).getGmailClient = jest
       .fn()
@@ -233,6 +235,7 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
           history: { list: historyList },
           getProfile,
           messages: { list: messagesList },
+          labels,
         },
       });
 
@@ -1282,6 +1285,9 @@ describe('GmailService · el goteo entre tandas (Fase 8.1)', () => {
         users: {
           messages: {
             list: jest.fn().mockResolvedValue({ data: { messages: [{ id: 'a' }] } }),
+          },
+          labels: {
+            list: jest.fn().mockResolvedValue({ data: { labels: [{ name: 'PMO', id: 'Label_PMO' }] } }),
           },
         },
       });
