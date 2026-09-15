@@ -157,6 +157,61 @@ describe('GmailService · watchInbox', () => {
  * Cada `it` de aquí falla contra el código anterior. Esa es la condición para
  * que sirvan de algo.
  */
+describe('GmailService · Ingesta Selectiva (Fase 9)', () => {
+  const USUARIO = 'user-1';
+
+  function crear(labelsMock: jest.Mock) {
+    const service = new GmailService(
+      {} as never,
+      { get: jest.fn().mockReturnValue('topic') } as never,
+      {} as never,
+      {} as never,
+      { avisar: jest.fn() } as never,
+    );
+    (service as unknown as { getGmailClient: unknown }).getGmailClient = jest
+      .fn()
+      .mockResolvedValue({
+        users: {
+          labels: { list: labelsMock },
+          watch: jest.fn().mockResolvedValue({ data: { historyId: '123' } }),
+          stop: jest.fn().mockResolvedValue({}),
+        },
+      });
+    return service;
+  }
+
+  it('usa la etiqueta si existe', async () => {
+    const labelsList = jest.fn().mockResolvedValue({ data: { labels: [{ name: 'PMO', id: 'Label_1' }] } });
+    const service = crear(labelsList);
+    const res = await service.watchInbox(USUARIO);
+    expect(res.ok).toBe(true);
+  });
+
+  it('falla explícitamente si la etiqueta no existe (sin respaldo a INBOX)', async () => {
+    const labelsList = jest.fn().mockResolvedValue({ data: { labels: [{ name: 'Otra', id: 'Label_2' }] } });
+    const service = crear(labelsList);
+    const res = await service.watchInbox(USUARIO);
+    expect(res.ok).toBe(false);
+    expect(res.motivo).toMatch(/no existe/);
+  });
+
+  it('propaga el error si la API de labels falla (ej. por cuota)', async () => {
+    const labelsList = jest.fn().mockRejectedValue(new Error('Quota exceeded'));
+    const service = crear(labelsList);
+    const res = await service.watchInbox(USUARIO);
+    expect(res.ok).toBe(false);
+    expect(res.motivo).toMatch(/Quota exceeded/);
+  });
+
+  it('falla si la etiqueta está anidada y no es coincidencia exacta', async () => {
+    const labelsList = jest.fn().mockResolvedValue({ data: { labels: [{ name: 'Trabajo/PMO', id: 'Label_3' }] } });
+    const service = crear(labelsList);
+    const res = await service.watchInbox(USUARIO);
+    expect(res.ok).toBe(false);
+    expect(res.motivo).toMatch(/no existe/);
+  });
+});
+
 describe('GmailService · syncHistory y el marcador de historial', () => {
   const USUARIO = 'user-1';
   const MARCADOR_VIEJO = '1000';

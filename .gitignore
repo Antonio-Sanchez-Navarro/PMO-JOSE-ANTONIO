@@ -69,3 +69,13 @@ PROMPT_ALANA.md
 # Herramientas de IA y Auditores
 .claude/
 .venv-auditors/
+
+# Trabajo de usar y tirar. Puede contener correo real del Jefe (remitentes y
+# asuntos de su bandeja), y en este repo eso no se versiona: la misma regla por
+# la que las fixturas usan correos inventados y el log no guarda el correo de
+# nadie.
+scratch/
+
+# Basura de depuración y scripts ad-hoc (Fase 9)
+logs_*.txt
+apps/api/reset_history.ts

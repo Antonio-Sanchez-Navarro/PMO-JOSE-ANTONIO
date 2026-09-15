@@ -226,7 +226,7 @@ const TANDA_DESCARGA = 10;
  * hay que tocar entonces es cuántos mensajes entran en una pasada, no cuánto se
  * espera entre tandas.
  */
-const PAUSA_ENTRE_TANDAS_MS = 5_000;
+const PAUSA_ENTRE_TANDAS_MS = 1_000;
 
 /**
  * Pausa entre tandas **cuando hay una persona esperando la respuesta**.
@@ -377,12 +377,9 @@ export class GmailService {
   // ─── Lectura ───────────────────────────────────────────────────────────
 
   private async getLabelIdByName(gmail: GmailClient, name: string): Promise<string | undefined> {
-    try {
-      const res = await gmail.users.labels.list({ userId: 'me' });
-      return res.data.labels?.find((l) => l.name === name)?.id;
-    } catch {
-      return undefined;
-    }
+    // Si falla (ej. por cuota 429), la excepción debe propagarse. No abrir la llave en silencio.
+    const res = await gmail.users.labels.list({ userId: 'me' });
+    return res.data.labels?.find((l) => l.name === name)?.id;
   }
 
   /**
@@ -1092,14 +1089,15 @@ export class GmailService {
     let pageToken: string | undefined;
     let latestHistoryId: string | undefined;
     let paginas = 0;
-    const labelId = await this.getLabelIdByName(gmail, 'PMO') ?? 'INBOX';
+    const labelId = await this.getLabelIdByName(gmail, 'PMO');
+    if (!labelId) throw new Error('La etiqueta PMO no existe en Gmail');
 
     do {
       paginas++;
       const res = await gmail.users.history.list({
         userId: 'me',
         startHistoryId,
-        historyTypes: ['messageAdded'],
+        historyTypes: ['messageAdded', 'labelAdded'],
         labelId,
         maxResults: 500,
         pageToken,
@@ -1107,6 +1105,9 @@ export class GmailService {
 
       for (const entry of res.data.history ?? []) {
         for (const added of entry.messagesAdded ?? []) {
+          if (added.message?.id) ids.add(added.message.id);
+        }
+        for (const added of entry.labelsAdded ?? []) {
           if (added.message?.id) ids.add(added.message.id);
         }
       }
@@ -1654,13 +1655,14 @@ export class GmailService {
 
     let historyIdInicial: string | null | undefined;
     try {
-      let labelIds = ['INBOX'];
       const pmoLabelId = await this.getLabelIdByName(gmail, 'PMO');
-      if (pmoLabelId) labelIds = [pmoLabelId];
+      if (!pmoLabelId) {
+        throw new Error('La etiqueta PMO no existe en la cuenta de Gmail');
+      }
 
       const res = await gmail.users.watch({
         userId: 'me',
-        requestBody: { labelIds, topicName },
+        requestBody: { labelIds: [pmoLabelId], topicName },
       });
       historyIdInicial = res.data.historyId;
     } catch (err) {
