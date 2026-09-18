@@ -322,10 +322,16 @@ export function InboxPage() {
                 onSeleccionar={seleccion.alternar}
 
                 onRead={(id) => setSelectedEmailId(id)}
-                onUpdateStatus={async (id, newStatus, force) => {
+                onUpdateStatus={async (_, newStatus, force) => {
                   try {
-                    const updated = await updateEmailStatus(id, newStatus, force);
-                    applyEmailUpdate(updated as unknown as EmailSnippet);
+                    // C-3: El cambio de estado se aplica a todo el hilo, no solo al último
+                    const promises = thread.emailIds.map(id => updateEmailStatus(id, newStatus, force));
+                    const updatedArray = await Promise.all(promises);
+                    
+                    // Solo aplicamos la actualización en la interfaz usando el último correo para no saturar
+                    // pero asumiendo que todos se actualizaron.
+                    applyEmailUpdate(updatedArray[0] as unknown as EmailSnippet);
+                    
                     // El correo cambió de estado: los contadores de las
                     // pestañas acaban de quedarse viejos.
                     void refreshMetrics();

@@ -197,6 +197,10 @@ model Task {
   completedAt          DateTime?
   sourceEmail          Email?        @relation(fields: [sourceEmailId], references: [id])
   sourceEmailId        String?
+  obraId               String?
+  obra                 Obra?         @relation(fields: [obraId], references: [id])
+  responsable          String?
+  subtasks             Subtask[]
   /// El default es `MANUAL` a propósito: si algún sitio olvida fijarlo, la
   /// tarea queda protegida del borrado por reproceso en vez de expuesta.
   source               TaskSource    @default(MANUAL)
@@ -245,9 +249,37 @@ model Tag {
 
   /// Dos etiquetas con el mismo nombre para la misma persona serían
   /// indistinguibles en cualquier desplegable.
+
   @@unique([userId, name])
 }
 
+model Obra {
+  id            String   @id @default(cuid())
+  name          String
+  company       String?  // Urbazepto o Tecnoresin
+  driveFolderId String?
+  isActive      Boolean  @default(true)
+  tasks         Task[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Subtask {
+  id               String    @id @default(cuid())
+  taskId           String
+  task             Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  title            String
+  isCompleted      Boolean   @default(false)
+  completedAt      DateTime?
+  delegatedTo      String?
+  delegatedEmailId String?
+  responseEmailId  String?
+  order            Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([taskId])
+}
 /// Un fichaje sobre una tarea. Mientras corre, `endedAt` y `durationSec` son
 /// `null`; al detenerlo se rellenan los dos.
 model TimeEntry {

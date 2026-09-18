@@ -155,18 +155,7 @@ describe('AiService', () => {
       );
     });
 
-    it('el prompt nombra las listas completas', async () => {
-      // Si se añade un banco a `@pmo/shared` y el prompt no lo menciona, el
-      // modelo no lo va a devolver nunca: el enum lo permitiria y nadie se
-      // enteraria de que falta.
-      create.mockResolvedValue(comoRespuestaDeHerramienta(salida({})));
 
-      await analizar(service);
-
-      const system = create.mock.calls[0][0].system as string;
-      for (const banco of BANCOS) expect(system).toContain(banco);
-      for (const empresa of EMPRESAS) expect(system).toContain(empresa);
-    });
   });
 
 

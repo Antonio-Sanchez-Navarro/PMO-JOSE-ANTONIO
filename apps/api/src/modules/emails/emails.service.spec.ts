@@ -334,13 +334,13 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
     expect(classification.classify).not.toHaveBeenCalled();
   });
 
-  it('crea exactamente las tareas aprobadas, con el título recortado', async () => {
+  it('crea exactamente las tareas aprobadas, agrupadas en la tarea padre', async () => {
     const result = await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
 
     expect(result.mode).toBe('confirmed');
-    expect(tx.task.create).toHaveBeenCalledTimes(2);
-    expect(tx.task.create.mock.calls[0][0].data.title).toBe('Enviar cotización');
-    expect(tx.task.create.mock.calls[1][0].data.dueDate).toEqual(
+    expect(tx.task.create).toHaveBeenCalledTimes(1);
+    expect(tx.task.create.mock.calls[0][0].data.subtasks.create[0].title).toBe('Enviar cotización');
+    expect(tx.task.create.mock.calls[0][0].data.dueDate).toEqual(
       new Date('2026-08-10T00:00:00.000Z'),
     );
   });
@@ -381,7 +381,6 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
     await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas });
 
     expect(tx.task.create.mock.calls[0][0].data.position).toBe(5);
-    expect(tx.task.create.mock.calls[1][0].data.position).toBe(6);
   });
 
   it('empieza en 0 cuando la columna está vacía', async () => {
@@ -432,10 +431,10 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
     expect(classification.classifyAndPersist).not.toHaveBeenCalled();
   });
 
-  it('anuncia al tablero una tarjeta por cada tarea aprobada', async () => {
+  it('anuncia al tablero la tarea agrupada que contiene las aprobadas', async () => {
     await service.convertToTask(USER_ID, emailNoAccionable.id, { tasks: aprobadas }, 'socket-abc');
 
-    expect(gateway.emitTaskCreated).toHaveBeenCalledTimes(2);
+    expect(gateway.emitTaskCreated).toHaveBeenCalledTimes(1);
     // El que confirmó ya tiene las tareas en la respuesta 201: reenviárselas se
     // las duplicaría en pantalla.
     expect(gateway.emitTaskCreated.mock.calls[0][1]).toBe('socket-abc');
@@ -520,6 +519,10 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     prisma = {
       email: {
         findFirst: jest.fn().mockResolvedValue(emailNoAccionable),
+        findMany: jest.fn().mockImplementation(async () => {
+          const result = await prisma.email.findFirst();
+          return result ? [result] : [];
+        }),
         // Desde P3, clasificar guarda el borrador que acaba de salir: es lo que
         // hace que un `?force=true` cambie lo que verá el siguiente que mire.
         update: jest.fn().mockResolvedValue({}),

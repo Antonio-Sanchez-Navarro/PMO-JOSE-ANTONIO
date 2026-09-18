@@ -24,6 +24,7 @@ import { CronModule } from './modules/cron/cron.module';
 import { AlertModule } from './common/alerts/alert.module';
 
 import { TasksModule } from "./modules/tasks/tasks.module";
+import { ObrasModule } from './modules/obras/obras.module';
 
 // Lo único de dominio que falta por implementar: WhatsApp (Sprint 7), relegado
 // al final de la cola por decisión de producto.
@@ -84,6 +85,7 @@ import { TasksModule } from "./modules/tasks/tasks.module";
     // Las rutas que dispara Cloud Scheduler. Va después de OverdueModule y
     // GmailModule porque consume lo que ambos exportan.
     CronModule,
+    ObrasModule,
     /**
      * BullMQ. Hasta el 2026-08-21 esto declaraba **solo la conexion**, y por
      * tanto regian los valores de fabrica, que son dos malas noticias:

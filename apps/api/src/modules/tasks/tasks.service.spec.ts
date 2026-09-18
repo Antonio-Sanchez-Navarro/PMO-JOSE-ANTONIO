@@ -585,11 +585,12 @@ describe('TasksService.findAll — filtros y búsqueda', () => {
     expect(where().OR).toHaveLength(2);
   });
 
-  it('pagina con 0/50 por defecto', async () => {
+  it('no pagina por defecto (trae todas para mantener consistencia con las métricas)', async () => {
     await service.findAll(USER, {});
 
     const args = prisma.task.findMany.mock.calls[0][0];
-    expect(args).toMatchObject({ skip: 0, take: 50 });
+    expect(args.skip).toBeUndefined();
+    expect(args.take).toBeUndefined();
   });
 
   it('devuelve el total junto a la página pedida', async () => {

@@ -13,6 +13,7 @@ interface TaskCardProps {
   onStartTimer?: (id: string) => void;
   onStopTimer?: (id: string) => void;
   onManageTime?: (id: string) => void;
+  onToggleSubtask?: (taskId: string, subtaskId: string, isCompleted: boolean) => void;
 }
 
 const PRIORITY_COLORS: Record<TaskPriority, string> = {
@@ -96,7 +97,7 @@ const TaskTimer: React.FC<{
   );
 };
 
-export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail, onReturnToInbox, onStartTimer, onStopTimer, onManageTime }) => {
+export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail, onReturnToInbox, onStartTimer, onStopTimer, onManageTime, onToggleSubtask }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task.id });
   const { openCopilotWithContext } = useCopilot();
 
@@ -146,6 +147,64 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
           )}
         </div>
       </div>
+
+      {/* Obra Badge */}
+      {task.obra && (
+        <div className="mb-2">
+          <span 
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-medium border"
+            style={{ 
+              backgroundColor: (task.obra.color || '#64748b') + '15',
+              borderColor: (task.obra.color || '#64748b') + '30',
+              color: task.obra.color || '#64748b' 
+            }}
+            title="Obra"
+          >
+            🏗️ {task.obra.name}
+          </span>
+        </div>
+      )}
+
+      {/* ProgressBar para subtasks */}
+      {task.subtasks && task.subtasks.length > 0 && (
+        <div className="mb-3 mt-1">
+          <div className="flex justify-between text-[10px] font-medium text-slate-500 mb-1">
+            <span>Progreso</span>
+            <span>{task.subtasks.filter(s => s.isCompleted).length}/{task.subtasks.length}</span>
+          </div>
+          <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+            <div
+              className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300"
+              style={{ width: `${(task.subtasks.filter(s => s.isCompleted).length / task.subtasks.length) * 100}%` }}
+            />
+          </div>
+          <div className="flex flex-col gap-1 mt-2">
+            {task.subtasks.map((sub) => (
+              <label 
+                key={sub.id} 
+                className={`flex items-start gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-100 transition-colors ${
+                  sub.isCompleted ? 'opacity-60' : ''
+                }`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  checked={sub.isCompleted}
+                  onChange={(e) => {
+                    onToggleSubtask?.(task.id, sub.id, e.target.checked);
+                  }}
+                />
+                <span className={`text-[11px] leading-tight flex-1 ${
+                  sub.isCompleted ? 'line-through text-slate-400' : 'text-slate-700'
+                }`}>
+                  {sub.title}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Etiquetas curadas del usuario */}
       {task.labels && task.labels.length > 0 && (

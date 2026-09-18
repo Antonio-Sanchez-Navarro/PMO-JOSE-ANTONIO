@@ -7,6 +7,7 @@ export interface FetchTasksFilters {
   search?: string;
   status?: TaskStatus;
   priority?: TaskPriority;
+  obraId?: string;
 }
 
 export const fetchTasks = async (filters?: FetchTasksFilters): Promise<Task[]> => {
@@ -14,6 +15,7 @@ export const fetchTasks = async (filters?: FetchTasksFilters): Promise<Task[]> =
   if (filters?.search) params.append('search', filters.search);
   if (filters?.status) params.append('status', filters.status);
   if (filters?.priority) params.append('priority', filters.priority);
+  if (filters?.obraId) params.append('obraId', filters.obraId);
 
   const queryString = params.toString() ? `?${params.toString()}` : '';
   const json = await apiFetch<{ data: Task[] } | Task[]>(`/tasks${queryString}`);
@@ -29,6 +31,18 @@ export const updateTaskStatus = async (id: string, newStatus: TaskStatus): Promi
       ...(socketId ? { 'x-socket-id': socketId } : {})
     },
     body: JSON.stringify({ status: newStatus }),
+  });
+};
+
+export const toggleSubtask = async (taskId: string, subtaskId: string, isCompleted: boolean): Promise<Task> => {
+  const socketId = getSocketId();
+  return apiFetch<Task>(`/tasks/${taskId}/subtasks/${subtaskId}`, {
+    method: 'PATCH',
+    headers: { 
+      'Content-Type': 'application/json',
+      ...(socketId ? { 'x-socket-id': socketId } : {})
+    },
+    body: JSON.stringify({ isCompleted }),
   });
 };
 

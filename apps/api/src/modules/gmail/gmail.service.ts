@@ -226,7 +226,7 @@ const TANDA_DESCARGA = 10;
  * hay que tocar entonces es cuántos mensajes entran en una pasada, no cuánto se
  * espera entre tandas.
  */
-const PAUSA_ENTRE_TANDAS_MS = 1_000;
+const PAUSA_ENTRE_TANDAS_MS = 5_000;
 
 /**
  * Pausa entre tandas **cuando hay una persona esperando la respuesta**.
@@ -379,7 +379,8 @@ export class GmailService {
   private async getLabelIdByName(gmail: GmailClient, name: string): Promise<string | undefined> {
     // Si falla (ej. por cuota 429), la excepción debe propagarse. No abrir la llave en silencio.
     const res = await gmail.users.labels.list({ userId: 'me' });
-    return res.data.labels?.find((l) => l.name === name)?.id;
+    const id = res.data.labels?.find((l) => l.name === name)?.id;
+    return id ?? undefined;
   }
 
   /**

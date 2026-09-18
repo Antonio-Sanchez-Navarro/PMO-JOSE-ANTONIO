@@ -106,15 +106,9 @@ export const useSocket = ({
     subscribers += 1;
 
     if (!globalSocket) {
-      // Vite proxy no proxifica WebSockets por defecto, así que conectamos al host backend.
-      // withCredentials asegura que enviemos la cookie pmo_session para que el backend nos asigne nuestra sala.
-      // Misma variable que el cliente HTTP. Sin ella en produccion se intenta el
-      // propio dominio: no conectara, pero `api.ts` ya ha gritado por consola
-      // que falta la configuracion, que es el fallo real.
-      const socketUrl =
-        import.meta.env.VITE_API_URL ||
-        (import.meta.env.PROD ? window.location.origin : "http://localhost:3000");
-      globalSocket = io(socketUrl, {
+      // Como tanto en local (Vite) como en prod (Firebase Hosting) se expone /socket.io
+      // en el mismo origen, podemos omitir la URL para que Socket.IO infiera window.location.
+      globalSocket = io({
         withCredentials: true,
         transports: ['websocket', 'polling'],
         reconnectionAttempts: 5,

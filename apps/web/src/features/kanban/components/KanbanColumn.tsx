@@ -14,6 +14,7 @@ interface KanbanColumnProps {
   onStartTimer?: (id: string) => void;
   onStopTimer?: (id: string) => void;
   onManageTime?: (id: string) => void;
+  onToggleSubtask?: (taskId: string, subtaskId: string, isCompleted: boolean) => void;
 }
 
 export const KanbanColumn: React.FC<KanbanColumnProps> = ({ 
@@ -25,7 +26,8 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   onReturnToInbox,
   onStartTimer,
   onStopTimer,
-  onManageTime
+  onManageTime,
+  onToggleSubtask
 }) => {
   const { setNodeRef } = useDroppable({ id });
 
@@ -44,6 +46,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
               onStartTimer={onStartTimer}
               onStopTimer={onStopTimer}
               onManageTime={onManageTime}
+              onToggleSubtask={onToggleSubtask}
             />
           ))}
         </SortableContext>

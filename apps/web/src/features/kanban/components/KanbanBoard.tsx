@@ -17,7 +17,9 @@ import {
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { KanbanColumn } from './KanbanColumn';
 import { Task, TaskStatus, TaskPriority } from '../types';
-import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters, updateEmailStatus } from '../api/tasks.api';
+import { Obra } from '@pmo/shared';
+import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters, updateEmailStatus, toggleSubtask } from '../api/tasks.api';
+import { fetchObras } from '../api/obras.api';
 import { startTimer, stopTimer, getActiveTimeEntry } from '../api/time.api';
 import { TaskModal } from './TaskModal';
 import { TagManagerModal } from './TagManagerModal';
@@ -28,6 +30,7 @@ import { useSocket } from '../hooks/useSocket';
 
 export const KanbanBoard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [obras, setObras] = useState<Obra[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTaskOrigStatus, setActiveTaskOrigStatus] = useState<TaskStatus | null>(null);
@@ -41,8 +44,13 @@ export const KanbanBoard: React.FC = () => {
   const [searchFilter, setSearchFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatus | ''>('');
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | ''>('');
+  const [obraFilter, setObraFilter] = useState<string>('');
   const hasLoadedRef = useRef(false);
   const reqIdRef = useRef(0);
+
+  useEffect(() => {
+    fetchObras().then(setObras).catch(console.error);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -62,6 +70,7 @@ export const KanbanBoard: React.FC = () => {
       if (searchFilter) filters.search = searchFilter;
       if (statusFilter) filters.status = statusFilter;
       if (priorityFilter) filters.priority = priorityFilter;
+      if (obraFilter) filters.obraId = obraFilter;
 
       const data = await fetchTasks(filters);
       if (currentReqId !== reqIdRef.current) return;
@@ -96,7 +105,7 @@ export const KanbanBoard: React.FC = () => {
         setLoading(false);
       }
     }
-  }, [searchFilter, statusFilter, priorityFilter]);
+  }, [searchFilter, statusFilter, priorityFilter, obraFilter]);
 
   useEffect(() => {
     loadTasks();
@@ -381,6 +390,14 @@ export const KanbanBoard: React.FC = () => {
     }
   };
 
+  const handleToggleSubtask = async (taskId: string, subtaskId: string, isCompleted: boolean) => {
+    try {
+      await toggleSubtask(taskId, subtaskId, isCompleted);
+    } catch (error) {
+      toast.error('Error al actualizar la subtarea');
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <Toaster position="bottom-right" />
@@ -418,6 +435,16 @@ export const KanbanBoard: React.FC = () => {
             <option value={TaskPriority.HIGH}>Alta</option>
             <option value={TaskPriority.URGENT}>Urgente</option>
           </select>
+          <select
+            className="px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+            value={obraFilter}
+            onChange={(e) => setObraFilter(e.target.value)}
+          >
+            <option value="">Todas las Obras</option>
+            {obras.map(obra => (
+              <option key={obra.id} value={obra.id}>{obra.name}</option>
+            ))}
+          </select>
 
           <div className="flex items-center gap-2">
             <button
@@ -450,11 +477,11 @@ export const KanbanBoard: React.FC = () => {
         onDragEnd={handleDragEnd}
       >
         <div className="flex gap-6 p-6 overflow-x-auto grow">
-          <KanbanColumn id={TaskStatus.TODO} title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
-          <KanbanColumn id={TaskStatus.IN_PROGRESS} title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
-          <KanbanColumn id={TaskStatus.POSTPONED} title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
-          <KanbanColumn id={TaskStatus.DONE} title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
-          <KanbanColumn id={TaskStatus.OVERDUE} title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} />
+          <KanbanColumn id={TaskStatus.TODO} title="Por Hacer" tasks={tasksByStatus.TODO} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} onToggleSubtask={handleToggleSubtask} />
+          <KanbanColumn id={TaskStatus.IN_PROGRESS} title="En Progreso" tasks={tasksByStatus.IN_PROGRESS} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} onToggleSubtask={handleToggleSubtask} />
+          <KanbanColumn id={TaskStatus.POSTPONED} title="Pospuestas" tasks={tasksByStatus.POSTPONED} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} onToggleSubtask={handleToggleSubtask} />
+          <KanbanColumn id={TaskStatus.DONE} title="Cumplidas" tasks={tasksByStatus.DONE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} onToggleSubtask={handleToggleSubtask} />
+          <KanbanColumn id={TaskStatus.OVERDUE} title="Atrasadas" tasks={tasksByStatus.OVERDUE} onDeleteTask={handleDeleteTask} onViewEmail={setSelectedEmailId} onReturnToInbox={handleReturnToInbox} onStartTimer={handleStartTimer} onStopTimer={handleStopTimer} onManageTime={setManagingTimeTaskId} onToggleSubtask={handleToggleSubtask} />
         </div>
       </DndContext>
 

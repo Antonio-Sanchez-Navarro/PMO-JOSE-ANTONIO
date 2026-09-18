@@ -194,8 +194,47 @@ export class TasksService {
     this.gateway.emitTaskDeleted(deleted, socketId);
   }
 
+  async toggleSubtask(userId: string, taskId: string, subtaskId: string, isCompleted: boolean, socketId?: string) {
+    const subtask = await this.prisma.subtask.updateMany({
+      where: { id: subtaskId, taskId, task: { userId } },
+      data: { isCompleted, completedAt: isCompleted ? new Date() : null },
+    });
+
+    if (subtask.count === 0) throw new NotFoundException(`Subtarea no encontrada`);
+
+    // Fase 2: Al marcar Subtask como completado, cerrar el TimeEntry de la tarea padre.
+    if (isCompleted) {
+      const activo = await this.prisma.timeEntry.findFirst({
+        where: { userId, taskId, endedAt: null },
+      });
+
+      if (activo) {
+        const endedAt = new Date();
+        const durationSec = Math.floor((endedAt.getTime() - activo.startedAt.getTime()) / 1000);
+        const closed = await this.prisma.timeEntry.update({
+          where: { id: activo.id },
+          data: { endedAt, durationSec, activeFor: null },
+        });
+        this.gateway.emitTimeStopped(closed, socketId);
+        this.logger.log(`Reloj detenido en tarea ${taskId} al completar subtarea ${subtaskId}`);
+      }
+    }
+
+    const updatedTask = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      include: { labels: true, subtasks: { orderBy: { order: 'asc' } }, obra: true },
+    });
+
+    if (updatedTask) {
+      this.gateway.emitTaskUpdated(updatedTask, socketId);
+    }
+    
+    return updatedTask;
+  }
+
   async findAll(userId: string, params: QueryTasksDto) {
-    const { skip = 0, take = 50, status, priority, search, tagId, dueFrom, dueTo } = params;
+    // C-1: Quitado el `take = 50` por defecto para traer todas las tareas y que no difiera de las métricas.
+    const { skip, take, status, priority, search, tagId, dueFrom, dueTo, obraId } = params;
 
     // Los ids repetidos en la query no son un error que merezca un 400: filtrar
     // dos veces por la misma etiqueta da el mismo resultado.
@@ -205,6 +244,7 @@ export class TasksService {
       userId,
       ...(status && { status }),
       ...(priority && { priority }),
+      ...(obraId && { obraId }),
       /**
        * Etiquetas del usuario (la relación `labels`, el modelo `Tag`), **no** el
        * arreglo de texto `tags` que extrae la IA.
@@ -257,6 +297,8 @@ export class TasksService {
             }
           },
           labels: true,
+          subtasks: { orderBy: { order: 'asc' } },
+          obra: true,
           timeEntries: {
             select: { id: true, durationSec: true, startedAt: true, endedAt: true }
           },

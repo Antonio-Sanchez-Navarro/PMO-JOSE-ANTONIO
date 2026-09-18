@@ -65,6 +65,21 @@ export enum EmailStatus {
   DISMISSED = "DISMISSED",
 }
 
+export interface Obra {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
+export interface Subtask {
+  id: string;
+  taskId: string;
+  title: string;
+  isCompleted: boolean;
+  order: number;
+  completedAt?: string | null;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -80,6 +95,10 @@ export interface Task {
     name: string;
     color: string;
   }[];
+  obraId?: string | null;
+  obra?: Obra | null;
+  responsable?: string | null;
+  subtasks?: Subtask[];
   position: number;
   totalTimeSec?: number;
   activeTimeEntryId?: string | null;

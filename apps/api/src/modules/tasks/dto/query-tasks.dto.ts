@@ -29,6 +29,10 @@ export class QueryTasksDto {
   @IsEnum(TaskPriority)
   priority?: TaskPriority;
 
+  @IsOptional()
+  @IsString()
+  obraId?: string;
+
   /**
    * Búsqueda libre sobre título y descripción, sin distinguir mayúsculas.
    *

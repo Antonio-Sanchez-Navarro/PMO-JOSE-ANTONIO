@@ -1,34 +1,196 @@
-producto avisaba solo por correo, a un canal que nadie había declarado como tal.
+# Bitácora de Project Management (Orchestrator / Doc)
+
+**Estado Actual:** Fases 6, 7 y 8 entregadas y en producción. **Fase 8.1 (estrangulador de cuota) repartida y SIN aplicar.**
+**Fecha de actualización:** 2026-09-11
+**Ubicación de despliegue:** Tulum, Quintana Roo (America/Cancun)
+
+> **La crónica de agosto vive en `docs/archive/DOC_archive_agosto.md`** desde la
+> poda del 2026-09-11. Aquí queda lo vigente: la doctrina, lo entregado, el
+> reparto y lo que sigue abierto.
+>
+> ⚠️ **La poda de `28a4fd5` cortó este archivo por la línea 495 y se llevó la
+> cabecera entera** —el equipo, la arquitectura de gestión y mis propios límites—,
+> dejándolo empezando a mitad de una frase. Recuperado de git el 2026-09-11.
+> **Al podar, lo primero que hay que proteger es la doctrina: es lo único que no
+> se puede volver a deducir del código.**
+
+## 🏗️ 0. El equipo, desde el 2026-08-20: cuatro capas en Antigravity IDE
+
+Todo el proyecto se opera desde **Antigravity IDE**. Cuatro capas, cada una con
+su dueño y su bitácora — el detalle completo está en `AI_ROLES.md`:
+
+| Capa                     | Quién        | Dónde corre                                                     |
+| ------------------------ | ------------ | --------------------------------------------------------------- |
+| **Estrategia**           | **Doc**      | Rol asignable: lo lleva quien el Jefe designe                   |
+| **Backend**              | **@Claude**  | Terminal de Claude Code, lanzada desde el IDE                   |
+| **Frontend y operación** | **@Gravity** | Agente nativo de Antigravity (Gemini)                           |
+| **Auditoría**            | **@Alana**   | Terminal propia de Claude Code, despierta con «despierta alana» |
+
+**Doc ya no es un sitio, es un sombrero.** Antes vivía en Gemini en Chrome; ahora
+lo lleva quien el Jefe diga —@Claude o el agente de Antigravity— y puede cambiar
+de cabeza a mitad de fase. Lo que no cambia es lo que el sombrero obliga.
+
+## 📌 1. Arquitectura de Gestión (El Estándar)
+
+- **`API_CONTRACTS.md`:** Único punto de verdad para endpoints, WebSockets y modelos. Ningún agente escribe instrucciones aquí.
+- **`CLAUDE_MEMORY.md`:** Cerebro del Backend. Refactorizaciones, variables de entorno, Cloud Run y lógica de @Claude.
+- **`GRAVITY_MEMORY.md`:** Cerebro Frontend/DevOps. Estado de UI, despliegues Vercel y UI/UX de @Gravity.
+- **`ALANA.md`:** Memoria de Auditoría. Guardiana del estado real, infraestructura, seguridad y fail-safes.
+- **`DOC.md`:** (Este archivo). Memoria de alto nivel para el PM y la orquestación de agentes.
+- **`PROMPT_CLAUDE.md` · `PROMPT_GRAVITY.md` · `PROMPT_ALANA.md`:** **El canal de órdenes de Doc**, en los dos sentidos. Arriba, el encargo en curso, el campo `Estado` y las notas de operación. Abajo, el **buzón**: donde el agente anota dudas, bloqueos y contradicciones en lugar de rodearlos. **Locales a cada terminal y fuera de git** (`.gitignore`).
+  - **Solo yo borro en esos archivos**, y solo cuando doy una entrada por resuelta. El agente añade al final y no reescribe: sin git detrás no hay historial, y lo que se sobrescribe no vuelve.
+  - **Revisar los tres buzones es trabajo mío, no suyo.** Escribir ahí no despierta a nadie — si algo bloquea de verdad, el agente para y avisa al Jefe.
+
+> **Las órdenes y la evidencia no se mezclan** — regla del Jefe, 2026-08-20. Una
+> bitácora con encargos dentro deja de poder leerse: no se distingue lo que se
+> pidió de lo que se entregó, y cada reparto pisa el historial de lo hecho. **La
+> evidencia es lo único que no se puede reconstruir después**; las órdenes, sí.
+> Y un encargo es de una terminal y de un momento: no es patrimonio del proyecto
+> ni merece un commit. Lo que sí merece registro —la decisión y el porqué— viene
+> a este archivo, que sí viaja.
+>
+> Se llegó aquí por las malas: el 2026-08-20 escribí encargos dentro de
+> `GRAVITY_MEMORY.md` y `CLAUDE_MEMORY.md` varias veces en una tarde, y uno de
+> esos repartos borró nueve líneas de la bitácora ajena al resumirse. Revertido
+> en `865d470` y `ae26614`.
+
+## 🧠 2. Mi Rol y Funciones en el Equipo
+
+Como **Orquestador (Doc)**, soy el copiloto estratégico y arquitecto principal
+del Jefe. Mi trabajo no es programar: es analizar, prever y **redactar las
+instrucciones** que los agentes ejecutan.
+
+- **Diseño de Arquitectura:** Definir CÓMO se comunican los sistemas (ej. escalar a cero con Pub/Sub + HTTP).
+- **Coordinación de Agentes:** Asignar las tareas correctas al especialista adecuado, sin solapamientos entre capas.
+- **Análisis Forense:** Leer salidas de terminal y reportes de agentes buscando el fallo silencioso, la concurrencia y la deuda que nadie anotó.
+- **Resolución de Bloqueos:** Analizar errores en cadena y tomar decisiones ejecutivas.
+- **Guía Humana:** Darte instrucciones quirúrgicas para ejecutar comandos de infraestructura (`gcloud`, `gh`) de forma segura en tu terminal.
+
+**Mis límites, y son duros:**
+
+1. **No programo.** Ni invento código ni asumo que me toca implementarlo. Si hay que escribir código, me quito el sombrero en voz alta y paso a ser ejecutor.
+2. **Escribo aquí y en los prompts.** `PROMPT_CLAUDE.md`, `PROMPT_GRAVITY.md` y `PROMPT_ALANA.md` son mi canal de órdenes: locales a cada terminal, en `.gitignore`, fuera de git. **De las bitácoras no toco una línea** — son la evidencia de lo que hizo cada agente y las escribe su dueño. Los cambios a `TASKS.md` o `API_CONTRACTS.md` los dicto como encargo. _(Regla del Jefe el 2026-08-20, después de que yo escribiera encargos dentro de dos bitácoras en una sola tarde. Ver abajo.)_
+3. **Consulto antes de planear.** `ALANA.md` y `TASKS.md` primero, para no repartir dos veces lo ya entregado ni pasar por encima de una auditoría.
+4. **Cero confianza.** Riesgos estructurales, de concurrencia y de dependencias se señalan **antes** de autorizar el paso. `git commit -a` y los despliegues a ciegas no pasan.
+5. **Comandos aislados.** El CLI (`gcloud`, `gh`, PowerShell) va en su propio bloque, separado del mensaje al agente, para que no acabe pegado dentro de un prompt.
+6. **Pasos manuales detallados.** Cuando el Jefe (usuario) deba intervenir manualmente en infraestructura, consola o comandos locales, entregaré siempre un paso a paso detallado y exacto para la ejecución.
+
+**Cómo respondo:** en operación del proyecto, tres bloques —**[Análisis Rápido]**,
+**[Decisión Táctica]** y **[Mensaje para el Agente]**—. En conversación directa,
+dudas o regaños: sin estructura, natural y al grano, sin inventar comandos ni
+poner agentes en copia cuando no hay tarea real.
 
 ---
 
-### ✅ Y la alarma del parseo era falsa — corrección mía (2026-08-22)
+## 📍 3. Dónde estamos — Fases 6, 7 y 8 (2026-09-11)
 
-Escribí que **«es posible que la IA lleve semanas leyendo las dos primeras líneas
-de los correos largos»**. No ocurrió. La sonda, con sus testigos:
+**Comprobado hoy leyendo el árbol y `git log`, no partes de agentes.**
+
+| Fase | Qué entregó | Commits | Estado |
+| --- | --- | --- | --- |
+| **6 — Capa de decisión** | La IA propone en `Email.proposedTasks` y **una persona decide** antes de que nazca la tarjeta. El hilo (`threadId`) pasa a ser la unidad atómica | Fase 6 completa | ✅ **En producción y verificada en pantalla** |
+| **7 — Bandeja por hilos** | Agrupación por conversación, selección múltiple y **descarte masivo** | `c172d3f`, `37b61b7`, `9265415` | ✅ Entregada |
+| **8 — IA documental y pestañas** | `company` (Urba/Tecno) y `bank` como vocabulario cerrado, filtros `?company=` y `?bank=`, y **adjuntos que la IA lee**: PDF e imágenes bajados de Gmail y entregados al modelo, con visor y descarga en pantalla | `e3e286c`, `2f1be66`, `0f48903`, `b55b004` | ✅ Entregada, 885 pruebas en verde |
+| **8.1 — Estrangulador de cuota** | Frenar la ingesta para digerir el atasco de PDF sin reventar las *units per minute* de Gmail | — | 🔴 **Repartida y SIN aplicar** |
+
+### 🔴 Corrección al parte del 2026-09-11, y es mía
+
+La entrada anterior de este archivo decía que «se aplicó un throttler en la
+sincronización de Gmail (aumentando la constante `PAUSA_ENTRE_TANDAS_MS`)».
+
+**No se aplicó.** Comprobado hoy en el código y en el historial:
 
 ```text
-solo-snippet=0 · sin-cuerpo=5 · con-snippet=242 · total=247
+gmail.service.ts:197   const PAUSA_ENTRE_TANDAS_MS = 1_000;
+git log -S"PAUSA_ENTRE_TANDAS_MS"   →  e3ffc3c, y nada después
 ```
 
-`con-snippet=242` prueba que el operador funciona —el cero no es una consulta
-rota— y la aritmética cierra: 247 − 5 = 242. **Ningún correo se clasificó leyendo
-solo la vista previa**, y la decisión sobre reprocesar que iba a plantearle al Jefe
-**no existe**.
+La constante **no se ha tocado desde que nació**. El encargo está escrito en
+`PROMPT_CLAUDE.md` con `Estado: TRABAJAR`, pero nadie lo ejecutó: lo que falta no
+es la decisión, es **abrir la terminal de @Claude**.
 
-Lo presenté con más peso del que aguantaba. Y que se sepa no fue por razonar mejor:
-fue porque **@Claude exigió medir antes de arreglar y luego desconfió de su propia
-medida** — *«un número que no se puede distinguir de su propio fallo no mide
-nada»—. Un cero sin testigos habría cerrado el encargo con un «todo bien» falso.
+Lo que sí entró de esa tanda es el P0 del marcador: un correo borrado en Gmail
+devolvía 404, atascaba el `historyId` y se comía la cuota (`7480733`). Eso está
+cerrado; el goteo, no.
 
-**Reencuadre:** el hueco del `attachmentId` es real y **no ha mordido** (242 de 247
-extrajeron cuerpo), y desde hoy deja rastro. **Baja de prioridad porque lo
-medimos.** Queda una pregunta más pequeña y más rara: los cinco tienen cuerpo **y**
-snippet vacíos a la vez, y esa correlación el `attachmentId` no la explica.
+> **La lección es la de siempre y la volvimos a pagar:** una bitácora que declara
+> hecho lo que está escrito en un encargo. **Repartir no es entregar**, y el único
+> sitio donde se comprueba la diferencia es el código.
 
-**Reparto:** §43.2 primero —se dispara justo al recuperarse de una caída, y los
-correos que fallan al descargarse ni llegan a `persistEmails`, así que el marcador
-avanza igual—; el `attachmentId` detrás.
+---
+
+## 🧭 4. El reparto, hoy
+
+| Capa | `Estado` | En qué |
+| --- | --- | --- |
+| **@Claude** | `TRABAJAR` | **Fase 8.1**: subir `PAUSA_ENTRE_TANDAS_MS` para que el atasco de PDF se digiera solo. Detrás, §59.4 |
+| **@Gravity** | `CERRADO` | Fase 8 de frontend entregada (pestañas, visor de adjuntos, `inline` oculto). Sin encargo nuevo |
+| **@Alana** | `EN PAUSA` | En letargo desde el 2026-08-26. Su cuaderno también perdió la cabecera en la poda y hay que decírselo cuando despierte |
+
+---
+
+## 🧨 5. Lo que sigue abierto
+
+### Con reloj
+
+- 🔴 **La clave de Anthropic caduca el 1 de noviembre de 2026 — quedan 51 días.**
+  El día que caduque, la clasificación se apaga sola y **nadie avisa**: la fecha
+  vive en un panel que no mira ningún proceso. Es el patrón exacto del `watch` de
+  Gmail, que sí avisaba con 6 días y aun así nos dejó la ingesta muerta once.
+  Está anotado en `TASKS.md`; **el aviso automático sigue sin construirse.**
+
+### De consola, y son del Jefe
+
+| # | Qué | Coste |
+| --- | --- | --- |
+| **C11** 🔴 | La base de producción no tiene protección contra borrado (`deletionProtectionEnabled: false`) | una casilla |
+| **R2** 🔴 | Upstash en pago por uso **sin presupuesto** (`Budget: not set`) | un campo |
+| **C12** 🟠 | `master` sin protección de rama. **Exigir «CI en verde» ahí vuelve inofensivo el fallo que nos costó 23 horas de despliegue** | 2 min |
+| **A5** 🟠 | El techo de 200 USD de Anthropic no avisa a nadie: es muro, no semáforo | 1 min |
+| **§57.3** 🟠 | Trece versiones de secreto habilitadas, tres con contraseña de Neon dentro | 5 min |
+| **R3** 🟠 | Upstash retira el «Eco mode» de BullMQ y recomienda plan fijo | decidir |
+| **§52.6** 🟠 | Volcado de correo de clientes sin cifrar, copiado a una segunda máquina | decidir |
+| **R6** 🟠 | `VITE_API_URL` sin poner en Vercel | 2 min |
+| **A7 / §57.4** 🟡 | Tarjeta Visa duplicada · topic `pmo-presupuesto` sin suscriptores | 1 min |
+
+### De código, verificado por mí el 2026-09-11
+
+- 🟠 **§59.4 — el rastro de prioridad se pierde al confirmar.**
+  `emails.service.ts:667` crea la tarea con `tx.task.create({ priority })` y **sin**
+  `priorityReason`, `priorityAdjustedAt` ni `priorityAdjustedFrom`. Esos campos
+  solo se escriben en `ai/`, `overdue/` y `tasks/`. La migración
+  `add_priority_audit` existe justo para eso: **una tarjeta nacida de la cuarentena
+  sube de prioridad y ya no puede decir por qué.** Dueño: @Claude.
+- 🟡 **`replaceExisting` no significa nada** y se sigue pasando `true`
+  (`ai.processor.ts:164`). Es una decisión mía del 08-09 que nadie contestó: o se
+  retira, o se le devuelve significado.
+- 🟡 **Los 728 son ciegos a adjuntos.** `hasAttachments` nació `DEFAULT false` sin
+  relleno hacia atrás, y las fichas de adjunto se empezaron a guardar en la Fase 8:
+  un correo anterior llega con `attachments: []` **aunque los tenga**. Quien despache
+  el atasco lo hará con menos información de la que la pantalla aparenta.
+
+### Lo que NO se reparte todavía, y es decisión tomada
+
+El formateo masivo (75 de 148 archivos fuera de la regla: el diff escondería
+cualquier cambio real dentro), `npm audit` con `multer` de ruptura, y la alta
+disponibilidad de Cloud SQL (`ZONAL` en `db-f1-micro`, decisión de coste legítima).
+
+---
+
+## 🔑 6. Decisiones vigentes que cruzan dominios
+
+> **Esta sección existe por un fallo mío del 2026-08-24**, anotado abajo: una
+> decisión que obliga a alguien tiene que vivir donde ese alguien la vea.
+
+### 🧊 El histórico de correo no se borra — decisión del Jefe (2026-09-11)
+
+Ante el atasco de PDF que reventaba la cuota de Gmail había dos salidas: resetear
+el marcador `historyId` —rápido, y **se pierde el histórico**— o **digerirlo
+despacio**. El Jefe eligió lo segundo: el sistema se toma el fin de semana que
+haga falta, pero no se tira un correo.
+
+**Eso convierte el estrangulador de la Fase 8.1 en la única salida**, y es la
+razón de que su encargo no sea opcional ni cosmético: sin él, el atasco no drena.
 
 ### Decisión — la zona horaria es `America/Cancun` (2026-08-22)
 
@@ -50,135 +212,14 @@ hizo que el error pareciera intencionado durante meses.
 
 ---
 
-### 👀 Frente abierto: vigilancia del despliegue — las dos capas (2026-08-22)
 
-Comprobado por Doc: **ningún workflow avisa ante fallo.** `deploy.yml` menciona el
-webhook solo para **inyectárselo a los servicios**. Y no es solo Vercel: **si el
-despliegue de la API se cae, tampoco se entera nadie.** Lleva funcionando porque no
-ha fallado.
+### 🔑 La clave de Gemini de producción está fuera de nuestro control (2026-08-24)
 
-La asimetría, dicha en voz alta: para el respaldo construimos **dos capas** —una
-dentro que dice el motivo, otra fuera que garantiza que te enteras— y escribimos por
-qué hacían falta las dos. Para el despliegue, **cero**. La misma casa, el mismo mes.
-
-|            | Quién                                                                            | Qué garantiza                                       | Su punto ciego                                                                |
-| ---------- | -------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
-| **Dentro** | Workflow con `deployment_status: failure` y `workflow_run: failure` → Chat       | dice **qué** falló y dónde mirar                    | no ve lo que **no llega a fallar**: si Vercel deja de disparar, no hay evento |
-| **Fuera**  | Sonda periódica que compara el commit servido con el último que tocó el frontend | garantiza que **te enteras**, sea cual sea la causa | no sabe el motivo                                                             |
-
-**Dos detalles de diseño que deciden si esto sirve:**
-
-1. **La sonda NO compara contra la cabeza de `master`.** El `ignoreCommand` hace que
-   producción **legítimamente** no avance con commits de backend o de `.md`. Compara
-   contra **el último commit que tocó `apps/web` o `packages/shared`** — el mismo
-   criterio del `ignoreCommand`. Cualquier otra cosa avisa todo el día y acabamos
-   ignorándola, que es como se muere un vigilante.
-2. **El trabajo que avisa no puede vivir dentro del que falla.** Job aparte, con su
-   propia autenticación — la misma lección que el `avisar` dentro de `respaldo.sh`.
-
-Repartido: la Capa 1 y la sonda a @Claude; publicar el commit del build en una URL
-sin sesión, a @Gravity.
-
-### ✅ Cerrado el hilo de los 27 huérfanos, y no era lo que parecía (2026-08-24)
-
-El diagnóstico de los cinco correos sin texto cierra una cadena que empezó con
-«la ingesta pierde correos en silencio». **Ninguna de las tres alarmas sucesivas
-resultó ser lo que se supuso**, y cada una se desmontó midiendo:
-
-| Se supuso                                             | Lo que era                                                                                 |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Un rechazo de Redis dejaba correos sin encolar        | **Cero fallos de Redis en 30 días.** La única línea del `catch` era `P1001` contra la base |
-| La IA llevaba semanas leyendo solo la vista previa    | **`solo-snippet = 0`**, con testigos que lo hacen falsable                                 |
-| El hueco del `attachmentId` se está comiendo cuerpos  | **Aquí no perdió ni uno.** Cinco de seis sí tenían `text/html` con `data`                  |
-| Son dos fallos, y el del `snippet` vacío sin explicar | **Es uno, y no es un fallo**                                                               |
-
-**La respuesta, con mecanismo y no con deducción:** esos correos son
-legítimamente vacíos — un `text/html` que solo envuelve una imagen incrustada, y
-uno con `multipart/mixed` y un PDF. El `attachmentId` de esos mensajes **es la
-imagen, no el cuerpo**, y el parseo hizo bien en ignorarla. Comprobado en seco:
-solo imagen → `""`, con texto → `"Hola
-que tal"`.
-
-> **Gmail devuelve el snippet vacío por el mismo motivo por el que nosotros no
-> sacamos cuerpo: no hay nada que previsualizar. No eran dos cosas, era una.**
-
-**Lo que queda vivo de todo esto**, que no es poco: el marcador que ya no avanza
-sobre lo que falló, los reintentos que antes no existían, el tope de paginación,
-`skipReason` como estado terminal y contable, el barrido de reconciliación —que
-rescató 23 correos reales con una tarea dentro— y su aviso por novedad. **Las
-alarmas eran falsas; los arreglos, no.**
-
-**Y el `attachmentId` sigue abierto a propósito**: es un hueco real que no ha
-mordido nunca. La diferencia con ayer es que **la sonda solo se enciende en el caso
-que import** — una parte **de texto** con `attachmentId`—, así que sabremos qué
-aspecto tiene el día que muerda.
-
-**Tres cosas de método que salieron de aquí y valen para el resto del proyecto:**
-
-1. **Un número que no se puede distinguir de su propio fallo no mide nada.** El
-   `solo-snippet = 0` solo valió cuando trajo `con-snippet = 242` al lado y la
-   aritmética cerró.
-2. **Se puede diagnosticar sin leer el contenido de nadie.** Solo formas —
-   `mimeType`, `data`/`attachmentId`, tamaño— y contestó la pregunta entera.
-3. **El código con fecha de caducidad se retira el día que caduca.** La ruta de
-   diagnóstico llevaba escrito que sobraba en cuanto se supiera la respuesta, y se
-   fue con ella. Lo contrario es un endpoint sin dueño que nadie se atreve a borrar.
-
-### 🔴 Vigilamos lo que el sistema hace y no lo que consume (2026-08-24)
-
-@Alana barrió las consolas (§46) y su conclusión reordena las prioridades:
-
-> **«Las tres pasadas de código dieron 27 hallazgos y ninguno era una cuenta atrás.
-> De las dos formas de que esto se pare un martes por la mañana, la segunda es hoy
-> la más probable.»**
-
-**Anthropic: quedan $8,14.** Consumo de agosto — 1.354.565 tokens de entrada,
-113.599 de salida— cuesta entre **$3,85 y $9,61** con los precios vigentes (Sonnet 5
-a $3/$15 por millón, con lanzamiento a $2/$10 **hasta el 31 de agosto**; Opus 5 a
-$5/$25). **Tres a seis semanas**, y el **31 de agosto la clasificación sube un 50 %**.
-
-**Y lo que pasa al llegar a cero, trazado por ella en el código:** `convieneEsperar`
-leerá el 429 como falta de cuota, **`frenarLaCola` pausará el worker entero**, y los
-correos entrarán sin clasificar. **La DLQ avisaría del síntoma; la causa no la dice
-nadie.**
-
-**GCP factura desde el 19-08**, y comprobado por Doc: **la Cloud Billing API ni
-siquiera está activada en el proyecto**. No es que el umbral esté mal puesto — no
-existe dónde ponerlo.
-
-**Dato de producto que cambia la lectura:** el cliente OAuth marca «último uso: 20
-de agosto». **Nadie entra desde hace cuatro días**, así que el gasto actual no es de
-uso: es de clasificar los correos que siguen llegando solos. Se quema saldo sin que
-nadie mire el tablero.
-
-**Repartida la Capa 3 a @Claude**, con la misma forma que las dos anteriores:
-
-|             | Qué                                                                                                                                                  | Su punto ciego       |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| **Pronto**  | Estimación del gasto desde el `usage` que ya devuelve cada llamada, contra un presupuesto configurado. Avisa en **días restantes**, no en porcentaje | No es exacto         |
-| **Nativo**  | Presupuesto de Cloud Billing con notificación por Pub/Sub                                                                                            | Solo GCP             |
-| **Al filo** | Distinguir el 429 de **saldo agotado** del 429 de ritmo, y decir la causa                                                                            | Llega cuando ya pasó |
-
-**Y una condición escrita en el encargo:** los precios van **en configuración con su
-fecha**, porque el de Sonnet 5 caduca el 31 de agosto. Un precio incrustado que
-caduca en una fecha conocida es la familia del `maxScale` del comentario.
-
-**Lo que NO se toca todavía:** `--no-cpu-throttling`, la cadencia del barrido y el
-escalado — las tres decisiones que se tomaron cuando esto era gratis. Revisarlas sin
-la factura delante es cambiar un número por otro inventado. Primero la Capa 3.
-
----
-
-### ⚠️ Decisiones pendientes del Jefe (2026-08-24)
-
-1. **Recargar el saldo de Anthropic:** ✅ **RESUELTO (2026-08-25).** El Jefe confirmó que la cuenta tiene recarga automática. El riesgo de que la máquina se apague sola por falta de fondos está mitigado. La Capa 3 (alerta de consumo) de @Claude sigue siendo válida para vigilar el ritmo de gasto, pero ya no es un aviso de muerte inminente del sistema.
-2. **La clave de Gemini de producción vive en otro proyecto de Google**
-   (`gen-lang-client-0325947422`), la paga otra cuenta de facturación y se creó el
-   20 de mayo — dos meses antes de que este producto existiera. **No se puede rotar,
-   revocar ni ver su gasto desde la consola del proyecto.** No es un fallo técnico:
-   es una pieza de producción fuera del control administrativo del dueño.
-
----
+Vive en otro proyecto de Google (`gen-lang-client-0325947422`), la paga otra
+cuenta de facturación y se creó el 20 de mayo — dos meses antes de que este
+producto existiera. **No se puede rotar, revocar ni ver su gasto desde la consola
+del proyecto.** No es un fallo técnico: es una pieza de producción fuera del
+control administrativo del dueño. Sigue igual.
 
 ### 🔧 Fallo de mi diseño de canales, dos veces en un día (2026-08-24)
 
@@ -197,40 +238,6 @@ tiene que vivir donde ese alguien la vea. `DOC.md` no vale si no todos lo leen.
 **Pendiente de arreglar**, y es de Doc: llevar las decisiones vigentes que cruzan
 dominios a un sitio que los tres lean — `AI_ROLES.md` es el candidato — en vez de
 dejarlas solo en el prompt de quien las ejecuta.
-
-### Estado del reparto — cierre del 2026-08-21
-
-| Capa         | Estado     | En qué                                                                                                   |
-| ------------ | ---------- | -------------------------------------------------------------------------------------------------------- |
-| **@Claude**  | `TRABAJAR` | **§37.8, el contrato del socket** y su mitad. Último hallazgo vivo de la auditoría                       |
-| **@Gravity** | `EN PAUSA` | Sin encargo. La mitad cliente del socket es suya y espera al contrato                                    |
-| **@Alana**   | `TRABAJAR` | Los 27 huérfanos: el texto de los `warn` en Cloud Logging, si es pico o goteo, y si sigue tras `337340e` |
-
-**El hallazgo que desbloquea el §37.8, y no estaba en ningún informe.**
-`tasks.gateway.ts` rechaza dentro de `handleConnection` llamando a
-`client.disconnect()`. Eso significa que **la conexión se establece y después se
-cae**: desde el cliente no es un rechazo, es un `connect` seguido de un
-`disconnect`, o sea **una caída de red normal**. Y ante una caída normal,
-reconectar indefinidamente es exactamente lo correcto.
-
-O sea que **el reintento infinito del frontend no es un defecto del frontend**, y
-la ausencia de manejador de `connect_error` **no es un olvido de @Gravity**: ese
-evento **no se dispara nunca**. El arreglo empieza por rechazar en middleware, y
-por eso el contrato va antes que las dos mitades.
-
-Decisión de Doc que va con él: el socket **se revalida periódicamente**. Hoy se
-autentica una sola vez con un token de 15 minutos y luego vive indefinidamente —
-un socket abierto toda la noche sigue oyendo con una sesión caducada, y si el
-usuario cierra sesión **sigue oyendo igual**.
-
-**Cerrado hoy también: los finales de línea de `apps/web`.** Y el diagnóstico de
-@Gravity fue mejor que el encargo: además de que `.gitattributes` solo cubría
-`*.sh`, **`CopilotDrawer.tsx` estaba clasificado como binario en el índice** por
-los `
-` sueltos — y a un binario `--renormalize` no lo toca. Aunque el archivo de
-atributos hubiera estado completo, ese fichero habría seguido igual. Verificado por
-Doc: los 40 de `apps/web/src` en `i/lf w/lf`, y sin `.bat`/`.cmd`/`.ps1` que el
-`eol=lf` pudiera romper.
 
 ### Rutina de Doc — revisar los tres buzones (2026-08-21)
 
@@ -254,33 +261,9 @@ Y de paso: **retirar lo contestado.** Había una entrada de los tres roles de IA
 que seguía viva días después de resolverse. Un buzón con entradas muertas dentro
 deja de leerse, que es la segunda forma de que un canal falle.
 
-### Resolución Fase 5 y Auditoría (2026-08-25)
+---
 
-El día de hoy se completó la resolución de los **19 hallazgos** (14 en la API, 5 en el Frontend) reportados por Alana durante la auditoría de la Fase 5.
-
-El trabajo en local resultó en un 100% de éxito en los 704 tests unitarios de Jest. Sin embargo, tal como se tiene documentado, el trabajo no cuenta hasta llegar a producción. Durante el despliegue automático surgieron tres inconvenientes que probaron nuestras redes de alerta:
-
-- **Semáforo del backend (Frontend)**: Alana detectó que el `/health/ready` fallaba en resetear su estado local al encontrar errores (503), manteniendo la luz verde. Se aplicó `setHealth(null)` en el catch (`f65ca20`).
-- **ESLint en CI**: Unas quejas estrictas del linter por usar `require('fs')` y `require('path')` dentro de `frontend-al-dia.service.spec.ts` reventaron la etapa `build-and-lint`. Se cambió por `import * as fs` (`030b003`).
-- **Prisma y el inferido `never[]`**: Los arrays vacíos `subidas` y `creadas` en `precios-modelo.ts` y `email-classification.service.ts` rompían la compilación de TypeScript al no poder inferir tipo. Se tiparon explícitamente (`3c4cf5d` y `780ad95`).
-
-- **Contrato de DashboardMetrics (§48.5)**: Eliminada la duplicación de tipos en `apps/api`. Ahora el backend consume el contrato directamente desde `@pmo/shared`, resolviendo el último detalle técnico pendiente.
-- **Formato Documental (MD-Lint)**: Corrección de reglas MD040 (bloques sin lenguaje) y MD031 (espaciado) en `DOC.md` y `RUNBOOK.md` mediante Prettier.
-
-Con esto el código y la documentación están inmaculados, el CI/CD en verde, y la Fase 5 cierra su bloque de implementación preparándose para las pruebas en vivo.
-
-### 🧊 Fase de Congelación (2026-08-26)
-
-**Decisión ejecutiva del Jefe:** El producto funciona (ingesta, copiloto, interfaz) y los riesgos urgentes (cuota Upstash y alerta Anthropic) están mitigados. 
-- **Pausa general:** Cero auditorías nuevas. @Alana entra en letargo.
-- **Congelación de arreglos:** A menos que algo esté literalmente roto en la pantalla o quemando dinero, no se toca. Los casos de borde (zona horaria, campo CC, textos de 503, presupuesto al centavo) quedan en espera.
-- **Objetivo:** Dejar que el sistema respire en producción sin inyectar 10 commits diarios.
-
-### ⚠️ Aviso sobre cuota de Upstash (Sondeo de 30s)
-
-✅ **RESUELTO (2026-08-25).** Alana alertó que el primer arreglo de @Gravity usaba `/health` para el latido periódico y reservaba `/health/ready` para fallos, lo que dejaba al semáforo ciego a las caídas de Redis/Postgres. @Gravity lo corrigió (`ba609aa`): el latido ahora es contra `/health/ready` para mantener lectura profunda, pero el intervalo subió a **5 minutos (300s)**. Esto recorta el consumo a ~288 comandos/día por pestaña (1.7% del plan gratuito), siendo sostenible y devolviendo al semáforo su utilidad.
-
-## 🚨 5. Reglas de coordinación que ya costaron un disgusto
+## 🚨 7. Reglas de coordinación que ya costaron un disgusto
 
 - **Añadir por ruta, nunca `git add -A` o `git add .`:** Dos o más agentes escriben sobre el mismo árbol. Un _add_ masivo rompe las bitácoras y sube código no probado.
 - **Preguntar "¿por qué?" en lugar de "¿está?":** Lección aprendida de los falsos positivos (ej. el fallo de encoding del `.gitignore`).
@@ -292,11 +275,3 @@ Con esto el código y la documentación están inmaculados, el CI/CD en verde, y
 
 ---
 
-## 🗺️ Visión Fase 6: De Motor de Reglas a PMO Real (2026-08-26)
-
-Tras la primera sesión de uso real del Jefe, Alana documentó 12 observaciones de UX que convergen en dos fallos estructurales de producto (no de ingeniería):
-
-1. **Falta la Capa de Decisión (Human-in-the-loop):** El pipeline de IA lee, propone y ejecuta de un tirón. Al no haber un paso de aprobación humana, el sistema crea tareas indeseadas y satura el tablero. La IA debe *proponer*; el humano debe *decidir*.
-2. **La Unidad Atómica debe ser el Hilo (`threadId`), no el Mensaje:** Al clasificar mensajes individuales, una respuesta en un correo arrastra el historial citado y duplica las tareas (ej. un "ok" a un hilo con 6 tareas crea 6 tareas nuevas).
-
-**Nota de Estado:** Estas correcciones estructurales quedan aparcadas bajo la directiva de la *Fase de Congelación*. Serán la hoja de ruta fundacional cuando el proyecto retome el desarrollo activo.

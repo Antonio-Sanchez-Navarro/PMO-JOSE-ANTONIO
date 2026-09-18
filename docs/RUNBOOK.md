@@ -6,7 +6,7 @@ Este documento describe la operativa básica y la resolución de incidentes para
 
 - **Frontend**: Alojado en Vercel (`pmo-frontend.vercel.app`). El despliegue lo maneja la integración nativa de Vercel escuchando la rama `master`.
 - **Backend API**: Alojada en Google Cloud Run (`pmo-api`, región `us-central1`, proyecto `pmo-dashboard-503418`). Despliegue gestionado por GitHub Actions (`deploy.yml`).
-- **Base de Datos**: PostgreSQL alojado en **Neon**. Se accede desde Google Cloud vía **Cloud SQL Auth Proxy** (`pmo-postgres-db`).
+- **Base de Datos**: PostgreSQL alojado en **Google Cloud SQL** (`pmo-postgres-db`). Se accede localmente vía **Cloud SQL Auth Proxy**.
 - **Caché y Colas**: Redis alojado en **Upstash**.
 - **Ingesta de Correo**: Google Pub/Sub envía webhooks a `/webhooks/gmail` cuando llegan nuevos correos.
 - **Alertas**: Se envían mediante webhook hacia un espacio de Google Chat.
@@ -67,11 +67,9 @@ Revisar los logs para confirmar que devolvió 200 y registró el historial.
 ### 3.3. Errores 500 intermitentes
 
 **Síntoma**: Alertas de Capa 1 informando de excepciones capturadas por el filtro global.
-**Causa probable**: Prisma desconectándose de Neon (Serverless cold starts).
-**Solución**:
-
-- Verificar que el `transaction_timeout` es holgado (Neon tarda ~5.3s en despertar). Ya está configurado a 15s en PrismaService.
-- Si persiste, revisar la cuota en Neon y Upstash (Redis).
+**Causa probable**: Prisma desconectándose de Cloud SQL o sobrecarga transitoria.
+- Verificar métricas de conexión en Cloud SQL (`pmo-postgres-db`).
+- Si persiste, revisar la cuota en Upstash (Redis).
 
 ## 4. Despliegues de Emergencia
 

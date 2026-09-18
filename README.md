@@ -43,5 +43,5 @@ cd apps/web && npm install && npm run dev
 ```
 
 ## Servicios externos requeridos
-Gmail API · Google OAuth2 · Google Pub/Sub · Anthropic Claude API · WhatsApp Business Cloud API (o Twilio).
+Gmail API · Google OAuth2 · Google Pub/Sub · Anthropic Claude API.
 Ver detalle en [`ARCHITECTURE.md`](./ARCHITECTURE.md#5-apis-y-servicios-externos-necesarios).

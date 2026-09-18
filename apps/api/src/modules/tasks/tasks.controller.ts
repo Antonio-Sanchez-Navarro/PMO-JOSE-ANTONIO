@@ -79,6 +79,17 @@ export class TasksController {
     return this.tasksService.update(user.userId, id, updateTaskDto, socketId);
   }
 
+  @Patch(':id/subtasks/:subtaskId')
+  toggleSubtask(
+    @CurrentUser() user: CurrentUserContext,
+    @Param('id') taskId: string,
+    @Param('subtaskId') subtaskId: string,
+    @Body('isCompleted') isCompleted: boolean,
+    @Headers(SOCKET_ID_HEADER) socketId?: string
+  ) {
+    return this.tasksService.toggleSubtask(user.userId, taskId, subtaskId, isCompleted, socketId);
+  }
+
   /**
    * Borra una tarea. 204 sin cuerpo: el tablero ya la quitó de su estado antes
    * de llamar, así que no tiene nada que leer de la respuesta.

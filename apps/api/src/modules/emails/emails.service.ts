@@ -896,8 +896,20 @@ export class EmailsService {
     emailId: string,
     force = false,
   ): Promise<ClassificationResult> {
-    const email = await this.prisma.email.findFirst({
+    // Primero obtenemos el hilo al que pertenece este correo
+    const targetEmail = await this.prisma.email.findFirst({
       where: { id: emailId, userId },
+      select: { threadId: true }
+    });
+
+    if (!targetEmail) {
+      throw new NotFoundException(`No existe el correo ${emailId}`);
+    }
+
+    // Buscamos todos los correos del hilo, ordenados del más reciente al más antiguo
+    const threadEmails = await this.prisma.email.findMany({
+      where: { threadId: targetEmail.threadId, userId },
+      orderBy: { receivedAt: 'desc' },
       select: {
         id: true,
         bodyText: true,
@@ -910,39 +922,47 @@ export class EmailsService {
       },
     });
 
-    if (!email) {
-      throw new NotFoundException(`No existe el correo ${emailId}`);
-    }
+    const email = threadEmails.find(e => e.id === emailId)!;
 
     if (!email.bodyText && !email.snippet) {
       throw new ConflictException(`El correo ${emailId} no tiene texto que analizar.`);
     }
 
-    // La propuesta guardada se sirve tal cual: volver a preguntarle al modelo
-    // cuesta dinero y, peor, **puede devolver algo distinto de lo que la
-    // persona está mirando en pantalla**.
-    //
-    // `?force=true` es la salida: sin ella, un correo con borrador no se puede
-    // reanalizar nunca —`[]` también es un array, así que hasta un correo sin
-    // propuestas quedaba congelado— y el usuario no tiene forma de pedir otra
-    // opinión cuando la primera salió mal.
-    if (!force && Array.isArray(email.proposedTasks)) {
-      this.logger.log(`Clasificación servida desde el borrador guardado para ${emailId}`);
-      const guardadas = tareasPropuestas(email.proposedTasks);
-      return {
-        emailId: email.id,
-        category: email.category ?? 'OTHER',
-        isActionable: email.isActionable,
-        // La confianza real del análisis que produjo este borrador. Viaja
-        // dentro de cada propuesta desde la Fase 6; si el borrador es de antes
-        // de ese cambio no la trae, y entonces se dice `0` —«no consta»— en vez
-        // de inventar un 1 que la cuarentena leería como certeza absoluta.
-        aiConfidence: guardadas[0]?.aiConfidence ?? 0,
-        tasks: guardadas,
-        // Los guardados, no los del modelo: aqui no se ha llamado a nadie.
-        company: email.company,
-        bank: email.bank,
-      };
+    // C-2: Las propuestas pueden estar en un correo anterior del mismo hilo.
+    // Si no estamos forzando, agrupamos TODAS las propuestas del hilo.
+    if (!force) {
+      const allProposals = threadEmails.flatMap(e => 
+        Array.isArray(e.proposedTasks) ? e.proposedTasks : []
+      );
+      
+      // Si hay al menos una propuesta en todo el hilo, la devolvemos.
+      // Así el modal "Revisar N" abre con las propuestas reales sin volver a cobrar.
+      if (allProposals.length > 0) {
+        this.logger.log(`Clasificación servida desde el borrador guardado del hilo para ${emailId}`);
+        const guardadas = tareasPropuestas(allProposals);
+        return {
+          emailId: email.id,
+          category: email.category ?? 'OTHER',
+          isActionable: email.isActionable,
+          aiConfidence: guardadas[0]?.aiConfidence ?? 0,
+          tasks: guardadas,
+          company: email.company,
+          bank: email.bank,
+        };
+      }
+      
+      // Si este correo tiene un array vacío explicitamente, también se devuelve
+      if (Array.isArray(email.proposedTasks)) {
+        return {
+          emailId: email.id,
+          category: email.category ?? 'OTHER',
+          isActionable: email.isActionable,
+          aiConfidence: 0,
+          tasks: [],
+          company: email.company,
+          bank: email.bank,
+        };
+      }
     }
 
     const draft = await this.classification.classify(email.id, { forceActionable: false });
@@ -1069,6 +1089,7 @@ export class EmailsService {
       return this.persistConfirmed(
         userId,
         email.id,
+        email.subject,
         dto.tasks,
         dto.category,
         guardadas[0]?.aiConfidence,
@@ -1138,6 +1159,7 @@ export class EmailsService {
   private async persistConfirmed(
     userId: string,
     emailId: string,
+    emailSubject: string | null,
     confirmed: ConfirmedTaskDto[],
     category?: string,
     aiConfidence?: number,
@@ -1164,52 +1186,36 @@ export class EmailsService {
       let position = last ? last.position + 1 : 0;
       const created: Task[] = [];
 
-      // Secuencial y no `Promise.all`: Prisma desaconseja lanzar consultas
-      // concurrentes sobre el cliente de una transacción interactiva.
-      for (const task of confirmed) {
-        created.push(
-          await tx.task.create({
-            data: {
-              userId,
-              sourceEmailId: emailId,
+      const uniqueTagIds = [...new Set(confirmed.flatMap((task) => task.tagIds ?? []))];
+      const uniqueTags = [...new Set(confirmed.flatMap((task) => task.tags ?? []))];
+
+      // Fase 2: Creamos una sola tarea que agrupa todo el correo.
+      const parentTask = await tx.task.create({
+        data: {
+          userId,
+          sourceEmailId: emailId,
+          title: emailSubject?.trim() || '(Sin asunto)',
+          description: confirmed.map(t => t.description).filter(Boolean).join('\n\n') || '',
+          priority: confirmed.find(t => t.priority === 'URGENT') ? 'URGENT' : (confirmed[0]?.priority ?? 'MEDIUM'),
+          tags: uniqueTags,
+          ...(uniqueTagIds.length > 0
+            ? { labels: { connect: uniqueTagIds.map((id) => ({ id })) } }
+            : {}),
+          dueDate: confirmed.find(t => t.dueDate)?.dueDate ? new Date(confirmed.find(t => t.dueDate)!.dueDate!) : null,
+          position: position++,
+          source: TaskSource.EMAIL,
+          ...(aiConfidence !== undefined ? { aiConfidence } : {}),
+          subtasks: {
+            create: confirmed.map((task, idx) => ({
               title: task.title.trim(),
-              description: task.description ?? '',
-              priority: task.priority,
-              // Texto libre del modelo…
-              tags: task.tags ?? [],
-              // …y etiquetas curadas por la persona, que son otra cosa. Los ids
-              // ya vienen comprobados de arriba.
-              ...(task.tagIds?.length
-                ? { labels: { connect: [...new Set(task.tagIds)].map((id) => ({ id })) } }
-                : {}),
-              dueDate: task.dueDate ? new Date(task.dueDate) : null,
-              position: position++,
-              // EMAIL, no MANUAL: la propuso el modelo aunque la aprobara una
-              // persona, y el tablero tiene que poder decir de dónde salió cada
-              // tarjeta. Sin esto, `TaskSource.EMAIL` se quedaba sin productor y
-              // dejaba de existir la distinción entre lo que infirió la IA y lo
-              // que alguien escribió a mano.
-              //
-              // ⚠️ Esto era MANUAL a propósito, y el motivo importa: el
-              // reproceso del worker borraba lo que tenía origen EMAIL, así que
-              // marcarlas así habría destruido trabajo ya validado. Hoy es
-              // seguro **porque en la Fase 6 ese borrado desapareció** — no
-              // queda ni un `deleteMany` sobre `Task` en todo el backend. Si
-              // alguien le devuelve significado a `replaceExisting`, tiene que
-              // excluir estas: aprobadas por una persona, no reemplazables.
-              source: TaskSource.EMAIL,
-              // El rastro del análisis del que salió, para que la tarjeta pueda
-              // decir con cuánta seguridad se propuso. `undefined` en la vía
-              // manual, donde no hubo modelo que dudara.
-              ...(aiConfidence !== undefined ? { aiConfidence } : {}),
-            },
-            // Con las etiquetas dentro, igual que `POST /tasks`: la tarjeta
-            // viaja en la respuesta 201 y en el `task.created`, y sin esto
-            // llegaría sin los colores que la persona acaba de elegir.
-            include: { labels: true },
-          }),
-        );
-      }
+              order: idx
+            }))
+          }
+        },
+        include: { labels: true },
+      });
+
+      created.push(parentTask);
 
       await tx.email.update({
         where: { id: emailId },

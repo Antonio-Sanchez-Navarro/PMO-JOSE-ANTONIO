@@ -147,14 +147,14 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
       // extra: estos dos campos se convierten en pestañas de la bandeja, asi
       // que "Santander", "SANTANDER" y "Banco Santander" serian tres.
       company: {
-        anyOf: [{ type: 'string', enum: [...EMPRESAS] }, { type: 'null' }],
+        anyOf: [{ type: 'string' }, { type: 'null' }],
         description:
-          'Empresa del grupo a la que pertenece el correo. Devuelve exactamente uno de los valores permitidos, o null si el correo no es de ninguna de ellas.',
+          'Empresa del grupo a la que pertenece el correo, en una o dos palabras. Extrae el nombre explícito que aparezca, o null si el correo no pertenece a ninguna empresa identificable.',
       },
       bank: {
-        anyOf: [{ type: 'string', enum: [...BANCOS] }, { type: 'null' }],
+        anyOf: [{ type: 'string' }, { type: 'null' }],
         description:
-          'Banco o financiera que aparece en el correo. Devuelve exactamente uno de los valores permitidos, o null si no aparece ninguno de ellos.',
+          'Banco o financiera que aparece en el correo. Extrae el nombre explícito que aparezca, o null si no aparece ninguno.',
       },
     },
     required: [
@@ -195,14 +195,13 @@ Resuelve contra ella cualquier fecha relativa o incompleta ("el viernes", "31 de
 límite, devuelve null: no inventes ninguna.
 
 Sobre la empresa y el banco (company y bank): sirven para separar la bandeja en
-pestañas, así que solo valen los nombres de estas dos listas y escritos tal cual.
+pestañas. El sistema aprenderá dinámicamente de lo que extraigas.
 
-- bank: extráelo SOLO si el correo menciona uno de estos: ${BANCOS.join(', ')}.
-- company: extráelo SOLO si el correo pertenece a una de estas: ${EMPRESAS.join(', ')}.
+- bank: extrae explícitamente el banco o financiera si se menciona en el correo.
+- company: extrae explícitamente la empresa a la que pertenece el correo si se menciona.
 
-Si el correo no menciona ninguno de esa lista, devuelve null. Es la respuesta
-correcta y la más frecuente: no busques el banco más parecido ni traduzcas otro
-nombre al de la lista, y no deduzcas la empresa por el tipo de asunto. Mencionar
+Si el correo no menciona ninguno, devuelve null. Es la respuesta correcta y la
+más frecuente: no busques el banco más parecido ni traduzcas otro nombre. Mencionar
 un banco de pasada ("transferencia recibida") sin nombrarlo no cuenta.
 
 Usa la herramienta ${TOOL_NAME} para devolver el resultado.`;

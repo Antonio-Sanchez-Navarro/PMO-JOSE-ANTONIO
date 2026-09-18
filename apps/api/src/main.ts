@@ -50,6 +50,7 @@ async function bootstrap() {
   if (aviso) NestLogger.warn(aviso, "Observabilidad");
 
   app.use(cookieParser());
+  app.setGlobalPrefix("api");
 
   /**
    * Cabeceras de seguridad (Sprint 8).
