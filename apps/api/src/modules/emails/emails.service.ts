@@ -1202,7 +1202,7 @@ export class EmailsService {
             ? { labels: { connect: uniqueTagIds.map((id) => ({ id })) } }
             : {}),
           dueDate: confirmed.find(t => t.dueDate)?.dueDate ? new Date(confirmed.find(t => t.dueDate)!.dueDate!) : null,
-          position: position++,
+          position: position,
           source: TaskSource.EMAIL,
           ...(aiConfidence !== undefined ? { aiConfidence } : {}),
           subtasks: {

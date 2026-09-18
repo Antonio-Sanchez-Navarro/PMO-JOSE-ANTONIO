@@ -44,7 +44,10 @@ export class GmailSender implements EmailSender {
 
     const res = await gmail.users.messages.send({
       userId: 'me',
-      requestBody: { raw: buildRawMessage(dto) },
+      requestBody: { 
+        raw: buildRawMessage(dto),
+        ...(dto.threadId ? { threadId: dto.threadId } : {})
+      },
     });
 
     this.logger.log(

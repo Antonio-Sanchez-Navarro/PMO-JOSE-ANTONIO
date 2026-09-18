@@ -69,4 +69,19 @@ export class SendEmailDto {
   @IsNotEmpty()
   @MaxLength(100_000)
   body!: string;
+
+  /** ID del mensaje al que se responde (Message-ID original) */
+  @IsOptional()
+  @IsString()
+  inReplyTo?: string;
+
+  /** Cadena de Message-IDs anteriores para mantener el hilo */
+  @IsOptional()
+  @IsString()
+  references?: string;
+
+  /** El threadId de Gmail para agrupar visualmente el hilo en la bandeja */
+  @IsOptional()
+  @IsString()
+  threadId?: string;
 }

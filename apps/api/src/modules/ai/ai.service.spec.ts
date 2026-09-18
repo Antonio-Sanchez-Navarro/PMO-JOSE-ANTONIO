@@ -2,7 +2,6 @@ import { ConfigService } from '@nestjs/config';
 import { AiService } from './ai.service';
 import { emailConFechaRelativa } from './__fixtures__/emails.fixture';
 import * as R from './__fixtures__/ai-responses.fixture';
-import { BANCOS, EMPRESAS } from '@pmo/shared';
 
 /**
  * El SDK se sustituye por un doble: estas pruebas verifican **nuestro** contrato

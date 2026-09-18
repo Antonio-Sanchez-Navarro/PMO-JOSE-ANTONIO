@@ -86,6 +86,9 @@ export function buildRawMessage(dto: SendEmailDto): string {
     'Content-Transfer-Encoding: base64',
   ];
 
+  if (dto.inReplyTo) cabeceras.push(`In-Reply-To: ${dto.inReplyTo}`);
+  if (dto.references) cabeceras.push(`References: ${dto.references}`);
+
   const mensaje =
     // La línea en blanco separa cabeceras de cuerpo; sin ella el correo entero
     // se interpreta como cabeceras y Gmail lo rechaza.
