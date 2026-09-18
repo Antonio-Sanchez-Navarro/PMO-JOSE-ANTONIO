@@ -393,7 +393,7 @@ export const KanbanBoard: React.FC = () => {
   const handleToggleSubtask = async (taskId: string, subtaskId: string, isCompleted: boolean) => {
     try {
       await toggleSubtask(taskId, subtaskId, isCompleted);
-    } catch (_error) {
+    } catch {
       toast.error('Error al actualizar la subtarea');
     }
   };

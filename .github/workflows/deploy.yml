@@ -355,14 +355,14 @@ jobs:
             # tiene que ser exactamente la ruta del controlador.
             SIN_ESQUEMA="${REDIRECT_URI#https://}"
             RUTA="/${SIN_ESQUEMA#*/}"
-            if [[ "${RUTA}" != "/auth/google/callback" ]]; then
-              MOTIVO="apunta a ${RUTA} y la única ruta que existe es /auth/google/callback (sin prefijo global)"
+            if [[ "${RUTA}" != "/api/auth/google/callback" ]]; then
+              MOTIVO="apunta a ${RUTA} y la única ruta que existe es /api/auth/google/callback (con prefijo global api)"
             fi
           fi
 
           if [ -n "${MOTIVO}" ]; then
             echo "::error::La variable de repositorio GOOGLE_REDIRECT_URI ${MOTIVO}." \
-                 "Tiene que ser https://<url-de-cloud-run>/auth/google/callback," \
+                 "Tiene que ser https://<url-de-cloud-run>/api/auth/google/callback," \
                  "y esa misma URI debe estar autorizada en el cliente OAuth de Google Cloud."
             exit 1
           fi

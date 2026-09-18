@@ -50,7 +50,7 @@ async function bootstrap() {
   if (aviso) NestLogger.warn(aviso, "Observabilidad");
 
   app.use(cookieParser());
-  app.setGlobalPrefix("api");
+  app.setGlobalPrefix("api", { exclude: ['webhooks/gmail', 'cron/(.*)', 'health/(.*)'] });
 
   /**
    * Cabeceras de seguridad (Sprint 8).

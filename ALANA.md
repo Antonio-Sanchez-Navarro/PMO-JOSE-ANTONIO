@@ -438,3 +438,218 @@ de botella de este equipo no es la capacidad de programar, es que nada verifica
 donde se escribe.**
 
 **No cierro nada y no reparé nada.**
+
+---
+
+## 66. Despertar del 2026-09-18 — la radiografía de los 678 y la salida tapada otra vez
+
+> Encargo de Doc en `PROMPT_ALANA.md`: **alcance dirigido**, dos preguntas —la
+> radiografía del atasco y las nueve casillas de consola—. Ambas contestadas
+> abajo. Al mirar el árbol apareció algo que no estaba en el encargo y que las
+> tapa a las dos: **producción no corre el código de hoy y el frontend nuevo ya
+> está publicado encima**. Va primero porque es lo que está roto ahora mismo.
+>
+> Hora del barrido: **2026-09-18, ~23:30 UTC** (18:30 en Tulum). El árbol se
+> movió **mientras auditaba** —`92b5262` se commiteó y empujó entre dos de mis
+> comandos—, así que todo lo de aquí lleva sello de hora.
+
+### 66.0 Lo primero: la cabecera de este cuaderno, recuperada
+
+`28a4fd5` cortó este archivo por la línea 9397 de 9696 y se llevó el título y el
+**§0 entero** —el protocolo de esta terminal—. Recuperado hoy de `16a769a`:
+**140 líneas repuestas por delante, sin tocar una coma de las 300 que quedaban**
+(verificado: el archivo actual era exactamente la cola, byte a byte salvo fin de
+línea). La poda deliberada de agosto **se respeta**; lo repuesto es solo la
+cabecera, que es lo único que no se puede volver a deducir del código.
+
+### 66.1 🔴 La salida está tapada por dos errores de lint. Otra vez.
+
+**Producción sirve la revisión `pmo-api-00130-7nc`, del 2026-09-15.** El código
+de hoy no está desplegado, y no es que el despliegue fallara a medias: falló dos
+veces y de dos formas distintas.
+
+| Intento | Qué pasó | Evidencia |
+|---|---|---|
+| `pmo-api-00131-z47` (23:19 UTC) | **El contenedor no arrancó.** `HealthCheckContainerError`: `Nest can't resolve dependencies of the AuthGuard (?) … available in the ObrasModule context` → `exit(1)` | registro de la revisión |
+| `92b5262` (23:22 UTC) | Arregla justo eso —`ObrasModule` ya importa `AuthModule`—, **pero el CI cayó en el linter**, así que `Deploy API to Cloud Run` salió `skipped` | run `35405456429`, 36 s |
+
+Los dos errores que tapan la salida:
+
+```
+apps/api/src/modules/emails/emails.service.ts:1186:11
+  'position' is never reassigned. Use 'const' instead   (prefer-const)
+
+apps/web/src/features/kanban/components/KanbanBoard.tsx:396:14
+  '_error' is defined but never used   (@typescript-eslint/no-unused-vars)
+```
+
+**Es el §64.3 repetido, palabra por palabra**, y esta vez ni siquiera son `any`
+heredados: son dos líneas escritas hoy. Con `--max-warnings 0`, **el linter no
+es estilo: es el interruptor del despliegue.** Y sigue sin haber nada que lo
+verifique antes de empujar —es lo que pedí en §65.4 como H1 + C12, y C12 sigue
+abierta (66.6).
+
+### 66.2 🔴 Y encima: el frontend nuevo ya está publicado sobre ese backend viejo
+
+`22f4e0c` movió el frontend a **Firebase Hosting** y metió
+`app.setGlobalPrefix("api")` en `main.ts`. El hosting **sí** se publicó; la API
+con prefijo **no**. Sondeado ahora mismo:
+
+```
+https://pmo-dashboard-503418.web.app/                 → 200   (la SPA carga)
+https://pmo-dashboard-503418.web.app/api/health/ready → 404
+https://pmo-api-…run.app/health/ready                 → 200   (sin prefijo: el viejo)
+https://pmo-api-…run.app/api/health/ready             → 404
+```
+
+Y ya está pasando en el registro de los últimos días, no es teoría:
+**`/api/auth/google` → 404 (9 veces), `/api/auth/me` → 404 (12),
+`/api/health/ready` → 404 (12)**. Es decir: **el tablero nuevo está en pantalla
+y no puede ni iniciar sesión.** Es exactamente §64.5 —frontend nuevo sobre
+backend viejo— con otro traje.
+
+### 66.3 🔴 La mina del prefijo: ocho enchufes apuntan a la puerta vieja
+
+Esto es lo que importa **el día que el despliegue por fin pase**, porque
+entonces se rompe lo contrario: `/api` existirá y **lo de fuera seguirá llamando
+a la puerta sin prefijo**. `setGlobalPrefix("api")` va **sin exclusiones**, así
+que arrastra webhooks y cron igual que al resto.
+
+| Qué | Valor hoy | Lo que hará falta |
+|---|---|---|
+| Suscripción push `gmail-ingest-push` | `…/webhooks/gmail` | `…/api/webhooks/gmail` |
+| Variable de repo `GMAIL_PUBSUB_AUDIENCE` | `…/webhooks/gmail` (08-13) | idem — la audiencia OIDC se valida |
+| Variable de repo `CRON_OIDC_AUDIENCE` | `…/cron` (08-13) | `…/api/cron` |
+| 5 tareas de Cloud Scheduler | `/cron/frontend-al-dia`, `/cron/coste-ia`, `/cron/reconciliar`, `/cron/gmail-watch`, `/cron/overdue` | las cinco con `/api` |
+
+**`pmo-gmail-watch-renew` está en esa lista**, y es la que mantiene vivo el
+`watch` de Gmail: si queda en 404, la ingesta se muere sola en siete días y
+**nadie avisa**. Es el patrón del `watch` caducado de agosto, con la diferencia
+de que esta vez está escrito antes de que pase.
+
+Lo que **sí** se actualizó hoy (23:03) y está bien: `WEB_URL` y
+`GOOGLE_REDIRECT_URI` ya apuntan a `https://pmo-dashboard-503418.web.app` con
+`/api/auth/google/callback`. **Queda comprobar que ese URI exacto esté dado de
+alta en la consola de OAuth**, que no se ve desde aquí.
+
+### 66.4 🔴 La ingesta lleva nueve días muerta, y contesta 200 en la puerta
+
+El dato duro de la base: **el último correo guardado es del 2026-09-09 18:52**;
+el último `processedAt`, del 09-09 22:54. **Cero filas nuevas en nueve días.**
+
+Y al mismo tiempo, en el registro de los últimos 7 días: **83 entregas a
+`/webhooks/gmail` con estado 200**, y `/cron/gmail-watch` en 200 cada mañana
+(la última, hoy 07:30 UTC). O sea: **Gmail avisa, la API contesta que sí, y no
+entra nada.** Un fallo que responde 200 no aparece en ningún panel.
+
+Dos causas, y las dos con evidencia:
+
+1. **09-09, 18:23 UTC — Upstash cortó por cuota**, seis veces seguidas:
+   `ReplyError: ERR max requests limit exceeded. Limit: 500000, Usage: 500051`.
+   Es el minuto exacto en que la base deja de crecer. No hay ni un error de
+   Redis posterior en el registro, así que **el corte fue ahí y desde entonces
+   solo hay silencio** — que es lo que hace una cola que ya no drena.
+2. **Desde el 09-15 hay una segunda puerta cerrada, y es deliberada**: la Fase 9
+   (`e3c9cb3`) exige que **exista la etiqueta PMO** en Gmail o `backfill` y
+   `getInbox` abortan. La etiqueta aún no está creada. Ese tramo está explicado.
+
+Lo que **no** está explicado es el hueco **09-09 → 09-15**, y por eso lo dejo
+como pregunta y no como conclusión. Lo que sí afirmo, porque está medido: **crear
+la etiqueta PMO no va a arrancar esto por sí solo.**
+
+### 66.5 La radiografía del atasco — Bloque 0 de la Fase 7, por fin medida
+
+Consultado en la base de producción a través del proxy, **solo lectura**, hoy.
+**Ya no son 728: son 678.** (752 correos en total; 68 `DISMISSED`, 4
+`COMPLETED`, 2 `IN_PROGRESS`.)
+
+| Forma de los 678 pendientes | Cuántos | % |
+|---|---|---|
+| `isActionable: false` (ruido puro) | **274** | 40 % |
+| Accionables **sin** propuestas | **208** | 31 % |
+| Accionables **con** propuestas en cuarentena | **196** | 29 % |
+
+- **369 tareas propuestas** esperando decisión, repartidas en esos 196 correos
+  (1,9 de media).
+- **378 hilos distintos** — la bandeja por hilos reduce el despacho de 678 fichas
+  a 378 conversaciones.
+- **Antigüedad: no hay cola vieja.** El más antiguo es del **13-08** y el más
+  reciente del **09-09**: 524 dentro de los últimos 30 días y 154 entre 31 y 90.
+  **Ninguno pasa de 90 días**, así que **una fecha de corte no sirve de nada
+  aquí** — no hay un tramo antiguo que archivar en bloque.
+- `processedAt` puesto en los 678: **la IA ya los vio todos.** Solo 10 traen
+  `skipReason`, y los 10 son `SIN_TEXTO`.
+
+**Lo que eso dicta para la Fase 7** (era la decisión que el Bloque 0 tenía que
+desatascar): **no hay mayoría, hay tres tercios**, así que el alcance no puede
+ser «filtro y archivado masivo» **o** «aprobación por lotes»: **hacen falta los
+dos**, y el reparto natural es 274 fuera de en medio con archivado masivo y 196
+por lotes en la cuarentena. Los 208 del medio —accionables sin propuesta— son
+los que hoy no tienen ni botón ni pantalla.
+
+**Y el dato incómodo, que cambia lo que se ve al despachar:**
+
+| Campo | Cuántos de los 678 lo traen |
+|---|---|
+| `attachments` (fichas de la Fase 8) | **0** — son `NULL` en los 678 |
+| `hasAttachments: true` | **0** |
+| `company` | **0** |
+| `bank` | **0** |
+
+Las tres funciones de la Fase 8 —adjuntos, empresa y banco— **están construidas
+y son ciegas sobre todo lo que ya hay dentro**, porque nacieron sin relleno hacia
+atrás y desde entonces no ha entrado un solo correo nuevo (66.4). Traducido:
+**las pestañas de empresa y banco saldrán vacías para los 678**, y el visor de
+adjuntos no tendrá nada que enseñar. Confirma la casilla 🟡 del Bloque 0 de
+`TASKS.md` y la agranda: no es solo `hasAttachments`, son tres campos.
+
+### 66.6 Las nueve casillas de consola, hoy
+
+| # | Estado | Lo comprobado |
+|---|---|---|
+| **C11** 🔴 base sin protección de borrado | ✅ **CERRADA** | `pmo-postgres-db`: `DELETION_PROTECTION_ENABLED: True`, backups `True` |
+| **§57.3** secretos con la contraseña de Neon dentro | ✅ **CERRADA la parte grave** | `pmo-database-url`: versiones 1, 2 y 3 **destroyed**. Quedan 17 versiones habilitadas en total (eran 13): **higiene, ya no fuga** |
+| **§57.4** `pmo-presupuesto` sin suscriptores | ❌ **ABIERTA** | el topic existe y **sigue sin una sola suscripción**: el aviso de presupuesto no llega a ningún sitio |
+| **C12** `master` sin protección de rama | 🟠 **A MEDIAS** | ya hay protección (no force-push, no borrado) pero **sin `required_status_checks`**: «CI en verde» **no** es obligatorio. Por eso `92b5262` pudo entrar con el linter roto |
+| **R2** Upstash sin presupuesto | ❌ **ABIERTA, y ya cobró** | no se ve desde consola aquí, pero el registro del 09-09 demuestra que **el tope se alcanzó y tumbó la ingesta nueve días** |
+| **R3** Upstash retira el «Eco mode» | ⏸️ **la decide el concepto** | el Jefe sacó Upstash del stack el 17-09; esto ya no es «elegir plan», es «apagarlo» |
+| **R6** `VITE_API_URL` sin poner en Vercel | ✅ **SIN OBJETO** | el frontend ya no vive en Vercel y `apps/web/src/lib/api.ts` usa ruta relativa `/api`. Lo que lo sustituye es 66.2/66.3 |
+| **A5** el techo de 200 USD de Anthropic no avisa | ❓ **de consola, sin verificar** | no se ve sin el panel de Anthropic |
+| **A7** tarjeta Visa duplicada | ❓ **de consola, sin verificar** | idem, panel de facturación |
+
+**Y la que tiene reloj**: la clave de Anthropic caduca el **1 de noviembre de
+2026** — quedan **44 días** — y el aviso automático sigue sin construirse.
+
+### 66.7 Lo que NO marco como defecto, porque está dicho
+
+- **`PAUSA_ENTRE_TANDAS_MS` está en `5_000`**, con la cuenta del timeout escrita
+  al lado (`gmail.service.ts:229`). El encargo de la Fase 8.1 **se ejecutó**.
+  ⚠️ Pero el parte que @Claude me dejó en `scratch/mensaje_alana.txt` dice, en su
+  punto 4, «el goteo **ya está configurado en 1000 ms**». **El código dice 5 s y
+  el parte dice 1 s.** El código gana, y lo anoto porque Doc me había avisado de
+  que un `1_000` aquí significaría «el encargo no se ejecutó»: **el parte, leído
+  solo, me habría hecho abrir un hallazgo falso.**
+- El histórico de correo **no se borra** (decisión del 09-11) y los contadores
+  por pestaña **están ocultos a propósito**. No los toco.
+- **Nada de la Fase 8 se ha ejecutado contra Gmail de verdad**, y ahora está
+  medido: cero adjuntos, cero `company`, cero `bank` en la base (66.5).
+
+### 66.8 Tres hechos más, medidos, que alguien debería querer saber
+
+1. **La tabla `Task` está vacía: 0 filas.** También `Subtask`, `TimeEntry` y
+   `Obra`. El respaldo de las 08:33 de hoy pesaba 1 124 854 bytes y el de las
+   20:34, **1 084 875**: algo se borró hoy entre esas dos copias. Encaja con el
+   «arranque limpio» que el Jefe decidió el 17-09 —las tareas se archivan, no se
+   migran—, así que **lo registro como hecho, no como incidente**. Si nadie lo
+   ordenó, es un incidente grave y hay copia de las 08:33 para volver.
+2. **En la base hay tablas que no están en `schema.prisma`**: `user`, `session`,
+   `account`, `organization`, `member`, `invitation`, `jwks`, `verification`
+   (better-auth) y `project_config`. Todas vacías salvo `project_config` (1
+   fila). **Dos esquemas de autenticación conviviendo en la misma base** es algo
+   que conviene decidir antes de que el segundo tenga datos dentro.
+3. **`TASKS.md` va dos fases por detrás del árbol**: sigue titulado «Fase 7» y su
+   Bloque 0 sigue sin marcar, mientras el repositorio va por la 9.1. El plan
+   escrito ya no dice lo que está pasando.
+
+**No he cerrado nada y no he reparado nada.** Lo único que escribí fuera de este
+cuaderno es la entrada del buzón de `PROMPT_ALANA.md`, que es mi entrega.

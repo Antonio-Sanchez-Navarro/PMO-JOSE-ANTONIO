@@ -1183,7 +1183,7 @@ export class EmailsService {
         select: { position: true },
       });
 
-      let position = last ? last.position + 1 : 0;
+      const position = last ? last.position + 1 : 0;
       const created: Task[] = [];
 
       const uniqueTagIds = [...new Set(confirmed.flatMap((task) => task.tagIds ?? []))];
