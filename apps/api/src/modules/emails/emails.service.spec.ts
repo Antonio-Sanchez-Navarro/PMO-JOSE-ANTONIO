@@ -61,7 +61,10 @@ describe('EmailsService — POST /emails/:id/to-task', () => {
         findFirst: jest.fn().mockResolvedValue({ position: 4 }),
         create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'task-x', ...data })),
       },
-      email: { update: jest.fn().mockResolvedValue({}) },
+      email: {
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({})
+      },
     };
     prisma = {
       email: { findFirst: jest.fn().mockResolvedValue(emailNoAccionable) },
@@ -309,7 +312,10 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
         findFirst: jest.fn().mockResolvedValue({ position: 4 }),
         create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'task-x', ...data })),
       },
-      email: { update: jest.fn().mockResolvedValue({}) },
+      email: {
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({})
+      },
     };
     prisma = {
       email: { findFirst: jest.fn().mockResolvedValue(emailNoAccionable) },

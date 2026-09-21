@@ -91,6 +91,11 @@ export function AttachmentList({
    * viejos de la bandeja — o sea, de casi todos los que quedan por despachar.
    */
   if (descargables.length === 0) {
+    // Si tenemos fichas guardadas pero ninguna es descargable (todas son inline),
+    // simplemente no enseñamos nada. El clip engañó en la lista, pero aquí no hay error.
+    if (attachments && attachments.length > 0) return null;
+
+    // Si dice que tiene adjuntos pero no hay fichas, ES un correo viejo.
     if (!hasAttachments) return null;
     return (
       <div className="mb-6 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">

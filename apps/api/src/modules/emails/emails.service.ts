@@ -1062,7 +1062,7 @@ export class EmailsService {
     // podría convertir el correo de otra persona con solo conocer su id.
     const email = await this.prisma.email.findFirst({
       where: { id: emailId, userId },
-      select: { id: true, subject: true, snippet: true, bodyText: true, proposedTasks: true },
+      select: { id: true, threadId: true, subject: true, snippet: true, bodyText: true, proposedTasks: true },
     });
 
     if (!email) {
@@ -1089,6 +1089,7 @@ export class EmailsService {
       return this.persistConfirmed(
         userId,
         email.id,
+        email.threadId,
         email.subject,
         dto.tasks,
         dto.category,
@@ -1159,6 +1160,7 @@ export class EmailsService {
   private async persistConfirmed(
     userId: string,
     emailId: string,
+    threadId: string,
     emailSubject: string | null,
     confirmed: ConfirmedTaskDto[],
     category?: string,
@@ -1222,11 +1224,19 @@ export class EmailsService {
         data: {
           isActionable: true,
           processedAt: new Date(),
-          proposedTasks: Prisma.JsonNull, // limpiar las propuestas tras aprobar
           // Solo si la persona la tocó: sin esto, confirmar borraría la
           // categoría que ya tuviera el correo.
           ...(category ? { category } : {}),
         },
+      });
+
+      // Limpia las propuestas de TODOS los correos del hilo, porque la interfaz agrupa
+      // las propuestas por hilo al aprobarlas (se aprobaron/rechazaron todas de una vez).
+      // Si no se hiciera así, quedarían "propuestas fantasma" en otros correos del hilo
+      // que corrompen el contador visual.
+      await tx.email.updateMany({
+        where: { threadId },
+        data: { proposedTasks: Prisma.JsonNull },
       });
 
       return created;
