@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { LoginPage } from "./features/auth/LoginPage";
 import { useSession, type SessionUser } from "./features/auth/useSession";
 import { KanbanBoard } from "./features/kanban/components/KanbanBoard";
-import { apiFetch } from "./lib/api";
+import { HOST_BASE } from "./lib/api";
 
 type Health = {
   status: string;
@@ -76,9 +76,11 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
     let cancelled = false;
 
     const probe = async (): Promise<Health> => {
-      // Vía el proxy de Vite: /api -> http://localhost:3000
-      await apiFetch<{ status: string }>("/health/ready");
-      return apiFetch<Health>("/health");
+      const resReady = await fetch(`${HOST_BASE}/health/ready`);
+      if (!resReady.ok) throw new Error(`Cannot GET /health/ready`);
+      const resHealth = await fetch(`${HOST_BASE}/health`);
+      if (!resHealth.ok) throw new Error(`Cannot GET /health`);
+      return resHealth.json();
     };
 
     const check = () => {
