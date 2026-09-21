@@ -72,7 +72,7 @@ export interface TriageEmail {
  * escribiera su propio `select`, acabarían devolviendo formas distintas del
  * mismo correo.
  */
-const SELECT_TRIAGE = {
+export const SELECT_TRIAGE = {
   id: true,
   subject: true,
   from: true,
@@ -110,7 +110,7 @@ type FilaTriage = {
   _count: { tasks: number };
 };
 
-function aTriageEmail(email: FilaTriage): TriageEmail {
+export function aTriageEmail(email: FilaTriage): TriageEmail {
   return {
     id: email.id,
     // El asunto es opcional en la base y la bandeja necesita algo que pintar:

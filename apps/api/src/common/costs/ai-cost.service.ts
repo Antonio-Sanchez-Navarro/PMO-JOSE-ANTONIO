@@ -216,7 +216,12 @@ export class AiCostService {
     const umbral = UMBRALES.filter((u) => e.consumido >= u).pop();
     const subidas = subidaCercana(ahora);
 
-    if (umbral === undefined && subidas.length === 0) return e;
+    const anthropicKeyExpiry = this.config.get<string>('ANTHROPIC_API_KEY_EXPIRY') || '2026-11-01';
+    const expiryDate = new Date(anthropicKeyExpiry);
+    const diasRestantesClave = Math.ceil((expiryDate.getTime() - ahora.getTime()) / (1000 * 3600 * 24));
+    const avisaCaducidad = diasRestantesClave <= 10 && diasRestantesClave > -30;
+
+    if (umbral === undefined && subidas.length === 0 && !avisaCaducidad) return e;
 
     const partes: string[] = [];
 
@@ -239,18 +244,38 @@ export class AiCostService {
       }
     }
 
+    if (avisaCaducidad) {
+      if (diasRestantesClave > 0) {
+        partes.push(`⚠️ La clave de Anthropic caduca en ${diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`);
+      } else {
+        partes.push(`⚠️ La clave de Anthropic CADUCÓ hace ${-diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`);
+      }
+    }
+
     partes.push(`Precios comprobados el ${e.preciosRevisadosEl}. Es una estimacion, no la factura.`);
+
+    let tituloAlerta = 'Sube el precio de un modelo que usamos';
+    let claveFreno = 'coste-ia-subida';
+    let freno = FRENO_SUBIDA_S;
+
+    if (umbral !== undefined) {
+      tituloAlerta = `Consumo de IA al ${Math.round(umbral * 100)}% del presupuesto`;
+      claveFreno = `coste-ia-${umbral}`;
+      freno = FRENO_S;
+    } else if (avisaCaducidad) {
+      tituloAlerta = `Caducidad de clave de Anthropic cercana`;
+      claveFreno = 'caducidad-anthropic';
+      freno = FRENO_S;
+    }
 
     // La clave y el freno cambian segun de que se avise: el umbral es una
     // condicion que evoluciona, la subida es una fecha fija. Mezclarlos haria
     // que el aviso lento heredara el freno del rapido.
     await this.alertas.avisar(
-      umbral !== undefined
-        ? `Consumo de IA al ${Math.round(umbral * 100)}% del presupuesto`
-        : 'Sube el precio de un modelo que usamos',
+      tituloAlerta,
       partes.join(' '),
-      umbral !== undefined ? `coste-ia-${umbral}` : 'coste-ia-subida',
-      umbral !== undefined ? FRENO_S : FRENO_SUBIDA_S,
+      claveFreno,
+      freno,
     );
 
     return e;

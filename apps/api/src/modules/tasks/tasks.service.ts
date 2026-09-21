@@ -9,6 +9,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { TagsService } from '../tags/tags.service';
 import { TasksGateway } from './tasks.gateway';
 import { MoveTaskDto } from './dto/move-task.dto';
+import { SELECT_TRIAGE, aTriageEmail } from '../emails/emails.service';
 
 /**
  * Orden canónico de una columna del Kanban.
@@ -177,7 +178,7 @@ export class TasksService {
     const deleted = await this.prisma.$transaction(async (tx) => {
       const task = await tx.task.findFirst({
         where: { id, userId },
-        select: { id: true, status: true, userId: true },
+        select: { id: true, status: true, userId: true, sourceEmailId: true },
       });
       if (!task) throw new NotFoundException(`La tarea con ID ${id} no existe.`);
 
@@ -192,6 +193,19 @@ export class TasksService {
     });
 
     this.gateway.emitTaskDeleted(deleted, socketId);
+
+    // Si la tarea provenía de un correo, hay que avisar a la bandeja de que el
+    // conteo de tareas bajó (y si llega a 0, se desenlaza de la vista 'Convertido a Tareas')
+    if (deleted.sourceEmailId) {
+      const email = await this.prisma.email.findUnique({
+        where: { id: deleted.sourceEmailId },
+        select: SELECT_TRIAGE,
+      });
+      if (email) {
+        // Enviar la actualización de correo para que la UI repinte el botón de generar tareas
+        this.gateway.emitEmailUpdated(aTriageEmail(email), socketId);
+      }
+    }
   }
 
   async toggleSubtask(userId: string, taskId: string, subtaskId: string, isCompleted: boolean, socketId?: string) {
