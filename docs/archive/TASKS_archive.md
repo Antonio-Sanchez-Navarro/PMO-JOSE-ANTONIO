@@ -320,3 +320,21 @@ RPO **24 h → 12 h**. El job de respaldo ya no puede fallar en silencio, y tamp
 - [x] 🟡 **Filtros por etiqueta y por rango de fechas en `GET /tasks`** (Claude Code, 2026-07-29, orden de Doc) — ✅ `?tagId=` (repetible) y `?dueFrom=` / `?dueTo=`. **El filtro es por la relación `labels`, el modelo `Tag` con su color, no por el arreglo de texto `tags` que extrae la IA**: son dos cosas distintas y el desplegable de la interfaz se llena de las primeras. Varias etiquetas usan `some` y no `every` porque es lo que hace un filtro de facetas — marcar dos amplía la vista, no la vacía— y un id repetido no da 400: filtrar dos veces por lo mismo da lo mismo. Un id ajeno o inventado devuelve lista vacía en vez de 404, que delataría su existencia. El rango incluye por abajo y **excluye por arriba**, igual que en `GET /time/report` y `GET /emails`, para que dos rangos consecutivos no cuenten dos veces la misma tarea; las tareas **sin fecha** quedan fuera en cuanto se usa el rango, porque "qué vence esta semana" no incluye lo que no vence nunca. 9 pruebas nuevas. _Verificado contra la app con datos reales: por etiqueta devuelve solo la etiquetada, un id inventado devuelve 0, el rango incluye la del 5 de agosto y excluye la que no tiene fecha, los filtros se combinan, y `?dueFrom=mañana` da 400_
   - _Historia de esta casilla_: estuvo marcada como hecha en `697784b` sin estarlo, se reabrió el 2026-07-29 con la nota de qué faltaba exactamente, y se cerró ese mismo día. La UI de filtros de `KanbanBoard` —buscador y desplegables de estado y prioridad— ya tiene ahora de dónde colgar los dos que faltaban.
 - [x] 🟢 **UX del Botón "Convertir a Tarea" (Inbox)** (Gravity, 2026-08-18) — ✅ Se solucionó la deuda técnica que causaba errores 409 Conflict. Se implementó un estado local `isAnalyzing` en `InboxPage.tsx` que deshabilita el botón tras el primer clic mientras el backend procesa. Adicionalmente, el botón cambia su estado de forma permanente si el correo ya fue convertido, eliminando la posibilidad de lanzar múltiples peticiones simultáneas hacia la API.
+
+## Fase 7 — Interfaz de Carga de Trabajo Humana (Atasco de los 728) [ARCHIVADO]
+
+**Objetivo de la Fase:** Proveer a los usuarios (Jefe) de una interfaz y un flujo de trabajo para despachar esta deuda humana rápidamente, ya sea mediante archivado masivo o aprobación por lotes.
+Estado: Completado. La bandeja se redujo a 32 pendientes gracias al despachado masivo (isActionable / bulk dismiss) implementado en la interfaz.
+
+### Bloque 0 — Reconocimiento y Definición de Alcance (Data-Driven)
+- [x] 🔴 **Radiografía de los 728:** (Requiere acceso a BD de prod)
+  - Medido cuántos tienen isActionable: false.
+  - Medido cuántos tienen proposedTasks en cuarentena.
+  - Medida la antigüedad de la cola (fecha de corte).
+- [x] 🔴 Definir alcance exacto de la Fase 7 en base a los números:
+  - Implementado filtro y archivado masivo.
+  - Implementada aprobación por lotes en el modal.
+- [x] 🟡 **Gestión de adjuntos (Backfill):** Implementado en Fase 8.
+
+### Bloque 1 — Ejecución del Alcance 
+- [x] 🔴 (Completado) Implementación de Bulk Dismiss y Bulk Approve en UI.
