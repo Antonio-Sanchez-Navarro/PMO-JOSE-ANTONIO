@@ -203,7 +203,7 @@ export class TasksService {
       });
       if (email) {
         // Enviar la actualización de correo para que la UI repinte el botón de generar tareas
-        this.gateway.emitEmailUpdated(aTriageEmail(email), socketId);
+        this.gateway.emitEmailUpdated({ ...aTriageEmail(email), userId: deleted.userId }, socketId);
       }
     }
   }
