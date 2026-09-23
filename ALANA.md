@@ -1956,3 +1956,93 @@ importa. Con el presupuesto ya en 75 no habrá umbral que lo tape, así que repe
 la prueba hoy iría por su propia clave (`caducidad-anthropic`). Pero el día que
 coincidan el coste alto y la clave a punto de vencer, **el aviso más urgente viaja
 escondido dentro del menos urgente**. Dueño: @Claude, vía Doc.
+
+---
+
+## 81. Contraste del relato «por qué Firebase» (2026-09-23, 17:25 UTC)
+
+El Jefe me pasa una explicación de la migración. La idea general es correcta: la
+decisión del 17-09 fue suya, fue para juntar todo en Google, y §68 es la causa real
+del fallo de login. **Tres detalles no se sostienen contra el código y el bundle:**
+
+| Afirmación | Comprobado |
+|---|---|
+| «En Vercel funcionaba porque Vercel no filtra las cookies» | ⚠️ **Vercel no estaba en el camino de las cookies.** El frontend de Vercel llamaba **directo** a Cloud Run (CORS + `SameSite=None`, `session.service.ts:98`). El CDN de Firebase solo rompió el login porque el primer montaje metió la API **detrás** del hosting (`/api/**` → `pmo-api` en `firebase.json`) |
+| «Nos obligó a replantear el login: renombrar a `__session` o separar dominios» | ⚠️ **No se hizo ninguna de las dos.** Las cookies siguen siendo `pmo_oauth_state` y `pmo_refresh` (`auth.constants.ts:14,20`) y en `apps/` no aparece `__session`. Lo que se hizo fue la **salida (c) de §68**: el bundle servido llama a `https://pmo-api-mlpuuasqka-uc.a.run.app`, **rodeando el CDN**, y `GOOGLE_REDIRECT_URI` apunta a `run.app`. Es lo mismo que se hacía con Vercel |
+| «Por eso Vercel quedó pausado y medio roto» | ⚠️ Vercel se dejó por **decisión del Jefe** (17-09), no por las cookies. Su estado de hoy —despliegues **«blocked»** desde `23e9c5c`— **tiene una causa que nadie ha visto** (§80) |
+| «Pub/Sub para tareas asíncronas» | Matiz: Pub/Sub solo lleva los **avisos push de Gmail**. Las tareas asíncronas van por **BullMQ sobre Redis** |
+
+**Por qué importa:** si el relato se queda como está, alguien acabará haciendo un
+arreglo que ya no hace falta —renombrar la cookie a `__session`— para resolver un
+problema que hoy no existe.
+
+**El riesgo que sí queda**, y es un dato, no un defecto nuevo: la sesión viaja como
+**cookie de terceros** (`web.app` → `run.app`, `SameSite=None`). Un navegador con las
+cookies de terceros bloqueadas —Safari por defecto, o Chrome con el bloqueo activado—
+**puede perder la sesión**. El propio código lo avisa en `session.service.ts:88`.
+**La salida (b) de §68, un subdominio propio**, es la que lo quitaría de raíz. Es
+decisión del Jefe y no corre prisa mientras solo entren usuarios de Chrome.
+
+**No he cerrado nada y no he reparado nada.**
+
+---
+
+## 82. El aviso no llegó, y `master` está en rojo (2026-09-23, 18:15 UTC)
+
+### 82.1 ✅ Confirmado por el Jefe: el aviso de caducidad no llegó al chat
+
+Cierra la hipótesis de §80.4: el aviso se generó, viajó pegado al aviso de coste
+y **lo tapó el freno de 23 h de `coste-ia-0.9`**. **La prueba estaba bien hecha; el
+fallo es del diseño.**
+
+### 82.2 🔴 El arreglo existe, pero el CI está en rojo y no se ha desplegado
+
+`1f07736` (17:19 UTC, «alerts isolation») separa el aviso de caducidad con su propia
+clave (`ai-cost.service.ts:265-279`). **La lógica es correcta.** Pero:
+
+```
+CI 35894771566 → failure
+ai-cost.service.ts 266:11  error  The value assigned to 'msg' is not used  no-useless-assignment
+Deploy API to Cloud Run → skipped
+```
+
+El `let msg = ''` se sobrescribe en las dos ramas del `if`, y ESLint lo rechaza.
+**Producción sigue en `00141`, con la lógica vieja.** Es el mismo tapón del 18-09:
+**una línea de lint**.
+
+**Lo que no sabía el que lo escribió:** el commit también lleva el cambio de
+`company`/`bank` (`ai.service.ts`, restringidos a `EMPRESAS`/`BANCOS`) y el de
+`vite.config.ts`. **Nada de eso está en producción.**
+
+### 82.3 🔴 C12 se ha deshecho: `master` ya no exige el CI
+
+```
+gh api …/branches/master/protection → required_status_checks: {"checks":[],"contexts":[],"strict":true}
+```
+
+En §76 estaba `["build-and-lint"]`. **Hoy la lista está vacía**, así que se puede
+empujar a `master` sin CI verde, y es lo que ha pasado con `1f07736`. No sé cuándo ni
+quién la vació: la API no guarda historial de la regla. **Producción está a salvo de
+rebote**, porque el despliegue solo arranca con el CI en verde (`workflow_run`). Pero
+**`master` está en rojo desde las 17:19**, y cualquier cosa que se empuje encima
+cargará con ese error.
+
+### 82.4 🟠 El nuevo `vite.config.ts` cambia el 404 por un verde falso
+
+`1f07736` sustituye `git rev-parse HEAD` por `git ls-remote origin -h refs/heads/master`.
+Eso **no devuelve lo que se ha compilado, sino la punta de `master` en GitHub**. Si se
+publica en Firebase desde un árbol viejo o con cambios sin empujar, `version.json` dirá
+que sirve el último commit, y la sonda contestará «**al día**» sin estarlo.
+
+**Es peor que el 404:** el 404 avisaba de que no podía mirar, y esto contesta que sí
+con un dato que no ha medido. El `rev-parse` era correcto, y su fallo (el SHA sin
+empujar) se evita empujando antes de publicar, no preguntando a GitHub.
+
+### 82.5 La prueba de humo, repetible hoy con el código viejo
+
+Con el gasto al **29 % de 75**, no hay umbral de coste que la tape. Y la lógica vieja
+(00141) ya manda el aviso de caducidad **por su propia clave** cuando no hay umbral.
+Además, la clave `caducidad-anthropic` **nunca llegó a grabarse**: a las 15:15 se usó
+`coste-ia-0.9`, así que tampoco hay freno que la bloquee. El paso a paso está en el buzón.
+
+**No he cerrado nada y no he reparado nada.**

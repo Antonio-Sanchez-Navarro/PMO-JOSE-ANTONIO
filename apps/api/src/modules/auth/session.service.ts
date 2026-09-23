@@ -84,18 +84,17 @@ export class SessionService {
    * falta `None`— y `secure` sobre `http://localhost` dejaría la cookie sin
    * guardar en la mitad de los navegadores.
    *
-   * ⚠️ Esto depende de que el navegador acepte cookies de terceros. Con el
-   * bloqueo de terceros activado, `SameSite=None` tampoco viaja. La solución
-   * de fondo no es una bandera sino un **dominio propio** que ponga API y
-   * frontend en el mismo sitio (`api.ejemplo.com` y `app.ejemplo.com`), y
-   * entonces esto vuelve a `lax`.
+   * ⚠️ Resolvimos este problema en Sept 2026 configurando un **dominio propio** 
+   * (`app.pmo-app.com` y `api.pmo-app.com`). Al compartir el dominio raíz, son el 
+   * mismo sitio ("same-site"), lo que nos permite usar `SameSite=lax` nuevamente y 
+   * evitar el bloqueo de cookies de terceros en Safari y Chrome estricto.
    */
   private cookieOptions(maxAgeSec: number): CookieOptions {
     const enProduccion = this.config.get("NODE_ENV") === "production";
 
     return {
       httpOnly: true,
-      sameSite: enProduccion ? "none" : "lax",
+      sameSite: "lax", // Al estar ambos en pmo-app.com, la cookie funciona sin ser cross-site
       secure: enProduccion,
       path: "/",
       maxAge: maxAgeSec * 1000,

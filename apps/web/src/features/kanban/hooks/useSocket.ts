@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { Task, TaskStatus } from '../types';
 import { TimeEntry, SESSION_EVENTS, CODIGO_SESION, type SesionRechazadaEvento, type CodigoSesion } from '@pmo/shared';
-import { apiFetch } from '../../../lib/api';
+import { apiFetch, HOST_BASE } from '../../../lib/api';
 
 export const TASK_EVENTS = {
   created: 'task.created',
@@ -106,9 +106,7 @@ export const useSocket = ({
     subscribers += 1;
 
     if (!globalSocket) {
-      // Como tanto en local (Vite) como en prod (Firebase Hosting) se expone /socket.io
-      // en el mismo origen, podemos omitir la URL para que Socket.IO infiera window.location.
-      globalSocket = io({
+      globalSocket = io(HOST_BASE, {
         withCredentials: true,
         transports: ['websocket', 'polling'],
         reconnectionAttempts: 5,
