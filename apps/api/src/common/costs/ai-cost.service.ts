@@ -223,10 +223,10 @@ export class AiCostService {
 
     if (umbral === undefined && subidas.length === 0 && !avisaCaducidad) return e;
 
-    const partes: string[] = [];
+    const partesCoste: string[] = [];
 
     if (umbral !== undefined) {
-      partes.push(
+      partesCoste.push(
         `Llevas $${e.gastado.toFixed(2)} de $${e.presupuesto} este mes. ` +
           (e.diasRestantes === null
             ? 'No hay consumo reciente del que estimar cuanto queda.'
@@ -237,46 +237,46 @@ export class AiCostService {
 
     if (subidas.length > 0) {
       for (const subida of subidas) {
-        partes.push(
+        partesCoste.push(
           `Y ojo: el ${subida.el} ${subida.model} sube un ${subida.subida}% porque ${subida.porQue}. ` +
             'El gasto de ese dia en adelante no se parecera al de ahora.',
         );
       }
     }
 
-    if (avisaCaducidad) {
-      if (diasRestantesClave > 0) {
-        partes.push(`⚠️ La clave de Anthropic caduca en ${diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`);
-      } else {
-        partes.push(`⚠️ La clave de Anthropic CADUCÓ hace ${-diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`);
-      }
-    }
-
-    partes.push(`Precios comprobados el ${e.preciosRevisadosEl}. Es una estimacion, no la factura.`);
-
-    let tituloAlerta = 'Sube el precio de un modelo que usamos';
-    let claveFreno = 'coste-ia-subida';
-    let freno = FRENO_SUBIDA_S;
+    partesCoste.push(`Precios comprobados el ${e.preciosRevisadosEl}. Es una estimacion, no la factura.`);
 
     if (umbral !== undefined) {
-      tituloAlerta = `Consumo de IA al ${Math.round(umbral * 100)}% del presupuesto`;
-      claveFreno = `coste-ia-${umbral}`;
-      freno = FRENO_S;
-    } else if (avisaCaducidad) {
-      tituloAlerta = `Caducidad de clave de Anthropic cercana`;
-      claveFreno = 'caducidad-anthropic';
-      freno = FRENO_S;
+      await this.alertas.avisar(
+        `Consumo de IA al ${Math.round(umbral * 100)}% del presupuesto`,
+        partesCoste.join(' '),
+        `coste-ia-${umbral}`,
+        FRENO_S,
+      );
+    } else if (subidas.length > 0) {
+      await this.alertas.avisar(
+        'Sube el precio de un modelo que usamos',
+        partesCoste.join(' '),
+        'coste-ia-subida',
+        FRENO_SUBIDA_S,
+      );
     }
 
-    // La clave y el freno cambian segun de que se avise: el umbral es una
-    // condicion que evoluciona, la subida es una fecha fija. Mezclarlos haria
-    // que el aviso lento heredara el freno del rapido.
-    await this.alertas.avisar(
-      tituloAlerta,
-      partes.join(' '),
-      claveFreno,
-      freno,
-    );
+    if (avisaCaducidad) {
+      let msg = '';
+      if (diasRestantesClave > 0) {
+        msg = `⚠️ La clave de Anthropic caduca en ${diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`;
+      } else {
+        msg = `⚠️ La clave de Anthropic CADUCÓ hace ${-diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`;
+      }
+      
+      await this.alertas.avisar(
+        `Caducidad de clave de Anthropic cercana`,
+        msg,
+        'caducidad-anthropic',
+        FRENO_S,
+      );
+    }
 
     return e;
   }

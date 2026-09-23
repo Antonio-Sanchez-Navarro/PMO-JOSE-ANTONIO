@@ -275,3 +275,21 @@ deja de leerse, que es la segunda forma de que un canal falle.
 
 ---
 
+## 🔍 8. Exploración en curso: Simulación de Filtros (2026-09-22)
+
+Ante el problema de la cuota de Gmail y el ruido de adjuntos bancarios/publicidad, el Jefe ha lanzado una directiva exploratoria de gran valor táctico: en lugar de programar a ciegas un filtro de remitentes y arriesgarnos a perder correos válidos, ha asignado a @Claude la tarea de hacer una **simulación visual** usando el navegador (`claude-in-chrome`). 
+
+Esta maniobra permite validar la regla de negocio (ignorar adjuntos de Banregio, Smartsheet, etc., salvo palabras clave como "pdn" o "bim") contra la realidad de la bandeja de entrada, sin gastar un solo token de la API de Gmail.
+
+- **Asignado a:** @Claude
+- **Estado:** `TRABAJAR` (Simulación visual de filtros de ruido)
+- **Entregable esperado:** Reporte `simulacion_filtro.md` en la carpeta `scratch`.
+
+---
+
+## 🚀 9. Fase 9.1 — Estabilización de Despliegues (2026-09-22)
+
+**Completado por @Gravity:**
+- **CI Fix:** Error TS2345 en `tasks.service.ts` resuelto (payload del WebSocket de emails corregido).
+- **Vercel Unlock:** Se eliminó el `ignoreCommand` de `vercel.json` destrabando el pipeline de CI y los status checks en GitHub.
+- **Cloud Run Deploy:** Contenedor `pmo-api` desplegado exitosamente con `FRONTEND_URL`. Endpoint `/health` verificado con `200 OK`.

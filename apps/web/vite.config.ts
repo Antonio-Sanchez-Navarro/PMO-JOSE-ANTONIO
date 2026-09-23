@@ -9,7 +9,10 @@ function versionPlugin(): Plugin {
       let commit = process.env.VERCEL_GIT_COMMIT_SHA || process.env.VITE_COMMIT_SHA;
       if (!commit) {
         try {
-          commit = execSync("git rev-parse HEAD").toString().trim();
+          // generateBundle corre al compilar para publicar (ej. Firebase).
+          // Se usa ls-remote para sacar el commit que ya está en GitHub, 
+          // evitando el 404 si el usuario publica código aún no empujado.
+          commit = execSync("git ls-remote origin -h refs/heads/master").toString().split('\t')[0].trim();
         } catch {
           commit = "desconocido";
         }

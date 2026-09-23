@@ -532,3 +532,10 @@ retiene el archivo entero en memoria.
   enseÃ±arlos mal.
 - **Nada de esto se ha probado contra Gmail de verdad.** La primera descarga real
   de un adjunto sigue siendo la prueba que falta, y es de despliegue.
+
+
+## Fase 9.1 — Cloud Run, Vercel y CI (2026-09-22)
+
+1. **CI arreglado:** El TypeScript se rompió por duplicación de userId en emitEmailUpdated (	asks.service.ts). Corregido en commit 56205b3.
+2. **Vercel desbloqueado:** Vercel reportaba Blocked en los PRs debido a que ignoreCommand devolvía 0. Se removió temporalmente del ercel.json para destrabar el CI.
+3. **Despliegue exitoso a Cloud Run:** Se desplegó la API a pmo-api con la variable FRONTEND_URL apuntando a Firebase / Vercel. El endpoint /health devuelve 200 OK.

@@ -147,12 +147,12 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
       // extra: estos dos campos se convierten en pestañas de la bandeja, asi
       // que "Santander", "SANTANDER" y "Banco Santander" serian tres.
       company: {
-        anyOf: [{ type: 'string' }, { type: 'null' }],
+        anyOf: [{ type: 'string', enum: [...EMPRESAS] }, { type: 'null' }],
         description:
           'Empresa del grupo a la que pertenece el correo, en una o dos palabras. Extrae el nombre explícito que aparezca, o null si el correo no pertenece a ninguna empresa identificable.',
       },
       bank: {
-        anyOf: [{ type: 'string' }, { type: 'null' }],
+        anyOf: [{ type: 'string', enum: [...BANCOS] }, { type: 'null' }],
         description:
           'Banco o financiera que aparece en el correo. Extrae el nombre explícito que aparezca, o null si no aparece ninguno.',
       },
@@ -197,8 +197,8 @@ límite, devuelve null: no inventes ninguna.
 Sobre la empresa y el banco (company y bank): sirven para separar la bandeja en
 pestañas. El sistema aprenderá dinámicamente de lo que extraigas.
 
-- bank: extrae explícitamente el banco o financiera si se menciona en el correo.
-- company: extrae explícitamente la empresa a la que pertenece el correo si se menciona.
+- bank: extrae explícitamente el banco o financiera si se menciona en el correo. Valores posibles: ${BANCOS.join(', ')}.
+- company: extrae explícitamente la empresa a la que pertenece el correo si se menciona. Valores posibles: ${EMPRESAS.join(', ')}.
 
 Si el correo no menciona ninguno, devuelve null. Es la respuesta correcta y la
 más frecuente: no busques el banco más parecido ni traduzcas otro nombre. Mencionar
