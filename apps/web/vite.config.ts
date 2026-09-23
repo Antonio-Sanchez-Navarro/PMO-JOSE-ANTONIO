@@ -1,14 +1,19 @@
 import { defineConfig, Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { execSync } from "child_process";
 
 function versionPlugin(): Plugin {
   return {
     name: "version-generator",
     generateBundle() {
-      const commit =
-        process.env.VERCEL_GIT_COMMIT_SHA ||
-        process.env.VITE_COMMIT_SHA ||
-        "desconocido";
+      let commit = process.env.VERCEL_GIT_COMMIT_SHA || process.env.VITE_COMMIT_SHA;
+      if (!commit) {
+        try {
+          commit = execSync("git rev-parse HEAD").toString().trim();
+        } catch {
+          commit = "desconocido";
+        }
+      }
       const construido = new Date().toISOString();
       this.emitFile({
         type: "asset",
@@ -24,10 +29,14 @@ function versionPlugin(): Plugin {
             "Cache-Control",
             "no-cache, no-store, must-revalidate",
           );
-          const commit =
-            process.env.VERCEL_GIT_COMMIT_SHA ||
-            process.env.VITE_COMMIT_SHA ||
-            "desconocido";
+          let commit = process.env.VERCEL_GIT_COMMIT_SHA || process.env.VITE_COMMIT_SHA;
+          if (!commit) {
+            try {
+              commit = execSync("git rev-parse HEAD").toString().trim();
+            } catch {
+              commit = "desconocido";
+            }
+          }
           const construido = new Date().toISOString();
           res.end(JSON.stringify({ commit, construido }, null, 2));
           return;
