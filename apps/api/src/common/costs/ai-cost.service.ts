@@ -263,13 +263,11 @@ export class AiCostService {
     }
 
     if (avisaCaducidad) {
-      let msg = '';
-      if (diasRestantesClave > 0) {
-        msg = `⚠️ La clave de Anthropic caduca en ${diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`;
-      } else {
-        msg = `⚠️ La clave de Anthropic CADUCÓ hace ${-diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`;
-      }
-      
+      const msg =
+        diasRestantesClave > 0
+          ? `⚠️ La clave de Anthropic caduca en ${diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`
+          : `⚠️ La clave de Anthropic CADUCÓ hace ${-diasRestantesClave} dia(s) (el ${anthropicKeyExpiry}).`;
+
       await this.alertas.avisar(
         `Caducidad de clave de Anthropic cercana`,
         msg,
