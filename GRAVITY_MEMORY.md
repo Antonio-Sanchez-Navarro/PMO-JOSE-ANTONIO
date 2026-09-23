@@ -539,3 +539,14 @@ retiene el archivo entero en memoria.
 1. **CI arreglado:** El TypeScript se rompi� por duplicaci�n de userId en emitEmailUpdated (	asks.service.ts). Corregido en commit 56205b3.
 2. **Vercel desbloqueado:** Vercel reportaba Blocked en los PRs debido a que ignoreCommand devolv�a 0. Se removi� temporalmente del ercel.json para destrabar el CI.
 3. **Despliegue exitoso a Cloud Run:** Se despleg� la API a pmo-api con la variable FRONTEND_URL apuntando a Firebase / Vercel. El endpoint /health devuelve 200 OK.
+
+### Resolución de Bloqueos en Vercel
+Si Vercel reporta Deployment was blocked tras un git push y ercel.json es correcto, la causa suele ser una política de Vercel.
+**Pasos para diagnosticar:**
+1. Entrar al Dashboard de Vercel -> Proyecto -> Pestaña **Deployments**.
+2. Buscar el despliegue que dice Blocked.
+3. Revisar el motivo. Causas comunes:
+   - Superación de límites del plan (Hobby/Pro).
+   - Necesita aprobación manual (Fork PR, o Vercel Protection).
+   - Problemas de facturación.
+4. Si requiere aprobación, hacer clic en "Deploy" o "Approve" en la interfaz. No se puede resolver desde código si la cuenta está pausada o bloqueada por políticas de la plataforma.
