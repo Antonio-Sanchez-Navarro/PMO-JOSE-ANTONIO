@@ -653,3 +653,1212 @@ adjuntos no tendrá nada que enseñar. Confirma la casilla 🟡 del Bloque 0 de
 
 **No he cerrado nada y no he reparado nada.** Lo único que escribí fuera de este
 cuaderno es la entrada del buzón de `PROMPT_ALANA.md`, que es mi entrega.
+
+---
+
+## 67. Segunda pasada con el navegador (2026-09-21) — y dos correcciones mías
+
+> El Jefe me autorizó Chrome. Esto es lo que solo se ve desde un panel, más la
+> revisión de si lo que dejé escrito el 18 sigue siendo verdad. **Dos cosas que
+> escribí ya no lo son, y las corrijo antes que nada.**
+
+### 67.1 ⚠️ Corrección: el despliegue entró quince minutos después de mi parte
+
+Cerré §66 a las **23:30 UTC** del 18 diciendo «producción corre la revisión del
+15-09». A las **23:43** el CI pasó con `455226b` («fix(lint): fix unused var and
+let to const» — **los dos errores exactos que señalé**) y a las **23:45** el
+despliegue salió **`success`** con sus veintitrés pasos en verde.
+
+Sondeado hoy: `/api/auth/google` → **302**, `/auth/google` → **404**. **El
+prefijo está vivo.** Mi frase era cierta cuando la escribí y dejó de serlo
+quince minutos después; escrita sin hora, habría envenenado tres días de
+decisiones. **De aquí en adelante, cualquier afirmación sobre el estado de
+producción lleva hora, no fecha.**
+
+### 67.2 ⚠️ Corrección: la mina del prefijo está desactivada, y no por consola
+
+En §66.3 di por hecho que `setGlobalPrefix("api")` iba sin exclusiones —lo estaba
+en `22f4e0c`, que es lo que leí— y repartí ocho cambios de consola. En el árbol
+de hoy:
+
+```js
+app.setGlobalPrefix("api", { exclude: ['webhooks/gmail', 'cron/(.*)', 'health/(.*)'] });
+```
+
+Comprobado contra el servicio vivo, que es lo que vale:
+
+| Ruta | Hoy | Lectura |
+|---|---|---|
+| `POST /webhooks/gmail` | **401** | existe y valida firma ✅ |
+| `POST /api/webhooks/gmail` | 404 | correcto: excluido |
+| `POST /cron/gmail-watch` | **411** | existe ✅ |
+| `GET /health/ready` | **200** | existe ✅ |
+| `GET /api/auth/google` | **302** | el prefijo manda en el resto ✅ |
+
+**Los ocho enchufes de §66.3 no hay que tocarlos: ninguno.** La suscripción
+`gmail-ingest-push`, las cinco tareas de Scheduler y las dos audiencias siguen
+siendo válidas tal como están. Lo dejo escrito con todas las letras porque **un
+reparto mío equivocado cuesta más que un hallazgo que se me escape**: iban seis
+pasos de consola contra producción que habrían roto lo que ya funcionaba.
+
+Y una consecuencia que sí conviene ver: **`health/(.*)` está excluido**, así que
+el paso «Comprobar que la revisión atiende» sondea una ruta que **el prefijo no
+puede romper**. Es correcto hoy y es un punto ciego mañana: esa sonda daría verde
+aunque el resto de la API estuviera 404. **Sugerencia —no reparto—: que la sonda
+del despliegue pida además una ruta con prefijo.**
+
+### 67.3 El login del tablero funciona, y el OAuth está bien dado de alta
+
+Pulsé «Continuar con Google» en `https://pmo-dashboard-503418.web.app/` con el
+navegador. Llega al selector de cuenta de Google con:
+
+```
+redirect_uri=https://pmo-dashboard-503418.web.app/api/auth/google/callback
+scope=openid email profile gmail.modify gmail.send
+```
+
+**Google no devuelve `redirect_uri_mismatch`**, así que ese URI **ya está
+registrado en la consola de OAuth** — era lo que quedaba por verificar de §66.3.
+No completé el consentimiento a propósito: **el login encola `watch-inbox`**
+(`auth.module.ts`), y disparar eso en producción es decisión del Jefe, no mía.
+
+### 67.4 🔴 Lo que sigue roto, y ahora con la causa a la vista
+
+**Doce días sin entrar un correo.** La base, hoy: **752 correos, el último
+recibido el 09-09 18:52**, marcador `gmailHistoryId` clavado en **6613794**.
+Idéntica al 18.
+
+Y en Gmail, mirado con el navegador: **la etiqueta `PMO` no existe.** Ni en la
+barra lateral ni en Configuración → Etiquetas. Es decir, la cadena completa:
+
+1. **09-09 18:23 UTC** — Upstash corta por el tope de 500 000 comandos del plan
+   gratuito. La ingesta muere ahí.
+2. **15-09** — entra la Fase 9: sin etiqueta `PMO`, `backfill` y `getInbox`
+   **abortan a propósito**. La segunda puerta se cierra antes de que nadie
+   abriera la primera.
+3. **Hoy** — la primera puerta ya está abierta (67.5) y **la segunda sigue
+   cerrada porque la etiqueta no se ha creado**.
+
+⚠️ **Y un aviso para cuando se cree:** el marcador es del 09-09, **doce días**.
+Gmail conserva el historial alrededor de una semana, así que ese `historyId`
+estará caducado y `syncHistory` caerá a `backfill` — que trae **los últimos N
+etiquetados y avanza el marcador igualmente**. El propio código lo dice en
+`gmail.service.ts:915`: «**y esto pierde correos, hay que decirlo**». Traducido:
+**lo que no lleve la etiqueta PMO en el momento del arranque no entra, y no se
+recupera solo.**
+
+### 67.5 Las casillas de consola, vistas en sus paneles
+
+**Upstash** (`pmo-redis`, us-east-2):
+
+| Dato | Valor |
+|---|---|
+| Plan | **Pay as You Go** |
+| Comandos | 1 M **/ Unlimited** (520 867 escrituras · 485 755 lecturas) |
+| Coste del ciclo | **$1.65** |
+| Presupuesto | **$20** |
+
+- **R2 — CERRADA.** Hay techo de gasto (**$20**) y el plan ya no tiene tope de
+  comandos, así que **el corte del 09-09 no puede repetirse por esa vía**. Era la
+  casilla 🔴 más cara de la lista y está resuelta.
+- **R3 — abierta, y ahora lo dice Upstash en su propia pantalla:** «*Eco mode is
+  being deprecated … we recommend transitioning your database to a Fixed Plan*».
+  Con Upstash fuera del stack por decisión del 17-09, esto ya no es elegir plan:
+  es **decidir cuándo se apaga**.
+
+**Anthropic** (`Jose Antonio's Individual Org`, nivel Scale):
+
+- **A5 — ABIERTA, tal cual estaba.** Límite de gasto mensual **USD 200**, llevo
+  **27,05 USD (14 %)**, se restablece el **1 oct 2026**… y en «Notificaciones por
+  correo electrónico» **no hay ni una configurada**: solo el botón «Agregar
+  notificación». **Sigue siendo muro y no semáforo.**
+- **A7 — ABIERTA y confirmada a la vista:** **dos métodos de pago idénticos,
+  `Visa •••• 0905`, los dos con vencimiento 09/2027**, uno marcado
+  «Predeterminado». Es la tarjeta duplicada de §57.4.
+- **La casilla con reloj, ahora con su pantalla:** la clave **`PMO-Zepto`**
+  (`sk-ant-api03-CSm…nQAA`) **vence el 1 nov 2026**. Hoy son **41 días**. Lleva
+  $5,98 de coste acumulado desde el 7 de septiembre.
+- **Dato nuevo que nadie había anotado:** el saldo de créditos es de **$13,18**
+  con **recarga automática activada** —sube a $20 cuando baja de $10—. Eso quita
+  el riesgo de quedarse a cero sin avisar… **cobrando a la Visa duplicada**, que
+  es justo la que hay que limpiar.
+
+**Lo que no pude ver:** la consola de Google Cloud pidió **verificación de
+contraseña** del Jefe y ahí me paré — no tecleo su contraseña. No hizo falta para
+nada de esto: el estado de Cloud Run salió de sondear el servicio, que además es
+mejor evidencia que un panel. Lo único que sigue sin ojos es **§57.4**, la
+suscripción del topic `pmo-presupuesto`, comprobada por `gcloud` el 18 y sin
+motivo para haber cambiado.
+
+### 67.6 Estado de las nueve, al cierre de hoy
+
+| Casilla | 2026-09-18 | 2026-09-21 |
+|---|---|---|
+| C11 base sin protección de borrado | ✅ cerrada | ✅ cerrada |
+| §57.3 secretos con Neon dentro | ✅ cerrada | ✅ cerrada |
+| R6 `VITE_API_URL` en Vercel | ✅ sin objeto | ✅ sin objeto |
+| **R2 Upstash sin presupuesto** | ❌ abierta | ✅ **CERRADA** ($20) |
+| C12 «CI en verde» obligatorio | 🟠 a medias | 🟠 **a medias** |
+| §57.4 `pmo-presupuesto` sin suscriptores | ❌ abierta | ❌ abierta |
+| R3 Eco mode / plan fijo | ⏸️ decidir | ⏸️ **decidir, con aviso del proveedor** |
+| **A5 techo de 200 sin aviso** | ❓ sin ver | ❌ **ABIERTA, verificada** |
+| **A7 tarjeta duplicada** | ❓ sin ver | ❌ **ABIERTA, verificada** |
+
+De las nueve: **tres cerradas, una sin objeto, dos abiertas verificadas hoy, una
+a medias, una a decidir, una abierta de antes.** Ya no queda ninguna «sin ver».
+
+**Y lo que no se mueve:** `Task` sigue en **0 filas** y `TASKS.md` sigue titulado
+«Fase 7» con su Bloque 0 sin marcar, aunque los números que pedía están medidos
+desde el 18 en §66.5.
+
+**No he cerrado nada y no he reparado nada.** No tecleé ninguna contraseña, no
+completé ningún consentimiento y no toqué un solo panel: **solo miré**.
+
+---
+
+## 68. 🔴 No se puede entrar al tablero: Firebase Hosting tira las cookies (2026-09-21, 18:10 UTC)
+
+> El Jefe pidió abrir una ventana y entrar al PMO Dashboard. **No se puede**, y
+> no es la cuenta ni el consentimiento: es el rewrite. Lo que sigue está
+> reproducido dos veces en el navegador y aislado después con dos peticiones
+> controladas.
+
+### 68.1 Lo que pasó, con el navegador delante
+
+Dos intentos completos, con la cuenta `antonio.sanchez@zepto.com.mx`, aceptando
+el consentimiento de Google —autorizado por el Jefe en el momento—:
+
+```
+intento 1  state=88f58daf…  → https://pmo-dashboard-503418.web.app/?login=error&reason=invalid_state
+intento 2  state=24235259…  → https://pmo-dashboard-503418.web.app/?login=error&reason=invalid_state
+```
+
+En pantalla: «**La sesión de login expiró o no es válida. Inténtalo de nuevo.**»
+Los permisos **sí se concedieron** en Google las dos veces. Lo que falla es la
+vuelta.
+
+### 68.2 La causa, aislada
+
+`auth.controller.ts:62` fija una cookie `pmo_oauth_state` antes de mandar a
+Google, y `:92` la compara al volver. El comentario de esa función razona muy
+bien por qué `SameSite=Lax` es correcto —y lo es—. **El problema no es
+`SameSite`: es que la cookie nunca llega al backend.**
+
+Prueba, con el mismo `state` en la URL y en la cookie, puesto a mano:
+
+| Petición | Resultado |
+|---|---|
+| `…web.app/api/auth/google/callback?code=falso&state=S` con `Cookie: pmo_oauth_state=S` | → `?login=error&reason=**invalid_state**` |
+| `…run.app/api/auth/google/callback?code=falso&state=S` con la **misma** cookie | → **HTTP 401** «No se pudo completar la autenticación con Google» |
+
+Leído: **directo a Cloud Run la validación de `state` PASA** —falla después, al
+canjear un `code` falso, que es exactamente lo que debe pasar—. **A través de
+Firebase Hosting, no pasa.** La cookie se pierde en el camino.
+
+Y no es de salida: el `Set-Cookie` **sí** atraviesa el hosting —comprobado en las
+cabeceras de `/api/auth/google`, que devuelve
+`Set-Cookie: pmo_oauth_state=…; HttpOnly; Secure; SameSite=Lax`—. **Lo que se
+pierde es la cabecera `Cookie` de vuelta**, que es el comportamiento conocido del
+CDN de Firebase Hosting: **de las peticiones que reenvía al backend elimina todas
+las cookies salvo una llamada `__session`.**
+
+Las cookies de este proyecto se llaman (`auth.constants.ts`):
+
+```
+OAUTH_STATE_COOKIE = "pmo_oauth_state"
+REFRESH_COOKIE     = "pmo_refresh"
+```
+
+**Ninguna de las dos es `__session`. Ninguna de las dos llega.**
+
+### 68.3 Lo que eso significa, más allá del login
+
+No es solo la puerta: **es todo el esquema de sesión.** Aunque el `state` se
+arreglara, `pmo_refresh` viaja por el mismo camino y se perdería igual, así que
+la renovación de sesión fallaría en la siguiente vuelta. Encaja exactamente con
+lo que ya se veía en el registro y yo atribuí al prefijo: **`/api/auth/me` → 401**.
+
+Dicho de otro modo: **mover el frontend a Firebase Hosting con rewrite a Cloud
+Run es incompatible con la sesión por cookies `httpOnly` tal y como está
+escrita**, y eso no se ve en ningún test —los dobles no pasan por el CDN— ni en
+el despliegue, que salió verde entero.
+
+**Tres salidas, y la decisión no es mía** (§0: encuentro y compruebo, no arreglo):
+
+1. **Meter la sesión en `__session`**, que es la única cookie que el CDN respeta.
+   Es un nombre, no dos: habría que serializar `state` y refresco dentro.
+2. **Un subdominio propio para la API** (`api.…`) apuntando a Cloud Run, con las
+   cookies en el dominio padre. Es lo más parecido a lo que ya funcionaba.
+3. **Volver a llamar a la URL de Cloud Run desde el frontend**, con CORS y
+   `SameSite=None`, que es como funcionaba con Vercel. Renuncia al mismo origen.
+
+### 68.4 Y una lectura que me toca a mí
+
+En §66.2 escribí que el tablero «no puede ni iniciar sesión» y lo atribuí al
+prefijo `/api` sin desplegar. **El síntoma era correcto y la causa no**: el
+prefijo se desplegó esa misma noche y el login **siguió** roto, por esto otro. Si
+alguien hubiera «arreglado» lo que yo señalé, habría desplegado el prefijo,
+habría visto el mismo 401 y habría buscado en el sitio equivocado.
+
+**La lección, y la escribo para mí:** un 401 o un 404 en un registro dice **dónde
+duele, no por qué**. Tenía la URL del tablero desde el primer día y no la abrí
+hasta que el Jefe me dio el navegador. **Media hora de navegador el día 18 valía
+más que las tres pasadas de registros que hice.**
+
+**No he cerrado nada y no he reparado nada.** Los permisos de Gmail se
+concedieron con autorización expresa del Jefe en el momento; no tecleé ninguna
+contraseña.
+
+### 68.5 Tercer intento, a petición del Jefe (2026-09-21, 18:45 UTC)
+
+`state=5fb66a5d…`, cuenta `antonio.sanchez@zepto.com.mx`, pantalla «Estás
+volviendo a acceder a PMO App» → **Continuar** → vuelta a
+`?login=error&reason=invalid_state`. **Tres de tres.**
+
+Repetirlo no puede dar otro resultado, y conviene decir por qué: el fallo **no
+depende del estado del navegador** —cookies viejas, sesión caducada, consentimiento
+pendiente—. Se reproduce con `curl`, sin navegador y con la cookie puesta a mano
+(§68.2). **Es la ruta, no la sesión.** El mensaje de la pantalla —«la sesión de
+login expiró»— apunta al usuario a un sitio donde no está el problema.
+
+**Y no hay puerta lateral**, lo digo antes de que alguien la busque:
+
+| Intento | Por qué no |
+|---|---|
+| Entrar por `…firebaseapp.com` | Mismo hosting, mismo CDN, misma cookie perdida |
+| Empezar el login en la URL de Cloud Run | El `redirect_uri` lo fija el backend y apunta a `web.app`: Google devuelve al mismo sitio |
+| Abrir el tablero en la URL de Cloud Run | Ahí solo vive la API; la SPA únicamente se sirve desde Hosting |
+
+**Para entrar hace falta un cambio, y el reparto es de Doc.** Si se quiere el
+camino más corto y más probado, es la salida (3) de §68.3 —el frontend llamando a
+la URL de Cloud Run— porque **es exactamente como funcionaba con Vercel**: las
+cookies de sesión ya están pensadas para eso (`sameSite: "none"`, ver el
+comentario de `auth.controller.ts:49`) y la de `state` en `lax` seguiría viajando,
+porque su ida y su vuelta son navegaciones de primer nivel al mismo dominio donde
+se fijó. Lo que no sé desde aquí es si `…run.app/api/auth/google/callback` sigue
+dado de alta en la consola de OAuth; **eso hay que mirarlo antes de mover nada.**
+
+**Lo que no pude comprobar:** si el CDN deja pasar `__session` —la salida (1)—.
+No hay en la API ningún endpoint que refleje las cabeceras que recibe, así que
+esa hipótesis **no se puede verificar sin tocar código**, y tocarlo no es mío.
+
+---
+
+## 69. El tablero abierto por dentro (2026-09-21, 19:45 UTC) — y el semáforo averiado
+
+Primera vez que este cuaderno mira el PMO Dashboard **con sesión iniciada**. El
+`bypass` del CDN funciona: la pantalla pide
+`https://pmo-api-mlpuuasqka-uc.a.run.app/api/emails/threads?status=PENDING&take=20`
+y recibe **200**. Las cookies cross-site viajan, el CORS admite `WEB_URL`, y lo
+de §68 queda resuelto por la vía (3).
+
+### 69.1 La radiografía de §66.5, confirmada en pantalla
+
+| Lo que medí en la base el 18 | Lo que enseña el tablero hoy |
+|---|---|
+| 678 pendientes | **Pendientes 678** |
+| 2 `IN_PROGRESS` · 4 `COMPLETED` · 68 `DISMISSED` | **En Proceso 2 · Completados 4 · Descartados 68** |
+| 378 hilos distintos | **«378 conversaciones · 678 correos»** |
+| `company` y `bank` nulos en los 678 | pestaña **Bancos: «0 conversaciones · 0 correos»**, y las siete subpestañas —Konfío, Aspiria, Banregio, Clara, Kapital, Santander, PDN— vacías |
+| `Task`: 0 filas | **Kanban vacío**: las cinco columnas sin una tarjeta |
+
+Los números del tablero y los de la base **son los mismos**. Y paginando de 20 en
+20 («Cargar más conversaciones (358 por ver)»), que es coherente y está dicho en
+pantalla, no escondido.
+
+### 69.2 🔴 El único semáforo visible está averiado, y en rojo fijo
+
+Al pie del tablero, en todas las pestañas:
+
+```
+ESTADO DEL BACKEND (/HEALTH/READY)
+🔴 Sin conexión con la API (ApiError: Cannot GET /api/health/ready).
+```
+
+**Es falso.** La API contesta perfectamente —la bandeja acaba de cargar 678
+correos por ella—. Lo que pasa es esto:
+
+| Ruta | Respuesta |
+|---|---|
+| `…run.app/health/ready` | **200** |
+| `…run.app/api/health/ready` | **404** |
+
+El frontend pide `${API_BASE}/health/ready`, y `API_BASE` ya incluye `/api`. Pero
+**`health/(.*)` es una de las tres rutas excluidas del prefijo global** (§67.2),
+así que la salud vive fuera de `/api` y el tablero la busca dentro.
+
+**Por qué esto importa más de lo que parece:** es el **único indicador de estado
+que el Jefe ve**, y está clavado en rojo. Dice «sin conexión» cuando todo va
+bien — y diría exactamente lo mismo si la API se cayera de verdad. **Un semáforo
+que siempre está en rojo no es una alarma: es un adorno que enseña a ignorarlo.**
+Un carácter de diferencia: `/health/ready` en vez de `${API_BASE}/health/ready`.
+
+Y cierra el círculo de §67.2, donde avisé de que excluir `health` del prefijo
+creaba un punto ciego. El punto ciego apareció en doce horas, y no donde lo
+esperaba —la sonda del despliegue— sino en la cara del usuario.
+
+### 69.3 Lo que aún no ha pasado, y hay que volver a probar
+
+**El despliegue de `5e97956` seguía en curso mientras escribo esto** (`Deploy API
+to Cloud Run`, `in_progress`), así que la API **todavía manda el `redirect_uri`
+viejo**, el de Firebase. Dicho claro: **la sesión de hoy se emitió con la
+configuración anterior, y la pieza que la sostiene va a cambiar en minutos.**
+
+Cuando entre el despliegue, `GOOGLE_REDIRECT_URI` pasará a
+`…run.app/api/auth/google/callback` — que es lo coherente con el frontend nuevo—.
+**Eso hay que reprobarlo cerrando sesión y volviendo a entrar**, porque si ese URI
+no está dado de alta en la consola de OAuth, el siguiente login dará
+`redirect_uri_mismatch`. Que hoy se pueda entrar **no demuestra** que mañana
+también.
+
+### 69.4 Dos fragilidades del montaje nuevo
+
+1. **`VITE_API_URL` no existe en las variables del repositorio.** `api.ts` dice
+   `import.meta.env.VITE_API_URL || "/api"`: el build de hoy salió bien porque
+   quien compiló tenía la variable en su máquina. **Cualquier build que no la
+   tenga vuelve a `/api`**, al CDN, y a `invalid_state`. Es **R6 otra vez**, que
+   di por «sin objeto» al salir de Vercel.
+2. **Ninguna tubería publica el frontend.** `deploy.yml` tiene 20 pasos y no toca
+   `apps/web` ni Firebase Hosting: la SPA solo sube cuando alguien ejecuta
+   `firebase deploy --only hosting` a mano. **Un cambio de frontend se puede dar
+   por publicado sin estarlo** — que es exactamente lo que nos costó tres días
+   con el prefijo.
+
+**No he cerrado nada y no he reparado nada.** En el tablero solo pulsé
+«Actualizar», los filtros y las pestañas: **no toqué ningún botón que escriba,
+descarte o gaste** —ni «Generar Tareas (IA)» ni «Revisar N»—.
+
+---
+
+## 70. Prueba funcional del tablero (2026-09-21, 21:50 UTC) — y el sistema arrancó
+
+Segunda pasada por la página, ya con todo desplegado. **Cambió todo desde §69,
+que tiene dos horas.**
+
+### 70.1 La ingesta está viva: doce días de parálisis, terminados
+
+| | 18-09 | ahora |
+|---|---|---|
+| Correos en la base | 752 | **771** (+19) |
+| `gmailHistoryId` | `6613794`, clavado | **`6714690`, avanzando** |
+| Último correo recibido | 09-09 18:52 | **hoy 18:19** |
+| Último `processedAt` | 09-09 22:54 | **hoy 21:36** |
+| `Task` | **0** | **2** |
+
+Y en la bandeja aparece la **etiqueta `PMO`** entre los filtros. La cadena de
+§67.4 quedó cerrada por los dos extremos: Upstash sin tope y la etiqueta creada.
+**El sistema vuelve a comer.**
+
+### 70.2 El semáforo, arreglado en una hora
+
+`ba0252f` —«consultar `/health` sin el prefijo `/api`»— corrige lo de §69.2, y el
+frontend **ya está publicado** (`index-ZRxY0Nk6.js`). Al pie del tablero:
+
+```
+ESTADO DEL BACKEND (/HEALTH/READY)
+OK · v5e97956a2eadf177e9f6ab437064795c44a44a7b · uptime 6758s
+```
+
+Verde, con versión y tiempo en pie. **Ahora sí es un semáforo.** Y de paso
+resuelve otra cosa que no había pedido nadie: la pantalla **dice qué versión
+está sirviendo**, que es justo lo que me faltó el 18 para no equivocarme.
+
+### 70.3 Lo que el tablero hace hoy, probado con las manos
+
+- **Bandeja**: 354 conversaciones · 672 correos, de 20 en 20, con «Cargar más» y
+  el resto declarado. Pendientes **672** · En Proceso 2 · Completados 4 ·
+  Descartados **93** (eran 68: alguien ha despachado 25).
+- **Ámbitos**: `Bancos` sigue en **0 · 0** con sus siete subpestañas vacías —
+  `company` y `bank` siguen sin relleno hacia atrás (§66.5), y ahora lo confirma
+  la pantalla en vez de la base.
+- **Métricas**: WIP **1**, atrasadas 0, bandeja pendiente **672**. Coinciden con
+  la bandeja **al correo** — el desacuerdo entre tablero y métricas que arrastraba
+  este proyecto ya no está.
+- **Kanban**: dos tarjetas, y son **exactamente el concepto del Jefe**:
+
+  | Tarjeta | Checklist | Reloj |
+  |---|---|---|
+  | «Re: Follow-up on Repairs… Villa Xeelenja - Lot 36» | **0/15** | `⏱ 0s` · `▶ INICIAR` |
+  | «Re: Propuesta – Unidad 302 B \| Co Tulum» | **0/5** | `⏱ 0s` · `▶ INICIAR` |
+
+  Un correo con N tareas = **una** tarjeta, con porcentaje por check, reloj que
+  arranca en INICIAR, confianza de la IA (85 %), prioridad, etiquetas y los
+  atajos `Email · Leer · Bandeja · Copiloto`. **Las subtareas —la pieza
+  estructural número uno del concepto del 17-09— están vivas en producción.**
+  Y los ítems vienen nombrados por responsable: `[Dinorah L. - Lote 36 2/4]
+  Proveer fechas estimadas…`, que es delegar por correo sin tabla de usuarios.
+
+### 70.4 Lo que NO probé, y por qué
+
+**Nada que escriba, gaste o mueva producción**: `Generar Tareas (IA)`,
+`Revisar N`, `Copiloto`, `Descartar`, `En Proceso`, `Completado`, `INICIAR`.
+Los cuatro primeros **cuestan dinero o disparan un análisis**; los otros
+escriben. Pulsarlos no es auditar: es operar el sistema de otro.
+
+**Queda pendiente de comprobar, y es de mis hallazgos viejos:** que `Revisar N`
+abre la cuarentena del último mensaje del hilo y no la del mensaje que tiene las
+propuestas —con 24 propuestas en un hilo de 18 correos, hoy hay material para
+verlo—. **Se lo ofrezco al Jefe con el coste por delante; no lo pulso por mi
+cuenta.**
+
+**No he cerrado nada y no he reparado nada.**
+
+---
+
+## 71. Prueba operando, con permiso del Jefe (2026-09-21, 21:50 UTC)
+
+> «mueve, selecciona, busca archivos, acepta tareas, etc.» Primera vez que este
+> cuaderno **toca** el producto en vez de mirarlo. Todo lo de abajo se hizo en
+> producción, con la sesión del Jefe, y **el estado quedó restaurado**.
+
+### 71.1 🔴 «Aprobar e Insertar» deja 22 propuestas fantasma, y sin puerta
+
+El hilo *«Re: Importante - Escrituración | Lote 36 (villa Xeelenja)»* —18 correos—
+mostraba **«24 propuestas»** y el botón **Revisar 24**. Lo pulsé.
+
+**Lo bueno, y corrige un hallazgo viejo mío:** el modal abre **con las 24**, no
+vacío. Lo que yo tenía anotado —que abría la cuarentena del último mensaje y
+salía vacía— **ya no pasa**. Además avisa de algo que ningún producto suele
+admitir: *«Este correo trae adjuntos. **El modelo no ha leído su contenido**»*.
+
+**Lo malo, medido después en la base:**
+
+| | |
+|---|---|
+| Tarea creada | ✅ «Re: Importante - Escrituración…», `TODO`, 21:42:50 |
+| Subtareas insertadas | **24** — las del **hilo entero** |
+| Cuarentena limpiada | **solo la del último correo** (`proposedTasks → null`) |
+| Propuestas que siguen vivas en los otros 13 correos del hilo | **22** |
+| Botón «Revisar» después | **desaparece** |
+
+O sea: **se insertan las 24 y se marcan como consumidas 2.** La tarjeta sigue
+anunciando **«22 propuestas»** que **ya están en el tablero**, y como el botón
+mira el último mensaje del hilo —que ya no tiene nada—, **no hay forma de
+abrirlas ni de limpiarlas desde la interfaz**. Dos daños:
+
+1. **El contador miente hacia arriba**: dice que hay 22 decisiones pendientes que
+   ya están tomadas.
+2. **Si algún día vuelven a ser alcanzables, se duplican**: son las mismas 24
+   menos las dos consumidas, ya convertidas en subtareas.
+
+Es el mismo desajuste de siempre en este producto —**la interfaz agrupa por hilo
+y el backend actúa por correo suelto**—, ahora del lado de la escritura.
+
+### 71.2 🟠 El checklist graba y no repinta
+
+Marqué la primera subtarea de la tarjeta de 24. **En pantalla no pasó nada**:
+seguía `0/24` y la casilla sin marcar. En la base, en ese mismo momento:
+`subtareas 24 · hechas 1`. **Se había guardado.** Al recargar la página aparece
+`1/24` con el texto tachado.
+
+**Por qué importa más de lo que parece:** quien marca y no ve respuesta **vuelve
+a marcar**, y el segundo clic lo desmarca. El avance —que es el corazón del
+concepto: «porcentaje por check»— **se puede perder por creer que no funcionó**.
+El arreglo es de refresco, no de datos.
+
+### 71.3 Lo que sí funciona, probado con las manos
+
+- **Arrastrar tarjetas**: moví la tarea de `Por Hacer` a `Pospuestas` → la base
+  quedó en **`POSTPONED` a las 21:47:24**, y la pantalla **sí repintó al
+  instante**. La devolví a `Por Hacer`. *(El contraste con 71.2 es el propio
+  diagnóstico: el tablero invalida bien al mover y no al marcar.)*
+- **Buscador del Kanban**: «Escrituraci» filtra por título **y por etiquetas** —la
+  tarjeta de la Unidad 302 B aparece porque lleva la etiqueta `escrituración`—.
+  Parecía un fallo de filtrado y **no lo es**; lo comprobé antes de anotarlo.
+- **Detalle del correo**: abre la cadena completa con cabeceras, destinatarios y
+  cuerpo, y marca **«Convertido a Tareas»** cuando ya lo está.
+- **Métricas**: WIP 1, bandeja pendiente 672 — **coinciden con la bandeja al
+  correo**. La contradicción histórica entre tablero y métricas **ya no existe**.
+
+### 71.4 La Fase 8, por fin ejecutada contra Gmail de verdad
+
+Los **5 correos entrados desde el 20-09** son la primera muestra real:
+
+| Campo | De 5 correos nuevos |
+|---|---|
+| `attachments` (fichas) | **5** ✅ |
+| `hasAttachments` | 1 (el que de verdad trae uno) |
+| `company` | **0** ❌ |
+| `bank` | **0** ❌ |
+| etiqueta `PMO` en `labels` | **0** ⚠️ |
+
+- **Las fichas de adjunto funcionan**: ficha real guardada —`image001.png`,
+  13 503 bytes, `inline: true`, con su `attachmentId`— sin bajar el binario, que
+  era justo el diseño. **La Fase 8 deja de ser teoría.**
+- **Pero `company` y `bank` siguen en cero también en lo nuevo.** No es solo falta
+  de relleno hacia atrás (§66.5): **no se está clasificando tampoco lo que entra
+  hoy**. Las pestañas `Urbazepto`, `Tecnoresin` y `Bancos` no se van a llenar
+  solas nunca.
+- **Y ninguno de los 5 lleva la etiqueta `PMO`.** La «Ingesta Selectiva por
+  etiqueta PMO» (Fase 9) **no está restringiendo la entrada**: entra correo
+  general. Puede ser lo que el Jefe quiere —Bandeja 0— pero **no es lo que dice
+  el código ni lo que se repartió**. Alguien debería decidir cuál de las dos cosas
+  es la buena, porque hoy el sistema hace una y la documentación dice la otra.
+- En el detalle del correo **no aparece ninguna sección de adjuntos**: las fichas
+  se guardan y **la pantalla no las enseña**. El visor de la Fase 8 no está en
+  esta vista.
+
+### 71.5 Lo que toqué y cómo quedó
+
+| Acción | Estado final |
+|---|---|
+| Aprobar 24 propuestas del hilo de Escrituración | **tarea creada, se queda** (era el encargo) |
+| Marcar 1 subtarea | **1/24, se queda** |
+| Mover tarjeta a `Pospuestas` | **devuelta a `Por Hacer`** |
+| Buscar, filtrar, abrir detalle | sin efecto |
+
+**No pulsé nada que gastara dinero** —ni «Generar Tareas (IA)» ni «Copiloto»— ni
+descarté ni completé ningún correo.
+
+---
+
+## 72. Verificación del parte de @Claude (2026-09-21, 22:15 UTC)
+
+> Me llega un parte que dice: fantasmas eliminados, checklist repintado,
+> adjuntos visibles, y que lo de la etiqueta PMO era un error mío. **Se verifica
+> todo, empezando por lo que me deja mal.**
+
+### 72.1 ⚠️ Me equivoqué con la etiqueta PMO, y así fue
+
+En §71.4 escribí que ninguno de los 5 correos nuevos llevaba la etiqueta `PMO` y
+que por tanto la Ingesta Selectiva no filtraba. **Era falso, y el error es mío
+por consultar mal.** `Email.labels` **no guarda nombres: guarda los identificadores
+opacos de Gmail.** Mi consulta buscaba el texto `'PMO'` y por eso dio cero.
+
+Los datos crudos de los 5 correos nuevos:
+
+```
+09-21 18:19  ["UNREAD","IMPORTANT","CATEGORY_PERSONAL","INBOX"]
+09-21 17:41  ["UNREAD","IMPORTANT","Label_6360077001312471452",…]
+09-21 17:16  ["IMPORTANT","Label_6360077001312471452",…]
+09-21 15:49  ["UNREAD","IMPORTANT","Label_6360077001312471452",…]
+09-21 14:57  ["UNREAD","IMPORTANT","Label_6360077001312471452",…]
+```
+
+Y preguntándole a la propia API (`GET /api/gmail/labels`, 39 etiquetas):
+
+```
+Label_6360077001312471452 = PMO      ← en 4 de los 5, y en 31 correos de la base
+Label_4063264582189971125 = Movimientos bancarios/Banregio   (74)
+Label_5704178821214641997 = Tecnoresin/Jared                  (9)
+```
+
+**La Ingesta Selectiva funciona.** Retiro el hallazgo.
+
+**Pero el mecanismo que propone el parte tampoco es el correcto**, y conviene
+dejarlo claro para que nadie «arregle» lo que no está roto: el parte dice que la
+interfaz *«seguramente falló al traducir el ID a PMO»*. **No falló**: la bandeja
+dibuja el filtro **`PMO 1`** perfectamente (§70.3). El único que no tradujo fui
+yo, en SQL. **La UI está bien; el fallo fue de mi consulta.**
+
+**Lo que sí queda abierto, y es pequeño:** el correo de las **18:19 entró sin
+ninguna etiqueta de usuario** — sin `PMO`—. Si la ingesta pide siempre
+`labelIds: [PMO]`, ¿por qué entra un mensaje que no la lleva? Lo más probable es
+que sea el hilo completo de uno que sí la tiene. **Pregunta, no hallazgo.**
+
+### 72.2 Los tres arreglos: escritos y correctos — **y sin desplegar**
+
+Leídos en el árbol, uno por uno:
+
+| Arreglo | Qué hace | Veredicto |
+|---|---|---|
+| Fantasmas | `tx.email.updateMany({ where: { threadId }, data: { proposedTasks: JsonNull } })`, dentro de la transacción, con `threadId` traído desde `findFirst` y pasado a `persistConfirmed` | **correcto** — y coherente con que el modal muestre las propuestas del hilo entero (§71.1) |
+| Repintado | `const updatedTask = await toggleSubtask(...)` + `setTasks(prev => prev.map(...))` | **correcto**: usa lo que devuelve el servidor, no un optimismo a ciegas |
+| Adjuntos | `AttachmentList.tsx`: distinguir «no hay fichas» de «todas las fichas son `inline` y las escondo» | **correcto**, y explica lo de §71.4: la ficha real era `image001.png`, `inline: true` — una firma |
+
+Y lo comprobé yo, que es lo que faltaba antes de subirlo:
+
+```
+jest emails.service.spec.ts →  138 passed, 138 total
+eslint @pmo/api            →  limpio
+eslint @pmo/web            →  limpio
+```
+
+**Pero nada de esto está en producción, y el parte dice «el sistema ya está
+blindado».** No lo está:
+
+| | |
+|---|---|
+| Último commit en `origin/master` | **`ba0252f`, 16:34** — el del `/health` |
+| Los cuatro archivos del arreglo | **modificados, sin commitear** (`git status`) |
+| Bundle publicado | **`index-ZRxY0Nk6.js`**, el mismo de antes |
+| Última tubería | la de `ba0252f` |
+
+Lo entregado es **un walkthrough**, no un despliegue. **El código está bien y no
+está puesto**, que es exactamente la distinción que este proyecto lleva cuatro
+días sin hacer —y lo que me costó el error de §66.1—.
+
+### 72.3 Un detalle del arreglo del backend, para que se decida a sabiendas
+
+`updateMany({ where: { threadId } })` **no filtra por `userId`**, doce líneas
+después de un `findFirst({ where: { id, userId } })` cuyo comentario dice que sin
+el `userId` *«podría convertir el correo de otra persona con solo conocer su
+id»*. Con un solo usuario no cambia nada hoy y los `threadId` de Gmail no
+colisionan entre buzones. **Lo anoto por la asimetría**, no por el riesgo: el
+mismo archivo se protege arriba y no abajo.
+
+### 72.4 🔴 Y mientras tanto, alguien borró las tres tareas
+
+A las **21:47** medí `Task: 3 · Subtask: 44`. A las **22:15**: **`Task: 0 ·
+Subtask: 0`**. Se borraron las tres, incluida la que se creó al aprobar las 24
+propuestas —y las dos que ya existían—. No sé quién ni por qué; **lo registro
+como hecho, no como incidente**, porque el tablero tiene papelera en cada tarjeta
+y el arranque limpio es decisión del Jefe.
+
+**Pero deja el hilo de Escrituración en un estado que sí es un daño medible:**
+
+- las **22 propuestas** de los 13 correos anteriores **siguen vivas**;
+- el correo más reciente sigue con `proposedTasks = null` —consumido al aprobar—;
+- la tarea que contenía esas 24 subtareas **ya no existe**;
+- y **no hay botón** para reabrir la cuarentena, porque mira el último mensaje.
+
+O sea: **las 2 propuestas del último correo están perdidas y no se recuperan
+desde la interfaz**, y las otras 22 quedan huérfanas. Es el defecto de §71.1
+cobrándose su primer daño real. **El arreglo que lo evita está escrito y sin
+desplegar**, así que hasta que se despliegue, cada aprobación repite la pérdida.
+
+**No he cerrado nada y no he reparado nada.** Pruebas y lint ejecutados en local,
+sin tocar el árbol ni producción.
+
+---
+
+## 73. Arranque limpio y la pregunta que lo desató (2026-09-21, 22:45 UTC)
+
+### 73.1 «Solo veo dos correos de hoy y luego salta al 9 de septiembre»
+
+No estaba roto. Medido:
+
+- El marcador **avanza** (`6716088`, por encima del del último correo guardado):
+  la sincronización corre y Gmail contesta.
+- **Desde la Fase 9 solo entra lo etiquetado `PMO`.** Entraron **siete** —los que
+  el Jefe etiquetó— y desde las 18:19 ninguno más porque **no hay ninguno más
+  etiquetado**.
+- El salto hacia atrás al 09-09 es **el apagón de Upstash**: doce días sin ingerir
+  (§67.4). No es un filtro, es un agujero ya explicado.
+
+**Y ahí había una contradicción de producto que no había visto nadie:** el
+concepto del Jefe del **17-09** dice «**Bandeja 0: entra todo su Gmail**», y la
+**Fase 9**, entregada el **15-09**, hace justo lo contrario. **El sistema estaba
+obedeciendo una orden anterior al concepto**, y nadie lo había puesto uno al lado
+del otro.
+
+**Decisión del Jefe, 2026-09-21:** se queda la Ingesta Selectiva. **Entra solo lo
+etiquetado `PMO`.** El concepto queda corregido en ese punto; lo demás sigue.
+*(Anotado también en la memoria de esta terminal, para no reabrirlo.)*
+
+### 73.2 El arranque limpio, ejecutado
+
+Orden del Jefe: «archivar todo lo anterior a hoy». **Matiz que apliqué y digo por
+si no era su intención:** conservé los correos que ya llevan la etiqueta `PMO`
+aunque sean anteriores —son los que él marcó a propósito, como el hilo de
+Escrituración—, y archivé el resto. Es lo coherente con la decisión de 73.1.
+
+```sql
+UPDATE "Email" SET status='DISMISSED'
+WHERE status='PENDING' AND "receivedAt" < '2026-09-21'
+  AND NOT (labels @> ARRAY['Label_6360077001312471452'])   -- PMO
+```
+
+| | antes | después |
+|---|---|---|
+| `PENDING` | 672 | **32** |
+| `DISMISSED` | 93 | **733** |
+| `COMPLETED` / `IN_PROGRESS` | 4 / 2 | 4 / 2 |
+
+**640 correos archivados, ninguno borrado.** Guardé los **640 identificadores** en
+`reversion_archivado.json` (carpeta temporal de la sesión): deshacerlo es un
+`UPDATE … SET status='PENDING' WHERE id IN (…)`. Verificado en pantalla: la
+bandeja muestra **«2 conversaciones · 32 correos»**.
+
+**Es la primera vez que escribo en la base de producción**, y no me gusta la
+excepción: lo hice porque el Jefe lo ordenó con números delante y porque una
+operación de datos no es un arreglo de código. **Sigo sin tocar código.**
+
+### 73.3 Los arreglos de @Claude, ya desplegados
+
+Mientras archivaba entró el despliegue: commit **`8330868`** —«propuestas
+fantasma, repintado del checklist y adjuntos»— y la API viva lo confirma en su
+propio pie (`v8330868…`, uptime 490 s). Lo que en §72.2 estaba «escrito y sin
+poner», ya está puesto.
+
+**Verificado lo que se puede sin escribir:** abrí el detalle del correo de
+`accounting` —el que trae la ficha `image001.png` inline— y **ya no sale el cartel
+rojo**, ni sale sección de adjuntos. Correcto: no hay nada descargable que
+enseñar.
+
+**Sin verificar todavía, y digo por qué:**
+- **Fantasmas**: la tarjeta de Josmat sigue anunciando `Revisar 22`. Probarlo
+  exige **aprobar** el hilo, y eso crea una tarea de 22 subtareas en el tablero
+  recién vaciado del Jefe. **No lo hago por mi cuenta; se lo ofrezco.**
+- **Repintado del checklist**: no hay ni una tarea en la base (`Task: 0`), así que
+  no hay nada que marcar. Se verifica en cuanto exista la primera.
+- **Visor de adjuntos**: sigue sin probarse con un adjunto **real descargable**.
+  Las cinco fichas de hoy son firmas `inline`. **El primer PDF que entre es la
+  prueba.**
+
+### 73.4 🟠 Y un resto del borrado de tareas
+
+El correo de `accounting` sigue mostrando el botón verde **«Convertido a
+Tareas»** — pero la tarea que lo respaldaba **se borró** (§72.4) y `Task` está en
+0. El correo se quedó marcado como convertido **sin tarea detrás**, y por estar
+así **ya no ofrece generar ninguna**: ni tiene tarea, ni deja crearla.
+
+Borrar una tarjeta del Kanban **no devuelve su correo al estado anterior**. Es la
+misma familia que las propuestas fantasma —estado que sobrevive a lo que lo
+justificaba—, y vale la pena mirarlo antes de que el Jefe borre la segunda.
+
+**No he cerrado nada y no he reparado nada de código.**
+
+---
+
+## 74. Verificación de los dos parches, y una corrección mía (2026-09-21, 23:10 UTC)
+
+### 74.1 ⚠️ Corrijo §73.4: el correo huérfano no existía
+
+Escribí que el correo de `accounting` seguía marcado «✅ Convertido a Tareas»
+**sin tarea detrás**. **Falso.** Medido ahora:
+
+```
+Task total: 1
+Re: Follow-up on Repairs and Additiona…  →  tareas: 1
+```
+
+Ese correo **tiene su tarea**. El distintivo verde era correcto. Y el mecanismo lo
+confirma: `isConverted` **no es un campo guardado**, se calcula al vuelo —
+`email._count.tasks > 0` (`emails.service.ts:127`)—, así que no puede quedarse
+«pegado» a un correo sin tareas.
+
+**De dónde salió el error:** vi `Task: 0` a las 22:15, abrí el modal a las 22:50 y
+**até los dos momentos sin volver a contar**. Entre medias había vuelto a haber
+una tarea.
+
+**Es mi segundo error del mismo tipo en un día** —el primero, la etiqueta `PMO`
+(§72.1)—, y los dos tienen la misma forma: **afirmé sobre el estado de producción
+con una medición vieja o mal planteada, sin cruzarla con la pantalla en el mismo
+minuto**. Lo anoto como regla propia: **una afirmación sobre estado vivo vale lo
+que vale su hora**; si han pasado minutos y ha habido actividad, **se vuelve a
+medir antes de escribirla**.
+
+**Consecuencia para el reparto:** el parche del desenlace **no estaba curando un
+correo roto, porque no lo había.** Lo que sí hace, y es útil, es **repintar la
+bandeja en vivo** al borrar una tarjeta, en vez de esperar a que alguien recargue.
+Es una mejora de usabilidad, no la reparación de un defecto de datos. Conviene
+que quien lo apruebe sepa cuál de las dos cosas está aprobando.
+
+### 74.2 El parche del desenlace: correcto
+
+`tasks.service.ts` selecciona ahora `sourceEmailId` al borrar, recupera el correo
+con `SELECT_TRIAGE` y emite `emitEmailUpdated(aTriageEmail(email), socketId)`.
+Como `isConverted` se recalcula en ese mismo `select`, **el botón vuelve solo a
+«🪄 Generar Tareas (IA)»** sin recargar. Bien resuelto y en el sitio correcto.
+
+### 74.3 El aviso de la clave: buena lógica, tres pegas
+
+```ts
+const anthropicKeyExpiry = this.config.get('ANTHROPIC_API_KEY_EXPIRY') || '2026-11-01';
+const diasRestantesClave = Math.ceil((expiryDate - ahora) / 86_400_000);
+const avisaCaducidad = diasRestantesClave <= 10 && diasRestantesClave > -30;
+```
+
+**Lo que está bien pensado:** la fecha es configurable; **sigue avisando hasta 30
+días después de caducar** —no se calla justo cuando el problema es real—; y usa
+**clave de freno propia** (`caducidad-anthropic`), así que no compite con los
+avisos de coste ni los tapa.
+
+**Las tres pegas, por orden de importancia:**
+
+1. 🔴 **No se puede probar hasta el 22 de octubre.** Faltan **41 días** y el umbral
+   es 10: hoy la rama `avisaCaducidad` **no se ejecuta nunca en producción**. Es
+   exactamente el patrón que ya nos mordió dos veces —el `watch` de Gmail que
+   avisaba con seis días de antelación y aun así nos dejó la ingesta muerta once,
+   y esta misma clave—. **Un aviso que nadie ha visto llegar no es un aviso, es
+   una intención.** Se prueba hoy en dos minutos (74.4).
+2. 🟠 **`ANTHROPIC_API_KEY_EXPIRY` no existe en ningún entorno**: ni en las
+   variables del repositorio, ni en Cloud Run, ni en `.env`, ni en `.env.example`.
+   Funciona por el valor quemado. Hoy es el correcto; **mañana es una bomba de
+   relojería al revés**: cuando el Jefe rote la clave —que es justo lo que el
+   aviso persigue—, **el sistema seguirá creyendo que caduca el 1 de noviembre** y
+   soltará una alarma falsa durante 40 días. **La variable hay que crearla con el
+   parche, no después.**
+3. 🟡 El fallback vive en el código: quien rote la clave tendrá que acordarse de
+   cambiar **dos** sitios (la consola de Anthropic y la variable) o el aviso
+   miente. Un renglón en `.env.example` y en el `RUNBOOK` lo evita.
+
+**Lo que sí comprobé yo**, que es lo que faltaba antes de subirlo:
+
+```
+jest src/modules/tasks src/common/costs →  136 passed, 5 suites
+eslint @pmo/api                        →  limpio
+```
+
+### 74.4 La prueba de humo que falta, y dura dos minutos
+
+No la hago yo —no toco configuración de producción—, pero es esta:
+
+1. Poner temporalmente `ANTHROPIC_API_KEY_EXPIRY` a **mañana** (`2026-09-22`) en
+   las variables del repositorio y desplegar, **o** lanzar el cron a mano.
+2. Esperar la siguiente ejecución de `pmo-coste-ia` (es horaria, en el minuto 0).
+3. **Comprobar que el mensaje llega al canal de Google Chat.** Si no llega, el
+   fallo no está en la fecha: está en `ALERT_WEBHOOK_URL` o en el freno, y más
+   vale saberlo hoy que el 22 de octubre.
+4. Devolver la variable a `2026-11-01`.
+
+**Y lo de siempre: los tres archivos siguen sin commitear.** Último commit en
+`origin/master`: `8330868`, 17:37.
+
+---
+
+## 75. Revisión de avances (2026-09-22, 19:25 UTC)
+
+### 75.1 🔴 El trabajo de anoche está commiteado y **sin empujar**
+
+```
+master...origin/master [ahead 1]
+87784d0  fix: desenlazar correos al borrar tareas y aviso de caducidad Anthropic
+```
+
+El commit existe **solo en esta máquina**. `origin/master` sigue en `8330868`
+(21-09, 17:37), no hay CI ni despliegue posteriores, y la API viva no lleva el
+aviso de caducidad. **Falta un `git push`, nada más.**
+
+Es la tercera variante del mismo patrón en cuatro días: **el 18 el código estaba
+escrito y el lint no dejaba desplegar; ayer estaba escrito y sin commitear; hoy
+está commiteado y sin empujar.** Tres formas distintas de decir «hecho» sobre algo
+que producción no tiene. Y `TASKS.md` —actualizado hoy a Fase 9.1, por fin al día—
+ya da el aviso de caducidad por implementado.
+
+### 75.2 ✅ La ingesta funciona, y a buen ritmo
+
+| | ayer 22:45 | hoy 19:25 |
+|---|---|---|
+| Correos en la base | 771 | **954** (+183) |
+| Último recibido | 21-09 18:19 | **hoy 19:19**, minutos antes de mirar |
+| Marcador | 6716088 | **6720599** |
+| Procesados hoy | — | **34** |
+
+El bucle entero —etiqueta → Gmail → webhook → cola → clasificación— **está vivo**.
+Lo que llevaba doce días parado funciona.
+
+### 75.3 🟠 Pero el arranque limpio de ayer se deshizo solo
+
+Ayer dejamos la bandeja en **32 pendientes**. Hoy hay **215**, y esta es su edad:
+
+| Mes de recepción | Pendientes |
+|---|---|
+| 2026-03 | 6 |
+| 2026-04 | 9 |
+| 2026-05 | **30** |
+| 2026-06 | 14 |
+| 2026-07 | 4 |
+| 2026-08 | 22 |
+| 2026-09 | 130 |
+
+**Correo de hasta seis meses atrás ha vuelto a la bandeja.** No es un fallo: es el
+diseño. **El `backfill` trae el hilo completo de lo que se etiqueta**, así que
+etiquetar una conversación larga y vieja la resucita entera —y con ella, los 59
+correos anteriores a agosto que archivamos ayer por orden del Jefe—.
+
+**La decisión que esto pide:** o se etiqueta solo lo reciente, o hay que volver a
+archivar lo viejo después de cada tanda de etiquetado. **Conviene decidirlo antes
+de etiquetar más**, porque cada hilo viejo que entre cuesta dinero (75.4).
+
+### 75.4 🔴 Y el dinero se ha puesto en marcha sin semáforo
+
+`AiUsage`, tokens de entrada por día:
+
+| Día | Llamadas | Entrada | Salida |
+|---|---|---|---|
+| 09-09 | 389 | 2,39 M | 118 k |
+| **09-21** | 168 | **2,26 M** | 77 k |
+| **09-22** | 34 | **1,06 M** | 17 k |
+
+A precio de Sonnet, los dos últimos días rondan **los 11 USD**, sobre los 27 que
+la consola marcaba ayer. Pero el número que importa es otro: **31 000 tokens de
+entrada por llamada** hoy —son hilos largos enteros—, o sea **unos 0,10 USD por
+correo ingerido**.
+
+Con **215 pendientes y 709 propuestas vivas en 393 correos** (ayer eran 399 en
+218: **se han duplicado en un día**), y con el techo en 200 USD/mes, esto escala
+rápido. **Y el aviso de gasto sigue sin configurarse** (A5): el límite es un muro,
+no un semáforo, y **hoy es el primer día en que de verdad hay algo que vigilar**.
+
+### 75.5 Lo que sigue esperando a una mano
+
+| | Estado |
+|---|---|
+| `git push` del commit `87784d0` | ⏳ **es lo primero** |
+| `ANTHROPIC_API_KEY_EXPIRY` | ❌ no existe en ningún entorno — el aviso irá con la fecha quemada |
+| Prueba de humo de la alerta | ❌ sin hacer; hasta que llegue un mensaje al canal, el aviso es una intención |
+| Notificación de gasto en Anthropic (A5) | ❌ sin configurar, y ya hay gasto que vigilar |
+| `pmo-presupuesto` sin suscriptores (§57.4) | ❌ el aviso de Google se publica y se tira |
+| «CI en verde» obligatorio (C12) | ❌ sigue sin exigirse |
+
+**Lo único que ha cambiado de estado hoy es la ingesta.** Todo lo demás sigue donde
+lo dejé ayer.
+
+**No he cerrado nada y no he reparado nada.**
+
+---
+
+## 76. Contraste del walkthrough de la Fase 9.1 (2026-09-22, 20:05 UTC)
+
+El Jefe me pasa el parte de recuperación. Punto por punto, contra el sistema.
+
+| Afirmación del parte | Comprobado |
+|---|---|
+| «La ingesta llevaba 12 días detenida **porque la API requería la etiqueta `PMO`**» | ⚠️ **Media verdad.** El parón empezó el **09-09 a las 18:23 UTC por el tope de 500 000 comandos de Upstash** (§67.4). La etiqueta fue la **segunda** puerta, y solo desde el **15-09**. Del 09 al 15 no había etiqueta que valiera |
+| «`backfill` recogerá esos 12 días» | ✅ **Cumplido.** Hay correo **todos los días del 10 al 22**: 24, 12, 2, 1, 8, 8, 1, 2, 14, 8, 1, 15 y 34. **El limbo está recuperado** |
+| «Ya tienes la fecha de vencimiento configurada» | ✅ `ANTHROPIC_API_KEY_EXPIRY = 2026-11-01`, creada hoy a las 19:54. **Cierra la pega 2 de §74.3** |
+| «Se implementó **y verificó mediante prueba de humo** que la alerta por caducidad llega a Google Chat» | 🔴 **No pudo ocurrir.** Ese código vive en el commit **`87784d0`, que sigue sin empujar** (`ahead 1`): la revisión desplegada **no contiene la rama del aviso de caducidad** |
+| «Comprobaste cuando llegó el aviso del 90 %» | ✅ **Cierto, y vale oro** — pero **es otro aviso**: el de coste (`coste-ia-0.9`), que existía desde antes. El de caducidad usa otra clave (`caducidad-anthropic`) y otro código. **Lo que demuestra es que `ALERT_WEBHOOK_URL` está vivo**, que era justo la duda de §74.4 |
+| «Presupuesto GCP por correo nativo» | ✅ Cierra §57.4 **por otra vía** — se abandona la suscripción a `pmo-presupuesto` y se usan las notificaciones de Billing. Válido y más simple |
+| «C12: ahora es imposible enviar código que no pase el lint» | ✅ **Cerrada.** `required_status_checks: ["build-and-lint"]`, `strict: true`. ⚠️ Con un matiz: **`enforce_admins: false`**, así que un administrador —el Jefe— **sí puede saltárselo**. Para un repo de un solo dueño es defendible; conviene saberlo |
+| «Se actualizaron y archivaron los hitos en `TASKS.md`» | ⚠️ **Sin commitear.** `TASKS.md` y `docs/archive/TASKS_archive.md` siguen modificados en el árbol |
+
+### 76.1 🔴 Hallazgo nuevo: el presupuesto de IA real son **20 USD**, no 100
+
+El aviso del 90 % que recibió el Jefe **no era sobre 100 USD**:
+
+```ts
+const PRESUPUESTO_POR_DEFECTO = 20;                       // ai-cost.service.ts:10
+const crudo = Number(this.config.get('PRESUPUESTO_IA_USD'));  // :387
+```
+
+Y **`PRESUPUESTO_IA_USD` no está definida en Cloud Run** —comprobado en el
+`describe` del servicio—, así que el servicio usa **20**. El `.env.example` dice
+`PRESUPUESTO_IA_USD=100`, que es justo lo que hace creer otra cosa a quien lo lea.
+
+**Traducido:** el aviso saltó al llegar a **18 USD**, no a 90. Con el gasto real de
+estos dos días —≈11 USD— **el presupuesto configurado ya está desbordado**, así que
+ese aviso va a repetirse cada 23 horas. Y el techo de verdad, el de la consola de
+Anthropic, está en **200 USD**.
+
+**Es fatiga de alertas en formación:** un aviso que grita todos los días por un
+límite que nadie puso a propósito **enseña a ignorar el canal** — justo el canal
+que acaba de demostrar que funciona, y el mismo por el que llegará el aviso de
+caducidad de la clave. **Decidir el número es del Jefe**; lo que no puede quedarse
+es en un valor por defecto que nadie eligió.
+
+### 76.2 El patrón, por cuarto día
+
+El parte dice «el sistema está ahora blindado». Lo que hay: **un commit sin
+empujar, dos archivos sin commitear y una alerta que no puede haberse probado
+porque su código no está desplegado.** Lo demás —la ingesta, la variable, C12, el
+canal— **sí está y es verdad**.
+
+No es mala fe: es que **el relato se escribe al terminar de programar, y el
+sistema cambia al desplegar**. Por eso este cuaderno mide el árbol y el servicio,
+no el informe.
+
+**No he cerrado nada y no he reparado nada.**
+
+---
+
+## 77. Estado de la tubería de despliegue (2026-09-22, 23:50 UTC)
+
+### 77.1 ✅ Lo que se destrabó
+
+**Todo lo pendiente está empujado.** `master` y `origin/master` coinciden en
+`56205b3`. Los tres commits del día subieron:
+
+```
+56205b3  18:43  ci: remove vercel ignoreCommand – always build frontend
+23e9c5c  18:35  fix(tasks): inyectar userId al notificar desenlace de correo
+39d26c8  18:29  docs: actualizar TASKS.md a Fase 9.1 y archivar Fase 7
+87784d0  (21-09) fix: desenlazar correos … y aviso de caducidad Anthropic   ← ya subido
+```
+
+Y **C12 funcionando por primera vez**: el CI de `56205b3` pasó en 1 m 24 s
+**antes** de que el despliegue arrancara. Es el orden que faltaba desde el día 18.
+
+**Producción está sana y al día:**
+
+| | |
+|---|---|
+| `/health/ready` | **200** — `database`, `schema` (16 migraciones, 0 a medias) y `redis` en `up` |
+| Revisión con tráfico | **`pmo-api-00137-cgd`**, que además es la última lista |
+| `/api/emails/threads` sin sesión | **401**, correcto |
+| Bundle en Firebase | **`index-B8PRETEw.js`**, nuevo |
+
+Y lo que más me importaba comprobar, porque era la mina de §70.4: **el bundle
+nuevo se construyó con `VITE_API_URL` puesta.** Apunta a
+`pmo-api-mlpuuasqka…run.app`, **no** usa `/api` relativo, y pide `/health/ready`
+sin prefijo. **El login no se ha vuelto a romper.**
+
+### 77.2 El despliegue cancelado no es un fallo
+
+`Deploy API to Cloud Run` **`cancelled`** a las 23:44, en el paso «Construir la
+imagen», con otro run arrancando a las 23:46. Es el patrón de **dos empujones
+seguidos**: el segundo cancela al primero. No hay error que perseguir; el que
+cuenta es el segundo.
+
+### 77.3 🔴 Vercel vuelve, y el stack dice que no
+
+`56205b3` **quita el `ignoreCommand` de `vercel.json`** para que Vercel
+**construya el frontend siempre**. Sondeado ahora mismo:
+
+```
+https://pmo-frontend-ten.vercel.app/   →  503
+```
+
+**Esto choca de frente con la decisión del Jefe del 17-09** —«Fuera Vercel,
+Upstash y Neon»— y reabre un riesgo que ya nos costó un día entero en agosto
+(§13, el dominio que servía otra aplicación). Tres cosas concretas, por si se
+hace a propósito:
+
+1. **Habría dos tableros en producción.** El bueno
+   (`pmo-dashboard-503418.web.app`) y el de Vercel. Quien tenga guardado el
+   segundo verá **503 hoy**, y una aplicación distinta el día que compile.
+2. **El de Vercel no puede funcionar aunque compile.** El frontend necesita
+   `VITE_API_URL`, que hoy solo está donde se construye el de Firebase; sin ella
+   vuelve a `/api` relativo contra el dominio de Vercel → 404 en todo. Es
+   exactamente el fallo de §68.
+3. **Y aunque la acertara, el CORS lo rechaza**: `WEB_URL` en Cloud Run apunta a
+   `…web.app`, así que el navegador bloquearía las llamadas desde Vercel.
+
+**No digo que esté mal: digo que no encaja con lo decidido y que hoy sirve un
+503.** Si Vercel se queda, hay que darle `VITE_API_URL` y añadir su origen al
+CORS. Si no se queda, lo limpio es **borrar el proyecto en Vercel y el workflow
+«Avisar si falla Vercel o el CI»**, que seguirá vigilando despliegues de algo que
+ya no se usa. **La decisión es del Jefe.**
+
+**No he cerrado nada y no he reparado nada.**
+
+---
+
+## 78. Cierre de la jornada (2026-09-22, 23:55 UTC)
+
+Cuatro días de despertar, del 18 al 22. **Lo que entró roto y sale funcionando:**
+
+| | 18-09 | 22-09 |
+|---|---|---|
+| Ingesta de correo | **muerta desde el 09-09** | **viva**: 954 correos, el último de hace minutos |
+| Tablero | publicado y **sin poder iniciar sesión** | **en uso**, con tareas, checklist y métricas |
+| Despliegue | tapado por dos avisos de lint | **CI obligatorio y en verde antes de desplegar** |
+| Cola humana | 678 pendientes sin medir | **medida, archivada y vuelta a llenar a conciencia** |
+
+**Las causas, por si vuelven:** el apagón fue **Upstash** (tope de 500 000
+comandos, 09-09 18:23), no la etiqueta; el login no era el prefijo `/api` sino que
+**Firebase Hosting descarta toda cookie que no se llame `__session`**; y el
+despliegue de tres días no salió por **dos líneas de lint**.
+
+**Lo que dejo abierto y con dueño:**
+
+| Qué | Dueño |
+|---|---|
+| `PRESUPUESTO_IA_USD` no existe en Cloud Run → el aviso salta a los 18 USD y se repetirá cada 23 h | **Jefe**: decidir el número y crear la variable |
+| Vercel vuelve a construir el frontend y sirve **503**, contra el stack del 17-09 | **Jefe / Doc**: retirarlo, o darle `VITE_API_URL` y CORS |
+| La prueba de humo del aviso de **caducidad** sigue sin hacerse (lo que llegó fue el de coste) | **Jefe + yo**, cuando quiera |
+| `company` y `bank` nulos también en lo nuevo → pestañas de empresa y banco vacías | **@Claude** |
+| Etiquetar hilos viejos resucita correo de meses atrás | **Jefe**: decidir criterio de etiquetado |
+| Clave de Anthropic vence el **2026-11-01** (40 días) | **Jefe** |
+| `enforce_admins: false` en la protección de `master` | dato, no defecto |
+
+**Lo que me llevo yo**, y está en la memoria de esta terminal: **un parte no es un
+despliegue**, y **una afirmación sobre producción vale lo que vale su hora**. Me
+costó dos hallazgos falsos en un día —la etiqueta `PMO` y el correo huérfano—, los
+dos retirados en voz alta.
+
+**No he cerrado nada y no he reparado nada de código.** Lo único que toqué en
+producción fue el archivado de 640 correos, por orden expresa del Jefe y con la
+lista de reversión guardada.
+
+---
+
+## 79. Despertar del 2026-09-23 (15:15 UTC) — las dos variables que el Jefe creó no llegan a ningún sitio
+
+Sin commits nuevos desde `56205b3`. API sana (`/health/ready` 200, 16 migraciones,
+`redis` arriba). Vercel sigue en **503**. Lo nuevo está fuera de git.
+
+### 79.1 🔴 `PRESUPUESTO_IA_USD=75` existe… en GitHub, donde nadie la lee
+
+El Jefe actuó sobre §78 anoche a las **23:31 UTC**: `gh variable list` muestra
+`PRESUPUESTO_IA_USD = 75`. **Pero es una variable de GitHub Actions, y `deploy.yml`
+no la pasa a Cloud Run**: el bucle que arma `--set-env-vars` (líneas ~488–495)
+solo recoge `COPILOT_EMAIL_TRANSPORT`, las tres `GMAIL_PUBSUB_*`,
+`GMAIL_PUBSUB_ALLOW_UNSIGNED` y las dos `CRON_*`. Ni `PRESUPUESTO_IA_USD` ni
+`ANTHROPIC_API_KEY_EXPIRY` aparecen en ningún workflow.
+
+Comprobado en el servicio: **ninguna** de las revisiones 00136, 00137 y 00138
+lleva esas variables. Y el propio servicio lo confirma en su log, hoy a las 15:00:
+
+```
+ALERTA · Consumo de IA al 90% del presupuesto: Llevas $20.78 de $20 este mes.
+```
+
+**Sigue en 20.** Y ojo al arreglo fácil: un `gcloud run services update
+--update-env-vars` a mano **duraría hasta el siguiente despliegue**, porque
+`deploy.yml` usa `--set-env-vars`, que **reemplaza el conjunto entero**. Lo
+duradero es añadir las dos al bucle de `deploy.yml`. Eso es código: **Doc lo reparte**.
+
+**Esto va a mi cuenta.** En §78 escribí «decidir el número y **crear la variable**»
+sin decir **dónde**. Es justo lo que la regla del 08-09 prohíbe: la orden era
+correcta y la entrega no. El Jefe la creó en el sitio más razonable a la vista —
+donde viven las demás— y no sirve.
+
+### 79.2 ⚠️ Corrección a §76: la «fecha de caducidad configurada» tampoco llegaba
+
+En §76 di por ✅ «`ANTHROPIC_API_KEY_EXPIRY = 2026-11-01`, creada hoy a las 19:54».
+Comprobé que **existía**, no que **llegaba**: es la misma variable de GitHub, que
+ningún workflow lee. El servicio usa la fecha quemada en el código
+(`ai-cost.service.ts:219`, `|| '2026-11-01'`), que **coincide por suerte** con la
+real. **La pega 2 de §74.3 no está cerrada.**
+
+Y hay un cambio encima: **a las 23:32 UTC la variable pasó a `2026-09-23`** — hoy.
+Huele a intento de forzar la prueba de humo del aviso de caducidad; si lo es,
+**no puede disparar**, por lo mismo. Y el peligro es el contrario: el día que
+alguien la conecte al despliegue, **si sigue en `2026-09-23` el servicio avisará
+de una clave caducada que no lo está**. Hay que devolverla a `2026-11-01` antes
+de conectarla (o conectarla, hacer la prueba y devolverla).
+
+### 79.3 ⚠️ Corrección a §77: la revisión que certifiqué «sana» llevaba media configuración
+
+A las 23:50 di por buena **`pmo-api-00137-cgd`**. La desplegó **el Jefe a mano**
+(`DEPLOYED BY antonio.sanchez@…`), con una imagen por digest y **solo 10 variables**
+frente a las 21 normales: **sin `NODE_ENV`, sin las `GMAIL_PUBSUB_*`, sin las
+`CRON_*`, sin `WEB_URL`**, y con un `FRONTEND_URL` que el código no usa. El
+`/health/ready` sale 200 igual, porque no mira nada de eso.
+
+**Ya no importa**: a las 23:54 el despliegue automático puso **00138** con las 21,
+y es la que sirve hoy. Pero confirma dos cosas: que el Jefe intentó meter las
+variables por la vía manual, y que **mi sonda de salud no distingue una revisión
+completa de una a medias**. §77 debió decir «00137, manual, 10 variables».
+
+### 79.4 🟠 La sonda del frontend lleva tres días ciega, y avisa cada media hora
+
+89 líneas de `ALERTA · No se puede comprobar si el frontend esta al dia: GitHub
+respondio 404` en el log desde el 21. La causa, medida:
+
+```
+https://pmo-dashboard-503418.web.app/version.json
+{ "commit": "desconocido", "construido": "2026-09-21T22:38:29.975Z" }
+```
+
+`vite.config.ts` saca el commit de `VERCEL_GIT_COMMIT_SHA` o `VITE_COMMIT_SHA`. Fuera
+de Vercel no hay ninguna, así que escribe `desconocido`, y la sonda pregunta a
+GitHub por `compare/<sha>...desconocido` → 404. **Nadie vigila si Firebase sirve
+el frontend que toca.**
+
+Y hay algo más debajo: **el frontend de Firebase se publica a mano desde esta
+máquina** (`.firebase/hosting…cache` modificado, sin workflow que lo haga). El
+bundle servido, `index-B8PRETEw.js`, **se construyó el 21-09 a las 22:38** — no el
+22, como di a entender en §77 al llamarlo «nuevo». Hoy **no hay commits de
+`apps/web` posteriores**, así que producción está al día; pero el próximo cambio
+de frontend no saldrá solo, y la única sonda que lo avisaría está ciega.
+
+El log no es el chat: `alert.service.ts:86` escribe antes del freno (`:90`), así
+que las líneas horarias **no** son mensajes horarios. Lo que llega al canal está
+frenado por clave.
+
+### 79.5 Lo que sigue igual
+
+| | Estado |
+|---|---|
+| Vercel | **503**, sin cambios. Decisión del Jefe pendiente (§77.3) |
+| Gasto IA estimado del mes | **$20.78**, ~$4.9/día en los últimos 7 días — la ingesta sigue viva |
+| `company` / `bank` nulos | sin tocar (§78) |
+| Clave Anthropic | vence el **1-nov**, 39 días |
+| Este cuaderno | §67–§79 **sin commitear** (+1100 líneas); `DOC.md` y `GRAVITY_MEMORY.md` también modificados, que no leo |
+
+**No he cerrado nada y no he reparado nada.** No toqué variables, ni paneles, ni
+el servicio. Solo miré.
