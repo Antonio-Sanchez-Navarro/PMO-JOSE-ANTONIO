@@ -20,7 +20,11 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
   const AHORA = new Date('2026-08-25T12:00:00Z');
   const FRACCION_DEL_DIA = 7 / 24;
 
-  function crear(filas: { dia: string; model: string; entrada: number; salida: number }[], presupuesto = '20') {
+  function crear(
+    filas: { dia: string; model: string; entrada: number; salida: number }[],
+    presupuesto = '20',
+    config: Record<string, string> = {},
+  ) {
     const avisar = jest.fn().mockResolvedValue(undefined);
     const upsert = jest.fn().mockResolvedValue({});
 
@@ -44,7 +48,7 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
 
     const service = new AiCostService(
       prisma as unknown as PrismaService,
-      { get: () => presupuesto } as unknown as ConfigService,
+      { get: (clave: string) => config[clave] ?? presupuesto } as unknown as ConfigService,
       { avisar } as unknown as AlertService,
     );
 
@@ -325,6 +329,26 @@ describe('AiCostService · cuánto queda al ritmo actual', () => {
 
     const clave = String(avisar.mock.calls.find((c) => String(c[0]).includes('presupuesto'))?.[2]);
     expect(clave).toBe('coste-ia-0.9');
+  });
+
+  it('la caducidad de la clave avisa aparte, aunque coincida con el umbral de coste', async () => {
+    // La clave vence el 1 de noviembre. Si este aviso compartiera freno con el
+    // del 90%, el primero de los dos que saliera callaria al otro 23 h, y en la
+    // recta final eso es perder un dia de diez.
+    const { service, avisar } = crear(
+      [{ dia: '2026-08-24', model: 'claude-sonnet-5', entrada: 9_500_000, salida: 0 }],
+      '20',
+      { ANTHROPIC_API_KEY_EXPIRY: '2026-08-30' },
+    );
+
+    await service.comprobar(AHORA);
+
+    expect(avisar).toHaveBeenCalledTimes(2);
+    const coste = avisar.mock.calls.find((c) => String(c[0]).includes('presupuesto'));
+    const caducidad = avisar.mock.calls.find((c) => String(c[0]).includes('Caducidad'));
+    expect(coste?.[2]).toBe('coste-ia-0.9');
+    expect(caducidad?.[2]).toBe('caducidad-anthropic');
+    expect(String(caducidad?.[1])).toContain('caduca en 5 dia(s)');
   });
 
   it('registrar nunca lanza, aunque la base falle', async () => {
