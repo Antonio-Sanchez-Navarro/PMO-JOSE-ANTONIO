@@ -349,15 +349,61 @@ export interface SesionRechazadaEvento {
  */
 export const BANCOS = [
   "Konfio",
-  "Aspiria",
-  "Banregio",
   "Clara",
+  "Banregio",
   "Kapital",
   "Santander",
+  "Aspiria",
+  "BIM",
   "PDN",
+  "Sahara",
 ] as const;
 
 export type Banco = (typeof BANCOS)[number];
+
+/**
+ * Otros nombres con los que aparece un banco de la lista (decisión del Jefe,
+ * 2026-09-25). La clave va en minúsculas; el valor es el nombre canónico.
+ *
+ * Se usa en el prompt —para que el modelo sepa a qué valor llevarlo— y al
+ * normalizar lo que devuelve. **No es un «el más parecido»**: solo entra lo que
+ * está escrito aquí. Banorte, por ejemplo, no está a propósito: es `null`.
+ */
+export const ALIAS_BANCO: Readonly<Record<string, Banco>> = {
+  "banco inmobiliario mexicano": "BIM",
+  // Es la misma institución que PDN.
+  "portafolio de negocios": "PDN",
+  // Advantech es la razón social; Aspiria, el nombre comercial.
+  "advantech": "Aspiria",
+  "advantech servicios financieros": "Aspiria",
+  "sahara mezzanine": "Sahara",
+};
+
+/** Cómo se agrupan los bancos en pantalla. Se deriva de `bank`: no lo decide la IA. */
+export const TIPOS_BANCO = [
+  "Banco tradicional",
+  "Banco digital con tarjeta de crédito",
+  "Financiera",
+] as const;
+
+export type TipoBanco = (typeof TIPOS_BANCO)[number];
+
+/**
+ * El tipo de cada banco. Tabla fija, sin IA: no se guarda ni se le pide al
+ * modelo. `Record<Banco, …>` obliga al compilador a que no falte ninguno, y
+ * una prueba lo comprueba además en ejecución.
+ */
+export const TIPO_BANCO: Readonly<Record<Banco, TipoBanco>> = {
+  Santander: "Banco tradicional",
+  Banregio: "Banco tradicional",
+  BIM: "Banco tradicional",
+  Kapital: "Banco tradicional",
+  Clara: "Banco digital con tarjeta de crédito",
+  Konfio: "Banco digital con tarjeta de crédito",
+  Aspiria: "Financiera",
+  Sahara: "Financiera",
+  PDN: "Financiera",
+};
 
 /** Las empresas del grupo. */
 export const EMPRESAS = ["Urbazepto", "Tecnoresin"] as const;
@@ -384,4 +430,14 @@ export function canonico<T extends string>(
   const limpio = valor.trim().toLowerCase();
   if (limpio === "") return null;
   return vocabulario.find((v) => v.toLowerCase() === limpio) ?? null;
+}
+
+/**
+ * `canonico` para bancos, con sus alias: «Banco Inmobiliario Mexicano» es
+ * `BIM`. Lo que no esté ni en la lista ni en `ALIAS_BANCO` sigue siendo `null`.
+ */
+export function canonicoBanco(valor: unknown): Banco | null {
+  const directo = canonico(valor, BANCOS);
+  if (directo !== null || typeof valor !== "string") return directo;
+  return ALIAS_BANCO[valor.trim().replace(/\s+/g, " ").toLowerCase()] ?? null;
 }

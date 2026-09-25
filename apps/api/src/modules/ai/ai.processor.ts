@@ -195,7 +195,9 @@ export class AiProcessor extends WorkerHost {
 
       this.logger.log(
         `Resultado de IA para ${emailId}: isActionable=${result.isActionable}` +
-          (result.tasks.length ? `, ${result.tasks.length} tarea(s) propuesta(s)` : ''),
+          (result.tasks.length ? `, ${result.tasks.length} tarea(s) propuesta(s)` : '') +
+          // Lo que se guarda en la fila, para poder verlo sin abrir la base.
+          `, company=${result.company ?? 'null'}, bank=${result.bank ?? 'null'}`,
       );
 
       // La clasificación es asíncrona: cuando termina, quien tenga la bandeja

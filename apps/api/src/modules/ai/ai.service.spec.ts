@@ -113,6 +113,50 @@ describe('AiService', () => {
       expect(result.company).toBeNull();
     });
 
+    // Decision del Jefe (2026-09-25): los 239 valores que se perdieron en
+    // tres dias eran sobre todo «Zepto», «HIS» y bancos con otro nombre.
+    it('«Zepto» sola no es empresa: es el grupo y la firma del Jefe → null', async () => {
+      create.mockResolvedValue(comoRespuestaDeHerramienta(salida({ company: 'Zepto' })));
+
+      expect((await analizar(service)).company).toBeNull();
+    });
+
+    it('HIS es un cliente, no una empresa del grupo → null', async () => {
+      create.mockResolvedValue(comoRespuestaDeHerramienta(salida({ company: 'HIS' })));
+
+      expect((await analizar(service)).company).toBeNull();
+    });
+
+    it('«Banco Inmobiliario Mexicano» se guarda como BIM', async () => {
+      create.mockResolvedValue(
+        comoRespuestaDeHerramienta(salida({ bank: 'Banco Inmobiliario Mexicano' })),
+      );
+
+      expect((await analizar(service)).bank).toBe('BIM');
+    });
+
+    it('Banorte no entra en la lista → null', async () => {
+      create.mockResolvedValue(comoRespuestaDeHerramienta(salida({ bank: 'Banorte' })));
+
+      expect((await analizar(service)).bank).toBeNull();
+    });
+
+    it('el prompt dice lo de Zepto, lo de los clientes y los alias', async () => {
+      // Con `enum` en el esquema, lo que no este en la lista el modelo no lo
+      // puede devolver: si no sabe que «Banco Inmobiliario Mexicano» es BIM,
+      // la unica salida que le queda es null.
+      create.mockResolvedValue(comoRespuestaDeHerramienta(salida({})));
+
+      await analizar(service);
+
+      const sistema = String(create.mock.calls[0][0].system);
+      expect(sistema).toContain('«Zepto» sola no identifica empresa');
+      expect(sistema).toContain('no empresas del grupo');
+      expect(sistema).toContain('"banco inmobiliario mexicano" → BIM');
+      expect(sistema).toContain('"portafolio de negocios" → PDN');
+      expect(sistema).toContain('Banorte');
+    });
+
     it('null se queda en null: es la respuesta correcta y la mas frecuente', async () => {
       create.mockResolvedValue(comoRespuestaDeHerramienta(salida({})));
 

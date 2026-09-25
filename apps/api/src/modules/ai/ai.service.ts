@@ -9,7 +9,7 @@ import {
   describirFallo,
   esperaSugeridaMs,
 } from '../../common/anthropic/anthropic-client';
-import { BANCOS, EMPRESAS, canonico } from '@pmo/shared';
+import { ALIAS_BANCO, BANCOS, EMPRESAS, canonico, canonicoBanco } from '@pmo/shared';
 import { FormaDeBloque } from './attachment-budget';
 
 export interface ExtractedTask {
@@ -195,10 +195,19 @@ Resuelve contra ella cualquier fecha relativa o incompleta ("el viernes", "31 de
 límite, devuelve null: no inventes ninguna.
 
 Sobre la empresa y el banco (company y bank): sirven para separar la bandeja en
-pestañas. El sistema aprenderá dinámicamente de lo que extraigas.
+pestañas.
 
-- bank: extrae explícitamente el banco o financiera si se menciona en el correo. Valores posibles: ${BANCOS.join(', ')}.
-- company: extrae explícitamente la empresa a la que pertenece el correo si se menciona. Valores posibles: ${EMPRESAS.join(', ')}.
+- company: la empresa del grupo a la que pertenece el correo. Valores posibles: ${EMPRESAS.join(', ')}.
+  Zepto es el grupo que forman las dos, y además es el dominio y la firma del Jefe:
+  «Zepto» sola no identifica empresa. Si el correo no deja claro cuál de las dos es,
+  devuelve null. HIS (HIS MX Properties, HIS Capital Group), Consciente Tulum y
+  similares son clientes o proyectos, no empresas del grupo: null.
+- bank: el banco o financiera que aparece en el correo. Valores posibles: ${BANCOS.join(', ')}.
+  Algunos aparecen con otro nombre; devuelve el de la lista:
+${Object.entries(ALIAS_BANCO)
+  .map(([alias, banco]) => `  "${alias}" → ${banco}`)
+  .join('\n')}
+  Cualquier otro banco que no esté en la lista (Banorte, por ejemplo) → null.
 
 Si el correo no menciona ninguno, devuelve null. Es la respuesta correcta y la
 más frecuente: no busques el banco más parecido ni traduzcas otro nombre. Mencionar
@@ -463,21 +472,22 @@ export class AiService {
       //
       // `canonico` compara sin mayusculas: el modelo escribe lo que ve en el
       // correo, y tres grafias del mismo banco parten en tres una pestaña que
-      // deberia ser una.
-      company: this.parseVocabulario(raw.company, EMPRESAS, 'company'),
-      bank: this.parseVocabulario(raw.bank, BANCOS, 'bank'),
+      // deberia ser una. El banco pasa ademas por sus alias («Banco
+      // Inmobiliario Mexicano» es `BIM`), que estan escritos en `ALIAS_BANCO`.
+      company: this.parseVocabulario(raw.company, (v) => canonico(v, EMPRESAS), 'company'),
+      bank: this.parseVocabulario(raw.bank, canonicoBanco, 'bank'),
     };
   }
 
   /** Un valor de lista cerrada, en su forma canónica, o `null`. */
   private parseVocabulario<T extends string>(
     value: unknown,
-    vocabulario: readonly T[],
+    normalizar: (valor: unknown) => T | null,
     campo: string,
   ): T | null {
     if (value === null || value === undefined) return null;
 
-    const limpio = canonico(value, vocabulario);
+    const limpio = normalizar(value);
     if (limpio === null && value !== '') {
       // Se avisa pero no se lanza: el resto del analisis —las tareas, que es
       // lo que de verdad importa— sigue siendo utilizable.
