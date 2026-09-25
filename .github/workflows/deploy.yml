@@ -451,6 +451,14 @@ jobs:
             fi
           done
 
+          # Segundo origen del CORS, para la migración a dominio propio. Solo si
+          # está puesto: sin él la revisión queda exactamente como antes. No
+          # sustituye a `WEB_URL`, que sigue siendo a donde vuelve el login.
+          WEB_URL_EXTRA="${{ vars.WEB_URL_EXTRA }}"
+          if [ -n "${WEB_URL_EXTRA}" ]; then
+            ENV_VARS="${ENV_VARS},WEB_URL_EXTRA=${WEB_URL_EXTRA}"
+          fi
+
           # ───────────────────────────────────────────────────────────────
           # Configuración de ejecución — y por qué tiene que estar AQUÍ
           #

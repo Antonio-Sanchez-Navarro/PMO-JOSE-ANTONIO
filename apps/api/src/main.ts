@@ -7,6 +7,7 @@ import helmet from "helmet";
 import { Logger as PinoNestLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { avisoDeConfiguracion } from "./common/observability/logger.config";
+import { origenesCors } from "./common/security/origenes-cors";
 
 async function bootstrap() {
   /**
@@ -71,7 +72,7 @@ async function bootstrap() {
   );
 
   app.enableCors({
-    origin: config.get<string>("WEB_URL") ?? "http://localhost:5173",
+    origin: origenesCors(config.get<string>("WEB_URL"), config.get<string>("WEB_URL_EXTRA")),
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

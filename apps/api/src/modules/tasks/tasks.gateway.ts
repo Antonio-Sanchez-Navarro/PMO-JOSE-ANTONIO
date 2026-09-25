@@ -13,6 +13,7 @@ import { CODIGO_SESION, SESSION_EVENTS } from '@pmo/shared';
 import cookie from 'cookie';
 import { SESSION_COOKIE } from '../auth/auth.constants';
 import { describirError, stackDe } from '../../common/observability/describir-error';
+import { origenesCors } from '../../common/security/origenes-cors';
 
 /** Nombres de los eventos que emite el backend. Se importan desde los tests. */
 export const TASK_EVENTS = {
@@ -145,7 +146,7 @@ const MARGEN_DE_RELOJ_MS = 5_000;
  */
 @WebSocketGateway({
   cors: {
-    origin: process.env.WEB_URL ?? 'http://localhost:5173',
+    origin: origenesCors(process.env.WEB_URL, process.env.WEB_URL_EXTRA),
     credentials: true,
   },
 })
