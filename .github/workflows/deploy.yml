@@ -722,33 +722,47 @@ jobs:
       # cuando el origen no está admitido. La lista de orígenes de la API es
       # fija —no un eco de lo que pregunte el cliente—, así que la cabecera solo
       # devuelve el origen si de verdad está en ella.
+      #
+      # **Cada origen, por separado (2026-10-01).** Desde `4550578` la API admite
+      # un segundo origen, `WEB_URL_EXTRA`, y esa variable no la comprobaba
+      # nadie: podía no llegar a la revisión y el frontend servido desde ahí se
+      # quedaría sin API sin que el despliegue lo notara. Si existe, se pregunta
+      # igual que por `WEB_URL` y falla igual. Si no existe, el paso hace lo de
+      # siempre.
       # ─────────────────────────────────────────────────────────────────────
-      - name: Comprobar que el CORS de la revisión admite WEB_URL
+      - name: Comprobar que el CORS de la revisión admite WEB_URL y WEB_URL_EXTRA
         run: |
           URL=$(gcloud run services describe "${SERVICE}" \
                   --region "${REGION}" --format 'value(status.url)')
-          ORIGEN="${{ vars.WEB_URL }}"
 
-          PERMITIDO=$(curl -sS -D - -o /dev/null --max-time 20 \
-                        -X OPTIONS "${URL}/auth/me" \
-                        -H "Origin: ${ORIGEN}" \
-                        -H "Access-Control-Request-Method: GET" \
-                      | tr -d '\r' \
-                      | grep -i '^access-control-allow-origin:' \
-                      | head -1 \
-                      | cut -d' ' -f2- || true)
-
-          echo "origen pedido:   ${ORIGEN}"
-          echo "origen admitido: ${PERMITIDO:-(ninguno)}"
-
-          if [ "${PERMITIDO}" != "${ORIGEN}" ]; then
-            echo "::error::La revisión desplegada no admite ${ORIGEN} en CORS." \
-                 "El despliegue salió con 0 pero la variable no llegó a la revisión que sirve," \
-                 "así que el navegador bloqueará todas las llamadas del frontend."
-            exit 1
+          ORIGENES="${{ vars.WEB_URL }}"
+          WEB_URL_EXTRA="${{ vars.WEB_URL_EXTRA }}"
+          if [ -n "${WEB_URL_EXTRA}" ]; then
+            ORIGENES="${ORIGENES} ${WEB_URL_EXTRA}"
           fi
 
-          echo "El CORS de la revisión admite el origen del frontend."
+          for ORIGEN in ${ORIGENES}; do
+            PERMITIDO=$(curl -sS -D - -o /dev/null --max-time 20 \
+                          -X OPTIONS "${URL}/auth/me" \
+                          -H "Origin: ${ORIGEN}" \
+                          -H "Access-Control-Request-Method: GET" \
+                        | tr -d '\r' \
+                        | grep -i '^access-control-allow-origin:' \
+                        | head -1 \
+                        | cut -d' ' -f2- || true)
+
+            echo "origen pedido:   ${ORIGEN}"
+            echo "origen admitido: ${PERMITIDO:-(ninguno)}"
+
+            if [ "${PERMITIDO}" != "${ORIGEN}" ]; then
+              echo "::error::La revisión desplegada no admite ${ORIGEN} en CORS." \
+                   "El despliegue salió con 0 pero la variable no llegó a la revisión que sirve," \
+                   "así que el navegador bloqueará todas las llamadas del frontend servido desde ahí."
+              exit 1
+            fi
+          done
+
+          echo "El CORS de la revisión admite todos los orígenes del frontend."
 
       # ─────────────────────────────────────────────────────────────────────
       # El Job de respaldo diario — configuración que vivía solo en la consola
