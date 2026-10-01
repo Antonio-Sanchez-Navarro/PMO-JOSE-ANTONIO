@@ -553,3 +553,19 @@ secretos, despliegues— es de Gravity.
 Excepciones vigentes: `modules/emails/` y `modules/time/`, `POST /tasks`,
 `DELETE /tasks/:id` y `TasksGateway` los lleva Claude aunque sean capa REST,
 porque comparten reglas con el cron y los sockets.
+
+## Dominio, cronómetro y socket (2026-10-01)
+
+- **`1d26236`** — el preflight post-despliegue comprueba también `WEB_URL_EXTRA`. Desde entonces `WEB_URL` es
+  `https://app.pmo-app.com` y `WEB_URL_EXTRA` es web.app (variables de repo, 17:13 UTC; revisión `00148-qgz`). El login
+  vuelve siempre a `app.`. Marcha atrás: las dos variables al revés y redespliegue con `workflow_dispatch`.
+- **Cronómetro (`bc5c688`, con el mensaje de @Gravity por un `--amend` ajeno):** quien pulsa no recibe el evento
+  (`X-Socket-Id`), así que el tablero aplica la respuesta del `POST`. `kanban/utils/cronometro.ts` es idempotente: el
+  eco no suma dos veces. Al arrancar sobre otra tarea, se cierra en pantalla la anterior.
+- **Socket (`8c542d5`):** sin cookie de acceso pero con `pmo_refresh` → `SESION_CADUCADA`, no `INVALIDA`. La cookie de
+  acceso caduca a los 15 min y el navegador la borra. Con `INVALIDA`, cada despliegue mandaba la pestaña a `/login`.
+- ⚠️ **Trampas de publicación del frontend:** `firebase` no está en la ruta (`npx firebase-tools`), y el
+  `apps/web/vite.config.js` sin seguimiento gana al `.ts` (`vite build --config vite.config.ts`).
+- ⚠️ **Gmail:** la etiqueta PMO es por mensaje. La vía incremental (`history.list` con `labelId`) trae igual las
+  respuestas de un hilo etiquetado; `backfill`/`getInbox` (`messages.list`) no. Y el historial del hilo se come el tope
+  de 12.000 caracteres con citas repetidas.
