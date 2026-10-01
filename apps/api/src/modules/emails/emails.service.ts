@@ -1,7 +1,7 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EmailStatus, Task, TaskPriority, TaskSource, TaskStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { EmailClassificationService, aJsonDeBorradores } from '../ai/email-classification.service';
+import { EmailClassificationService } from '../ai/email-classification.service';
 import { ConfirmedTaskDto, ToTaskDto } from './dto/to-task.dto';
 import type { ProposedTask } from '@pmo/shared';
 import { QueryEmailsDto } from './dto/query-emails.dto';
@@ -928,26 +928,32 @@ export class EmailsService {
       throw new ConflictException(`El correo ${emailId} no tiene texto que analizar.`);
     }
 
-    // C-2: Las propuestas pueden estar en un correo anterior del mismo hilo.
-    // Si no estamos forzando, agrupamos TODAS las propuestas del hilo.
+    // G.2.4: el hilo tiene **un** borrador, el del correo más reciente que lo
+    // guarde. Antes se sumaban los de todos los correos del hilo (`flatMap`) y
+    // salían propuestas repetidas y ya resueltas: 16 en un hilo de seis.
+    //
+    // Si quedan varios de antes de G.2 —hilos que no se han vuelto a pensar—,
+    // manda el más reciente: es el que ya vio el historial. Se devuelve **su**
+    // id, porque es ahí donde se aprueba y de donde se lee la confianza.
     if (!force) {
-      const allProposals = threadEmails.flatMap(e => 
-        Array.isArray(e.proposedTasks) ? e.proposedTasks : []
+      const conBorrador = threadEmails.find(
+        (e) => Array.isArray(e.proposedTasks) && e.proposedTasks.length > 0,
       );
-      
-      // Si hay al menos una propuesta en todo el hilo, la devolvemos.
+
       // Así el modal "Revisar N" abre con las propuestas reales sin volver a cobrar.
-      if (allProposals.length > 0) {
-        this.logger.log(`Clasificación servida desde el borrador guardado del hilo para ${emailId}`);
-        const guardadas = tareasPropuestas(allProposals);
+      if (conBorrador) {
+        this.logger.log(
+          `Clasificación servida desde el borrador del hilo (correo ${conBorrador.id}) para ${emailId}`,
+        );
+        const guardadas = tareasPropuestas(conBorrador.proposedTasks);
         return {
-          emailId: email.id,
-          category: email.category ?? 'OTHER',
-          isActionable: email.isActionable,
+          emailId: conBorrador.id,
+          category: conBorrador.category ?? 'OTHER',
+          isActionable: conBorrador.isActionable,
           aiConfidence: guardadas[0]?.aiConfidence ?? 0,
           tasks: guardadas,
-          company: email.company,
-          bank: email.bank,
+          company: conBorrador.company,
+          bank: conBorrador.bank,
         };
       }
       
@@ -965,32 +971,21 @@ export class EmailsService {
       }
     }
 
-    const draft = await this.classification.classify(email.id, { forceActionable: false });
-
-    this.logger.log(
-      `Clasificación ${force ? 'forzada' : 'en seco'} del correo ${emailId}: ` +
-        `${draft.tasks.length} tarea(s) propuesta(s)`,
-    );
-
-    // Lo que acaba de decir el modelo pasa a ser **el** borrador del correo.
-    // Sin esto, un `?force=true` devolvería una propuesta nueva a quien la pidió
-    // y la siguiente lectura seguiría sirviendo la vieja: dos personas mirando
-    // el mismo correo verían cosas distintas.
+    // G.2.4: se vuelve a pensar **el hilo entero** y lo que diga el modelo pasa
+    // a ser **el** borrador del hilo, guardado en su correo más reciente (con
+    // banco y empresa) y vaciado en los demás. Sin guardarlo, un `?force=true`
+    // devolvería una propuesta nueva a quien la pidió y la siguiente lectura
+    // seguiría sirviendo la vieja.
     //
     // No se toca `processedAt`: clasificar para mirar no es haber despachado el
-    // correo, y marcarlo aquí haría que el worker se lo saltara.
-    await this.prisma.email.update({
-      where: { id: email.id },
-      data: {
-        proposedTasks: aJsonDeBorradores(draft.tasks),
-        // Van con el borrador, no aparte. Sin esto, un `?force=true` que
-        // corrigiera el banco lo devolveria en la respuesta y dejaria el viejo
-        // en la base: la bandeja seguiria enseñando la pestaña equivocada
-        // justo despues de que alguien pagara por corregirla.
-        company: draft.company,
-        bank: draft.bank,
-      },
-    });
+    // correo, y marcarlo aquí haría que el worker se lo saltara. Las tareas ya
+    // aprobadas no se tocan: viven en `Task`, y esto solo escribe borradores.
+    const draft = await this.classification.reclassifyThread(email.id);
+
+    this.logger.log(
+      `Clasificación ${force ? 'forzada' : 'en seco'} del hilo de ${emailId} ` +
+        `(borrador en ${draft.emailId}): ${draft.tasks.length} tarea(s) propuesta(s)`,
+    );
 
     return {
       emailId: draft.emailId,

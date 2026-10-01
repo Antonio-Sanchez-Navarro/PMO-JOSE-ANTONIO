@@ -8,6 +8,7 @@ import {
   emailConFechaRelativa,
   emailNoAccionable,
   emailSinTexto,
+  makeEmail,
 } from './__fixtures__/emails.fixture';
 
 /**
@@ -70,13 +71,16 @@ describe('EmailClassificationService', () => {
         deleteMany: jest.fn().mockResolvedValue({ count: 2 }),
         create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'task-1', ...data })),
       },
-      email: { update: jest.fn().mockResolvedValue({}) },
+      // G.2.4: el borrador va al más reciente y se vacían los demás del hilo.
+      email: { update: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     };
     prisma = {
       email: { 
         findUniqueOrThrow: jest.fn().mockResolvedValue(emailConFechaRelativa),
         findMany: jest.fn().mockResolvedValue([]),
       },
+      // G.2: lo aprobado del hilo entra en el contexto.
+      task: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
     gmail = { fetchAttachment: jest.fn().mockResolvedValue(Buffer.from('bytes')) };
@@ -189,95 +193,163 @@ describe('EmailClassificationService', () => {
     );
   });
 
-  it('pasa el contexto del hilo y la bandera de adjuntos (Fase 6)', async () => {
-    prisma.email.findUniqueOrThrow.mockResolvedValue({
-      ...emailConFechaRelativa,
-      hasAttachments: true,
-    });
-    prisma.email.findMany.mockResolvedValue([
-      { bodyText: 'Mensaje anterior del hilo', snippet: null },
-    ]);
-
-    await service.classifyAndPersist(emailConFechaRelativa.id, {
-      replaceExisting: true,
-      forceActionable: false,
-    });
-
-    // El hilo se busca por `threadId` y solo hacia atrás: un mensaje posterior
-    // no es contexto de este, es una respuesta que aún no existía.
-    const where = prisma.email.findMany.mock.calls[0][0].where;
-    expect(where.threadId).toBe(emailConFechaRelativa.threadId);
-    expect(where.receivedAt).toEqual({ lt: emailConFechaRelativa.receivedAt });
-
-    expect(ai.analyzeEmail).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      expect.any(Date),
-      expect.objectContaining({ hasAttachments: true, threadContext: 'Mensaje anterior del hilo' }),
-    );
-  });
-
   /**
-   * C2 — el hilo entra acotado.
+   * G.2 — la IA piensa el hilo entero.
    *
-   * Sin techo, un hilo largo se manda entero en **cada** clasificación de la
-   * tanda: son tokens de entrada que se pagan una y otra vez, y `max_tokens`
-   * solo acota la respuesta. La factura aparecería después, en `pmo-coste-ia`,
-   * sin nada que la explicara.
+   * Antes cada correo se analizaba solo, con los anteriores como «historial
+   * citado» sin autor ni fecha, y con la orden de «analizar SOLO lo nuevo». Lo
+   * resuelto en un mensaje posterior nunca anulaba lo pedido en uno anterior.
+   * Fixtures sintéticos: nombres y correos inventados.
    */
-  describe('C2 · techo del contexto del hilo', () => {
-    const audiencia = () => ai.analyzeEmail.mock.calls[0][3].threadContext as string;
-
-    it('pide como mucho 10 mensajes anteriores, y los más recientes', async () => {
-      prisma.email.findMany.mockResolvedValue([{ bodyText: 'uno', snippet: null }]);
-
-      await service.classifyAndPersist(emailConFechaRelativa.id, {
-        replaceExisting: true,
-        forceActionable: false,
-      });
-
-      const consulta = prisma.email.findMany.mock.calls[0][0];
-      expect(consulta.take).toBe(10);
-      // Descendente y no ascendente: se piden los últimos para que el recorte
-      // sacrifique lo más antiguo, que es lo menos relevante.
-      expect(consulta.orderBy).toEqual({ receivedAt: 'desc' });
+  describe('G.2 · clasificación por hilo', () => {
+    const peticion = makeEmail({
+      id: 'hilo-1-peticion',
+      threadId: 'hilo-1',
+      from: 'Ana Pérez <ana@creditos.example>',
+      subject: 'Escrituración depto 101',
+      bodyText:
+        'Hola, para avanzar necesito:\n1. Notaría con la que trabajan.\n2. Contacto para el avalúo.\n3. Boleta de agua.',
+      receivedAt: new Date('2026-09-22T23:58:00.000Z'),
+    });
+    const resolucion = makeEmail({
+      id: 'hilo-1-resolucion',
+      threadId: 'hilo-1',
+      from: 'Equipo <equipo@zepto.com.mx>',
+      subject: 'Re: Escrituración depto 101',
+      bodyText: [
+        'Estimada Ana: la notaría es la 12 y el avalúo lo atiende Luis (555 000 0000).',
+        'La boleta de agua se la enviamos en cuanto la tengamos.',
+        '',
+        'El mar, 22 sept 2026 a la(s) 5:58 p.m., Ana Pérez (ana@creditos.example)',
+        'escribió:',
+        '> Hola, para avanzar necesito:',
+        '> 1. Notaría con la que trabajan.',
+      ].join('\n'),
+      receivedAt: new Date('2026-09-28T22:58:00.000Z'),
     });
 
-    it('los devuelve en el orden en que ocurrieron, no en el que se pidieron', async () => {
-      // La base los da del más nuevo al más viejo…
-      prisma.email.findMany.mockResolvedValue([
-        { bodyText: 'el ultimo', snippet: null },
-        { bodyText: 'el primero', snippet: null },
+    /** El texto que recibe el modelo del hilo, para mirarlo entero. */
+    const loQueVeElModelo = () => {
+      const [, cuerpo, , opciones] = ai.analyzeEmail.mock.calls[0];
+      const h = opciones.hilo;
+      return { cuerpo: cuerpo as string, hilo: h, todo: `${h?.mensajes ?? ''}\n${h?.ultimo ?? ''}\n${cuerpo}` };
+    };
+
+    it('(a) analizar la petición vieja manda el hilo entero, con la resolución posterior', async () => {
+      // El worker procesa la petición, pero en la base ya está la respuesta
+      // del equipo. Antes el contexto era solo «hacia atrás» y el modelo no
+      // podía ver que la notaría y el avalúo ya se habían dado.
+      prisma.email.findUniqueOrThrow.mockResolvedValue(peticion);
+      prisma.email.findMany.mockResolvedValue([resolucion]);
+
+      await service.classifyAndPersist(peticion.id, { replaceExisting: true, forceActionable: false });
+
+      const { cuerpo, hilo } = loQueVeElModelo();
+      // Lo que se analiza es el hilo desde su mensaje más reciente…
+      expect(cuerpo).toContain('la notaría es la 12');
+      // …con la petición antes, entera, como contexto.
+      expect(hilo.mensajes).toContain('1. Notaría con la que trabajan.');
+      expect(ai.analyzeEmail.mock.calls[0][2]).toEqual(resolucion.receivedAt);
+      expect(ai.analyzeEmail.mock.calls[0][3].traza).toEqual({ emailId: resolucion.id, threadId: 'hilo-1' });
+    });
+
+    it('(a) y el borrador se guarda en el más reciente; los demás del hilo se vacían', async () => {
+      prisma.email.findUniqueOrThrow.mockResolvedValue(peticion);
+      prisma.email.findMany.mockResolvedValue([resolucion]);
+
+      await service.classifyAndPersist(peticion.id, { replaceExisting: true, forceActionable: false });
+
+      const [primero, segundo] = tx.email.update.mock.calls.map((c: any[]) => c[0]);
+      expect(primero.where).toEqual({ id: resolucion.id });
+      expect(primero.data.proposedTasks).toEqual([expect.objectContaining({ title: expect.any(String) })]);
+      // Solo los de este hilo y de esta persona, y en ese momento.
+      expect(tx.email.updateMany).toHaveBeenCalledWith({
+        where: { userId: resolucion.userId, threadId: 'hilo-1', id: { not: resolucion.id } },
+        data: { proposedTasks: expect.anything() },
+      });
+      // El correo que procesaba el worker queda despachado.
+      expect(segundo).toEqual({ where: { id: peticion.id }, data: { processedAt: expect.any(Date) } });
+    });
+
+    it('(c) una tarea aprobada sigue intacta: se le enseña al modelo y no se escribe en Task', async () => {
+      prisma.email.findUniqueOrThrow.mockResolvedValue(resolucion);
+      prisma.email.findMany.mockResolvedValue([peticion]);
+      prisma.task.findMany.mockResolvedValue([
+        {
+          title: 'Escrituración depto 101',
+          status: 'TODO',
+          subtasks: [{ title: 'Enviar boleta de agua', isCompleted: false }],
+        },
       ]);
 
-      await service.classifyAndPersist(emailConFechaRelativa.id, {
-        replaceExisting: true,
-        forceActionable: false,
+      await service.classifyAndPersist(resolucion.id, { replaceExisting: true, forceActionable: false });
+
+      // Se buscan por el hilo y la persona…
+      expect(prisma.task.findMany.mock.calls[0][0].where).toEqual({
+        userId: resolucion.userId,
+        sourceEmail: { threadId: 'hilo-1' },
       });
-
-      // …y el modelo tiene que leerlos al revés, o la conversación no se
-      // entiende y las fechas relativas del hilo salen del revés.
-      expect(audiencia()).toBe(['el primero', 'el ultimo'].join('\n---\n'));
-    });
-
-    it('recorta por caracteres cuando un solo mensaje se pasa de largo', async () => {
-      prisma.email.findMany.mockResolvedValue([
-        { bodyText: 'x'.repeat(20_000), snippet: null },
-        { bodyText: 'este ya no cabe', snippet: null },
+      // …se le pasan al modelo para que no las vuelva a proponer…
+      expect(loQueVeElModelo().hilo.aprobadas).toEqual([
+        '- Escrituración depto 101 [TODO]\n  · Enviar boleta de agua (pendiente)',
       ]);
-
-      await service.classifyAndPersist(emailConFechaRelativa.id, {
-        replaceExisting: true,
-        forceActionable: false,
-      });
-
-      // El tope es 12.000: entra el recorte del más reciente y el viejo se cae
-      // entero. Lo que no puede pasar es que se mande el hilo completo.
-      expect(audiencia()).toHaveLength(12_000);
-      expect(audiencia()).not.toContain('este ya no cabe');
+      // …y no se toca ninguna fila de Task: ni crear, ni borrar, ni actualizar.
+      expect(tx.task.create).not.toHaveBeenCalled();
+      expect(tx.task.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.task.update).toBeUndefined();
     });
 
-    it('sin mensajes anteriores no inventa contexto', async () => {
+    it('(d) el contexto lleva autor y fecha de cada mensaje, y no lleva citas', async () => {
+      prisma.email.findUniqueOrThrow.mockResolvedValue(resolucion);
+      prisma.email.findMany.mockResolvedValue([peticion]);
+
+      await service.classifyAndPersist(resolucion.id, { replaceExisting: true, forceActionable: false });
+
+      const { cuerpo, hilo } = loQueVeElModelo();
+      expect(hilo.mensajes).toContain('De: Ana Pérez <ana@creditos.example> · 2026-09-22 23:58 UTC');
+      expect(hilo.ultimo).toBe('De: Equipo <equipo@zepto.com.mx> (nuestro equipo) · 2026-09-28 22:58 UTC');
+      // La respuesta llega sin lo que cita de la petición.
+      expect(cuerpo).not.toContain('escribió:');
+      expect(cuerpo).not.toContain('> ');
+      expect(cuerpo).toContain('La boleta de agua se la enviamos');
+    });
+
+    it('el mensaje más antiguo de la base conserva sus citas: puede ser lo único que queda de antes', async () => {
+      const primeroConCitas = makeEmail({
+        ...peticion,
+        bodyText: 'Sigo pendiente.\n\nEl lun, 21 sept 2026, Luis (luis@demo.example) escribió:\n> Les paso el contrato firmado.',
+      });
+      prisma.email.findUniqueOrThrow.mockResolvedValue(resolucion);
+      prisma.email.findMany.mockResolvedValue([primeroConCitas]);
+
+      await service.classifyAndPersist(resolucion.id, { replaceExisting: true, forceActionable: false });
+
+      expect(loQueVeElModelo().hilo.mensajes).toContain('> Les paso el contrato firmado.');
+    });
+
+    it('tope de 8.000 caracteres de texto nuevo: se omite lo más antiguo y se dice', async () => {
+      const largo = makeEmail({ ...peticion, id: 'largo', bodyText: 'x'.repeat(7_900) });
+      const medio = makeEmail({
+        ...peticion,
+        id: 'medio',
+        bodyText: 'Mensaje intermedio corto.',
+        receivedAt: new Date('2026-09-25T10:00:00.000Z'),
+        proposedTasks: [{ title: 'Propuesta pendiente de antes' }],
+      });
+      prisma.email.findUniqueOrThrow.mockResolvedValue(resolucion);
+      prisma.email.findMany.mockResolvedValue([largo, medio]);
+
+      await service.classifyAndPersist(resolucion.id, { replaceExisting: true, forceActionable: false });
+
+      const { hilo } = loQueVeElModelo();
+      expect(hilo.omitidos).toBe(1);
+      expect(hilo.mensajes).not.toContain('xxxx');
+      expect(hilo.mensajes).toContain('Mensaje intermedio corto.');
+      // Lo que salió de lo omitido sigue a la vista.
+      expect(hilo.borradorAnterior).toEqual(['- Propuesta pendiente de antes']);
+    });
+
+    it('un hilo de un solo correo sin nada aprobado se analiza como siempre, con el cuerpo entero', async () => {
       prisma.email.findMany.mockResolvedValue([]);
 
       await service.classifyAndPersist(emailConFechaRelativa.id, {
@@ -285,9 +357,24 @@ describe('EmailClassificationService', () => {
         forceActionable: false,
       });
 
-      // `undefined` y no cadena vacía: el prompt no debe llevar una sección de
-      // historial vacía, que el modelo leería como «aquí no hubo nada».
-      expect(ai.analyzeEmail.mock.calls[0][3].threadContext).toBeUndefined();
+      // `undefined` y no una sección vacía: el prompt no lleva hilo que no hay.
+      expect(ai.analyzeEmail.mock.calls[0][3].hilo).toBeUndefined();
+      expect(ai.analyzeEmail.mock.calls[0][1]).toBe(emailConFechaRelativa.bodyText);
+    });
+
+    it('«Volver a analizar» guarda el borrador del hilo sin marcar nada como procesado', async () => {
+      prisma.email.findUniqueOrThrow.mockResolvedValue(peticion);
+      prisma.email.findMany.mockResolvedValue([resolucion]);
+
+      const draft = await service.reclassifyThread(peticion.id);
+
+      expect(draft.emailId).toBe(resolucion.id);
+      expect(tx.email.update).toHaveBeenCalledTimes(1);
+      const data = tx.email.update.mock.calls[0][0].data;
+      expect(tx.email.update.mock.calls[0][0].where).toEqual({ id: resolucion.id });
+      expect(data).not.toHaveProperty('processedAt');
+      expect(data).not.toHaveProperty('isActionable');
+      expect(tx.email.updateMany).toHaveBeenCalled();
     });
   });
 
@@ -538,7 +625,7 @@ describe('EmailClassificationService — prefijo de contexto en los títulos', (
         deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
         create: jest.fn().mockImplementation(({ data }) => ({ id: 't', ...data })),
       },
-      email: { update: jest.fn() },
+      email: { update: jest.fn(), updateMany: jest.fn() },
     };
     prisma = {
       email: {
@@ -549,6 +636,8 @@ describe('EmailClassificationService — prefijo de contexto en los títulos', (
         }),
         findMany: jest.fn().mockResolvedValue([]),
       },
+      // G.2: lo aprobado del hilo entra en el contexto.
+      task: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
     gmail = { fetchAttachment: jest.fn().mockResolvedValue(Buffer.from('bytes')) };
@@ -636,13 +725,15 @@ describe('EmailClassificationService — adjuntos para el modelo (Fase 8)', () =
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({}),
       },
-      email: { update: jest.fn().mockResolvedValue({}) },
+      // G.2.4: el borrador va al más reciente y se vacían los demás del hilo.
+      email: { update: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     };
     prisma = {
       email: {
         findUniqueOrThrow: jest.fn().mockResolvedValue(conAdjuntos([ficha()])),
         findMany: jest.fn().mockResolvedValue([]),
       },
+      task: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
     };
     ai = {

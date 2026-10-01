@@ -61,6 +61,35 @@ export interface AdjuntoAusente {
   motivo: string;
 }
 
+/**
+ * El hilo entero, tal como lo arma `EmailClassificationService` (G.2.3): cada
+ * mensaje con su autor y su fecha y sin citas, más lo ya aprobado.
+ */
+export interface HiloParaElModelo {
+  /** Los mensajes anteriores al último, en orden, ya formateados. Puede ir vacío. */
+  mensajes: string;
+  /** La cabecera «De: … · fecha» del mensaje más reciente. */
+  ultimo: string;
+  /** Las tareas ya aprobadas del hilo, una por línea, con su estado. */
+  aprobadas: string[];
+  /** Cuántos mensajes antiguos se quedaron fuera por el tope. */
+  omitidos: number;
+  /** Si se omitió algo: el borrador pendiente que tenía el hilo. */
+  borradorAnterior: string[];
+}
+
+/**
+ * Lo que se le pide al modelo cuando ve el hilo entero. Va en el mensaje y no
+ * en el sistema para que el prompt de sistema siga siendo el mismo en las dos
+ * vías: un solo correo y un hilo.
+ */
+export const INSTRUCCIONES_HILO =
+  'QUÉ DEVOLVER: las tareas que siguen ABIERTAS HOY en el hilo entero, no solo ' +
+  'las del último mensaje. Lo que se pidió y en un mensaje posterior se respondió, ' +
+  'se entregó o se resolvió —lo haga quien lo haga, también nuestro equipo— NO se ' +
+  'propone. Lo que ya está en las tareas aprobadas tampoco. Si no queda nada ' +
+  'abierto, devuelve la lista de tareas vacía.';
+
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
 
 /**
@@ -279,6 +308,8 @@ export class AiService {
       ausentes?: AdjuntoAusente[];
       /** A qué correo e hilo se le cobra la llamada, para el log de uso. */
       traza?: { emailId?: string; threadId?: string };
+      /** El hilo entero (G.2). Si viene, se ignora `threadContext`. */
+      hilo?: HiloParaElModelo;
     },
   ): Promise<EmailAnalysisResult> {
     const fecha = receivedAt.toISOString().slice(0, 10);
@@ -325,7 +356,34 @@ export class AiService {
     }
 
     let userContent = `Fecha de recepción: ${fecha}\nSubject: ${subject}\n\n`;
-    if (threadContext) {
+    const hilo = options?.hilo;
+    if (hilo) {
+      // G.2: el hilo entero, en orden y sin citas, con quién dijo qué y cuándo.
+      // Los mensajes «(nuestro equipo)» somos nosotros: si responden o entregan
+      // algo, eso deja de estar abierto.
+      userContent +=
+        'Este correo es parte de un HILO. Te paso la conversación en orden, cada ' +
+        'mensaje con su autor y su fecha y sin las citas (lo que cada uno repite de ' +
+        'los anteriores). Los remitentes marcados «(nuestro equipo)» somos nosotros: ' +
+        'el usuario y sus compañeros.\n\n';
+      if (hilo.omitidos > 0) {
+        userContent +=
+          `(Se omiten los ${hilo.omitidos} mensaje(s) más antiguo(s) del hilo por longitud. ` +
+          'Lo que salió de ellos está en las listas de abajo.)\n';
+        if (hilo.borradorAnterior.length > 0) {
+          userContent += `Borrador pendiente anterior:\n${hilo.borradorAnterior.join('\n')}\n`;
+        }
+        userContent += '\n';
+      }
+      if (hilo.mensajes) {
+        userContent += `MENSAJES ANTERIORES DEL HILO:\n${hilo.mensajes}\n\n`;
+      }
+      userContent +=
+        'TAREAS YA APROBADAS DE ESTE HILO (no las propongas otra vez):\n' +
+        (hilo.aprobadas.length > 0 ? hilo.aprobadas.join('\n') : '(ninguna)') +
+        '\n\n';
+      userContent += `${INSTRUCCIONES_HILO}\n\nMENSAJE MÁS RECIENTE (${hilo.ultimo}):\n`;
+    } else if (threadContext) {
       userContent += `Historial del hilo (citado):\n${threadContext}\n\n`;
       userContent += `NUEVO MENSAJE (Analiza SOLO esto y no repitas tareas del historial):\n`;
     }

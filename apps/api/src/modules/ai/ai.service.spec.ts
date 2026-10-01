@@ -57,6 +57,37 @@ describe('AiService', () => {
    * el coste. `aiUsage` solo guarda el total del día: sin esta línea no se
    * puede decir cuánto costó un hilo.
    */
+  describe('G.2 · el hilo entero en el mensaje', () => {
+    it('lleva los anteriores, lo aprobado, la orden de «abiertas hoy» y el último con su autor', async () => {
+      create.mockResolvedValue(
+        comoRespuestaDeHerramienta({
+          isActionable: false, category: 'OTHER', aiConfidence: 0.5, tasks: [],
+          senderName: null, project: null, company: null, bank: null,
+        }),
+      );
+
+      await service.analyzeEmail('Re: Depto 101', 'Sigo atenta a la boleta de agua.', new Date('2026-09-30T14:46:00Z'), {
+        hilo: {
+          mensajes: 'De: Ana <ana@demo.example> · 2026-09-22 23:58 UTC\nNecesito notaría y avalúo.',
+          ultimo: 'De: Ana <ana@demo.example> · 2026-09-30 14:46 UTC',
+          aprobadas: ['- Depto 101 [TODO]'],
+          omitidos: 0,
+          borradorAnterior: [],
+        },
+        // Con hilo, el historial citado de antes ya no se manda.
+        threadContext: 'no debería aparecer',
+      });
+
+      const texto = create.mock.calls[0][0].messages[0].content[0].text as string;
+      expect(texto).toContain('MENSAJES ANTERIORES DEL HILO:\nDe: Ana <ana@demo.example> · 2026-09-22 23:58 UTC');
+      expect(texto).toContain('TAREAS YA APROBADAS DE ESTE HILO (no las propongas otra vez):\n- Depto 101 [TODO]');
+      expect(texto).toContain('ABIERTAS HOY');
+      expect(texto).toContain('MENSAJE MÁS RECIENTE (De: Ana <ana@demo.example> · 2026-09-30 14:46 UTC):\nBody:\nSigo atenta');
+      expect(texto).not.toContain('no debería aparecer');
+      expect(texto).not.toContain('Analiza SOLO esto');
+    });
+  });
+
   describe('registro de uso por llamada', () => {
     const salidaMinima = {
       isActionable: false,

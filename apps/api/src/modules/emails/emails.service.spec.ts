@@ -501,7 +501,7 @@ describe('EmailsService — to-task con tasks[] (confirmación de la cuarentena)
 describe('EmailsService — POST /emails/:id/classify', () => {
   let service: EmailsService;
   let prisma: any;
-  let classification: { classifyAndPersist: jest.Mock; classify: jest.Mock };
+  let classification: { classifyAndPersist: jest.Mock; classify: jest.Mock; reclassifyThread: jest.Mock };
 
   const propuesta = {
     emailId: emailNoAccionable.id,
@@ -537,7 +537,10 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     };
     classification = {
       classifyAndPersist: jest.fn(),
-      classify: jest.fn().mockResolvedValue(propuesta),
+      classify: jest.fn(),
+      // G.2.4: «Revisar» sin borrador y «Volver a analizar» piensan el hilo
+      // entero, y el borrador lo guarda el servicio de clasificación.
+      reclassifyThread: jest.fn().mockResolvedValue(propuesta),
     };
 
     service = new EmailsService(
@@ -553,7 +556,7 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     prisma.email.findFirst.mockResolvedValue(null);
 
     await expect(service.classify(USER_ID, 'otro-id')).rejects.toThrow(NotFoundException);
-    expect(classification.classify).not.toHaveBeenCalled();
+    expect(classification.reclassifyThread).not.toHaveBeenCalled();
   });
 
   it('filtra por userId además de por id', async () => {
@@ -568,7 +571,7 @@ describe('EmailsService — POST /emails/:id/classify', () => {
     prisma.email.findFirst.mockResolvedValue(emailSinTexto);
 
     await expect(service.classify(USER_ID, emailSinTexto.id)).rejects.toThrow(ConflictException);
-    expect(classification.classify).not.toHaveBeenCalled();
+    expect(classification.reclassifyThread).not.toHaveBeenCalled();
   });
 
   it('no crea tareas ni comprueba duplicados', async () => {
@@ -604,7 +607,7 @@ describe('EmailsService — POST /emails/:id/classify', () => {
 
       const result = await service.classify(USER_ID, emailNoAccionable.id);
 
-      expect(classification.classify).not.toHaveBeenCalled();
+      expect(classification.reclassifyThread).not.toHaveBeenCalled();
       expect(result.tasks).toHaveLength(1);
       expect(result.category).toBe('FINANCE');
     });
@@ -630,12 +633,41 @@ describe('EmailsService — POST /emails/:id/classify', () => {
       expect(result.aiConfidence).toBe(0);
     });
 
+    it('G.2 (b): dos correos del hilo con borrador → enseña el del más reciente, no la suma', async () => {
+      // Antes `flatMap` sumaba los borradores de todos los correos del hilo: 16
+      // propuestas en un hilo de seis mensajes, repetidas y ya resueltas.
+      const viejo = {
+        ...conBorrador,
+        id: 'correo-viejo',
+        proposedTasks: [
+          { title: 'Pedir la notaría', aiConfidence: 0.8 },
+          { title: 'Pedir contacto de avalúo', aiConfidence: 0.8 },
+        ],
+      };
+      const nuevo = {
+        ...conBorrador,
+        id: 'correo-nuevo',
+        proposedTasks: [{ title: 'Enviar boleta de agua', aiConfidence: 0.7 }],
+      };
+      prisma.email.findFirst.mockResolvedValue(viejo);
+      // La consulta del hilo pide del más reciente al más antiguo.
+      prisma.email.findMany.mockResolvedValue([nuevo, viejo]);
+
+      const result = await service.classify(USER_ID, 'correo-viejo');
+
+      expect(result.tasks.map((t) => t.title)).toEqual(['Enviar boleta de agua']);
+      // Se aprueba sobre el correo que guarda el borrador, no sobre el pedido.
+      expect(result.emailId).toBe('correo-nuevo');
+      expect(result.aiConfidence).toBe(0.7);
+      expect(classification.reclassifyThread).not.toHaveBeenCalled();
+    });
+
     it('un borrador vacío también es caché: `[]` no vuelve a llamar al modelo', async () => {
       prisma.email.findFirst.mockResolvedValue({ ...conBorrador, proposedTasks: [] });
 
       await service.classify(USER_ID, emailNoAccionable.id);
 
-      expect(classification.classify).not.toHaveBeenCalled();
+      expect(classification.reclassifyThread).not.toHaveBeenCalled();
     });
 
     it('con force sí vuelve a preguntar, y reemplaza el borrador', async () => {
@@ -643,39 +675,29 @@ describe('EmailsService — POST /emails/:id/classify', () => {
 
       const result = await service.classify(USER_ID, emailNoAccionable.id, true);
 
-      expect(classification.classify).toHaveBeenCalled();
+      // Reemplazar el borrador —en el correo más reciente del hilo, vaciando
+      // los demás— lo hace `reclassifyThread`; sus pruebas están en
+      // `email-classification.service.spec.ts`.
+      expect(classification.reclassifyThread).toHaveBeenCalledWith(emailNoAccionable.id);
       expect(result.aiConfidence).toBe(0.9);
-      // Reemplazar es la mitad del trabajo: si el nuevo borrador no se guardara,
-      // el siguiente que abriera el correo seguiría viendo el viejo.
-      // Se compara contra la forma JSON, que es lo que de verdad se escribe:
-      // el borrador entra con `Date` y sale con cadena ISO.
-      expect(prisma.email.update.mock.calls[0][0].data.proposedTasks).toEqual([
-        expect.objectContaining({
-          title: 'Enviar cotización',
-          dueDate: '2026-08-01T00:00:00.000Z',
-        }),
-      ]);
     });
   });
 
-  it('guarda el borrador, pero no marca el correo como procesado', async () => {
+  it('el borrador lo guarda el servicio del hilo, no este: aquí no se escribe nada', async () => {
     await service.classify(USER_ID, emailNoAccionable.id);
 
-    const data = prisma.email.update.mock.calls[0][0].data;
-    expect(data.proposedTasks).toEqual([
-      expect.objectContaining({ title: 'Enviar cotización', dueDate: '2026-08-01T00:00:00.000Z' }),
-    ]);
-    // `processedAt` es del worker: si se marcara aquí, mirar un correo lo
-    // sacaría de la cola sin haberlo despachado nadie.
-    expect(data).not.toHaveProperty('processedAt');
+    // `reclassifyThread` guarda el borrador sin marcar el correo como
+    // procesado (probado en su spec). Si además se escribiera aquí, el borrador
+    // volvería al correo pedido y no al más reciente del hilo.
+    expect(classification.reclassifyThread).toHaveBeenCalledWith(emailNoAccionable.id);
+    expect(prisma.email.update).not.toHaveBeenCalled();
   });
 
   it('no fuerza isActionable: si el modelo no ve nada, se dice', async () => {
     await service.classify(USER_ID, emailNoAccionable.id);
 
-    expect(classification.classify).toHaveBeenCalledWith(emailNoAccionable.id, {
-      forceActionable: false,
-    });
+    // `reclassifyThread` analiza siempre sin forzar: no recibe la opción.
+    expect(classification.reclassifyThread).toHaveBeenCalledWith(emailNoAccionable.id);
   });
 
   // La cuarentena necesita triar sin abrir cada propuesta: `source` dice si la

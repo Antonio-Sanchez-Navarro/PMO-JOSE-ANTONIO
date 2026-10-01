@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, TaskPriority, TaskSource } from '@prisma/client';
+import { Email, Prisma, TaskPriority, TaskSource } from '@prisma/client';
 import { AiService } from './ai.service';
 import { adjustPriority } from './priority.rules';
 import { senderFromHeader, withContextPrefix } from './title.prefix';
@@ -12,16 +12,46 @@ import {
   MAX_BYTES_POR_ADJUNTO,
   repartirAdjuntos,
 } from './attachment-budget';
-import type { AdjuntoAusente, AdjuntoParaElModelo } from './ai.service';
+import type { AdjuntoAusente, AdjuntoParaElModelo, HiloParaElModelo } from './ai.service';
+import { quitarCitas } from './quitar-citas';
 
 /**
- * Cuántos mensajes anteriores del hilo entran como contexto, y cuánto texto
- * suman como mucho. Los dos topes existen porque fallan por motivos distintos:
- * un hilo de muchos mensajes cortos agota el primero, y uno de tres mensajes
- * con un informe pegado dentro agota el segundo.
+ * Cuánto texto **nuevo** del hilo entra como contexto (G.2.3).
+ *
+ * Es texto ya sin citas: antes el tope era de 12.000 caracteres sobre cuerpos
+ * que repetían el hilo entero, y se llenaba de repeticiones hasta perder lo más
+ * antiguo. El mensaje más reciente entra siempre entero; el resto se llena del
+ * más nuevo al más viejo y lo que no cabe se omite, avisando al modelo.
  */
-const HILO_MAX_MENSAJES = 10;
-const HILO_MAX_CARACTERES = 12_000;
+const HILO_MAX_CARACTERES_NUEVOS = 8_000;
+
+/**
+ * Dominios del equipo. Un mensaje que sale de aquí es nuestro: si responde o
+ * entrega algo, eso queda resuelto, y el modelo tiene que saberlo para no
+ * proponerlo otra vez.
+ */
+const DOMINIOS_DEL_EQUIPO = ['zepto.com.mx', 'zeptorealty.com'];
+
+/** El hilo de un correo tal como está en la base, en orden. */
+interface Hilo {
+  /** El correo por el que se pidió el análisis. */
+  objetivo: Email;
+  /** El más reciente del hilo: el que se analiza y el que guarda el borrador. */
+  ancla: Email;
+  /** Los demás, del más antiguo al más reciente, sin el ancla. */
+  anteriores: Email[];
+}
+
+export function esDelEquipo(from: string): boolean {
+  const correo = (/<([^>]+)>/.exec(from)?.[1] ?? from).trim().toLowerCase();
+  return DOMINIOS_DEL_EQUIPO.some((d) => correo.endsWith(`@${d}`));
+}
+
+/** «De: Nombre <correo> (nuestro equipo) · 2026-09-28 22:58 UTC». */
+function cabeceraDe(e: Pick<Email, 'from' | 'receivedAt'>): string {
+  const fecha = new Date(e.receivedAt).toISOString().slice(0, 16).replace('T', ' ');
+  return `De: ${e.from}${esDelEquipo(e.from) ? ' (nuestro equipo)' : ''} · ${fecha} UTC`;
+}
 
 /** Entre mensajes del hilo, para que el modelo vea dónde acaba cada uno. */
 const SEPARADOR_HILO = '\n---\n';
@@ -248,40 +278,33 @@ export class EmailClassificationService {
     emailId: string,
     options: { forceActionable: boolean },
   ): Promise<ClassificationDraft> {
-    const email = await this.prisma.email.findUniqueOrThrow({ where: { id: emailId } });
-    return this.analyze(email, options.forceActionable);
+    const hilo = await this.cargarHilo(emailId);
+    return this.analyze(hilo, options.forceActionable);
+  }
+
+  /**
+   * Vuelve a pensar el hilo entero y deja su borrador en el correo más
+   * reciente. Es «Volver a analizar» (`?force=true`).
+   *
+   * No marca nada como procesado ni toca `isActionable`/`category`: mirar no
+   * es despachar, igual que antes de G.2.
+   */
+  async reclassifyThread(emailId: string): Promise<ClassificationDraft> {
+    const hilo = await this.cargarHilo(emailId);
+    const draft = await this.analyze(hilo, false);
+    await this.guardarBorradorDelHilo(hilo, draft, false);
+    return draft;
   }
 
   async classifyAndPersist(emailId: string, options: ClassifyOptions): Promise<ClassifyResult> {
-    const email = await this.prisma.email.findUniqueOrThrow({ where: { id: emailId } });
-    const draft = await this.analyze(email, options.forceActionable);
+    const hilo = await this.cargarHilo(emailId);
+    const draft = await this.analyze(hilo, options.forceActionable);
     const { isActionable, category, aiConfidence, usedFallback, company, bank } = draft;
 
-    await this.prisma.$transaction(async (tx) => {
-      // Human-in-the-loop: la IA ya no crea filas en `Task`. La propuesta se
-      // guarda en el JSON `proposedTasks` del `Email` y **se reemplaza entera**
-      // en cada pasada, así que un reproceso no acumula ni duplica. Lo que hay
-      // en `Task` es lo que aprobó una persona, y eso no se toca desde aquí.
-      //
-      // ⚠️ Por eso `options.replaceExisting` ya no cambia nada: no queda nada
-      // que borrar. Sigue en la firma y `ai.processor.ts` lo pasa en `true`.
-      // Pendiente de decisión: retirarlo o devolverle significado.
-      await tx.email.update({
-        where: { id: email.id },
-        data: {
-          isActionable,
-          category,
-          // Se escriben **siempre**, tambien cuando son `null`. Dejar el valor
-          // viejo por no pisarlo con `null` convertiria un banco corregido en
-          // un banco pegado para siempre: la propuesta se reemplaza entera, y
-          // estos dos son parte de la propuesta.
-          company,
-          bank,
-          processedAt: new Date(),
-          proposedTasks: aJsonDeBorradores(draft.tasks),
-        },
-      });
-    });
+    // ⚠️ `options.replaceExisting` no cambia nada desde la Fase 6: la IA no
+    // crea filas en `Task`, así que no queda nada que borrar. Sigue en la firma
+    // y `ai.processor.ts` lo pasa en `true`.
+    await this.guardarBorradorDelHilo(hilo, draft, true);
 
     // Se devuelven los borradores, no filas: todavía no existen. Quien los
     // materialice lo hará al aprobarlos con `POST /emails/:id/to-task`.
@@ -297,100 +320,178 @@ export class EmailClassificationService {
   }
 
   /**
-   * El hilo citado que se le pasa al modelo, **acotado**.
+   * Guarda la propuesta **del hilo** en un solo sitio (G.2.4).
    *
-   * Sin techo, un hilo largo entra entero en cada clasificación: son tokens de
-   * entrada que se pagan en cada correo de la tanda, y el `max_tokens` del SDK
-   * solo acota la respuesta, no la petición. Un hilo de obra con cincuenta
-   * mensajes desbordaría la ventana y encarecería la cola entera sin que nada
-   * lo avisara — la cuenta aparecería después, en `pmo-coste-ia`.
-   *
-   * **Se piden del más nuevo al más viejo** y se le da la vuelta antes de armar
-   * el texto: así el recorte sacrifica lo más antiguo, que es lo menos
-   * relevante para el mensaje que se está analizando, y el modelo lo sigue
-   * leyendo en el orden en que ocurrió.
+   * Human-in-the-loop: la IA no crea filas en `Task`. Lo que hay en `Task` es lo
+   * que aprobó una persona, y **eso no se toca desde aquí, nunca**. La propuesta
+   * va al JSON `proposedTasks` del correo más reciente del hilo y se reemplaza
+   * entera; las de los demás correos **de este hilo** se vacían en la misma
+   * transacción. Antes cada correo guardaba la suya y «Revisar» las sumaba: 16
+   * propuestas en el hilo de seis mensajes del 30-09, muchas ya resueltas.
    */
-  private async buildThreadContext(email: {
-    id: string;
-    userId: string;
-    threadId: string;
-    receivedAt: Date;
-  }): Promise<string | undefined> {
-    const previos = await this.prisma.email.findMany({
-      where: {
-        userId: email.userId,
-        threadId: email.threadId,
-        // Solo hacia atrás: un mensaje posterior no es contexto de este.
-        receivedAt: { lt: email.receivedAt },
-      },
-      orderBy: { receivedAt: 'desc' },
-      take: HILO_MAX_MENSAJES,
-      select: { bodyText: true, snippet: true },
+  private async guardarBorradorDelHilo(
+    hilo: Hilo,
+    draft: ClassificationDraft,
+    marcarProcesado: boolean,
+  ): Promise<void> {
+    const { ancla, objetivo } = hilo;
+    const ahora = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.email.update({
+        where: { id: ancla.id },
+        data: {
+          ...(marcarProcesado
+            ? { isActionable: draft.isActionable, category: draft.category, processedAt: ahora }
+            : {}),
+          // Se escriben **siempre**, tambien cuando son `null`. Dejar el valor
+          // viejo por no pisarlo con `null` convertiria un banco corregido en
+          // un banco pegado para siempre: la propuesta se reemplaza entera, y
+          // estos dos son parte de la propuesta.
+          company: draft.company,
+          bank: draft.bank,
+          proposedTasks: aJsonDeBorradores(draft.tasks),
+        },
+      });
+
+      await tx.email.updateMany({
+        where: { userId: ancla.userId, threadId: ancla.threadId, id: { not: ancla.id } },
+        data: { proposedTasks: Prisma.JsonNull },
+      });
+
+      // El worker procesaba `objetivo`: queda despachado aunque el borrador
+      // haya ido a parar al más reciente.
+      if (marcarProcesado && objetivo.id !== ancla.id) {
+        await tx.email.update({ where: { id: objetivo.id }, data: { processedAt: ahora } });
+      }
     });
+  }
 
-    const textos = previos.map((e) => e.bodyText || e.snippet || '').filter(Boolean);
-    if (textos.length === 0) return undefined;
+  /** El correo pedido y el resto de su hilo, en orden. */
+  private async cargarHilo(emailId: string): Promise<Hilo> {
+    const objetivo = await this.prisma.email.findUniqueOrThrow({ where: { id: emailId } });
+    const otros: Email[] =
+      (await this.prisma.email.findMany({
+        where: { userId: objetivo.userId, threadId: objetivo.threadId, id: { not: objetivo.id } },
+        orderBy: { receivedAt: 'asc' },
+      })) ?? [];
 
-    let presupuesto = HILO_MAX_CARACTERES;
+    const todos = [...otros, objetivo].sort(
+      (a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime(),
+    );
+    const ancla = todos[todos.length - 1];
+    return { objetivo, ancla, anteriores: todos.slice(0, -1) };
+  }
+
+  /** Lo aprobado del hilo, con su estado y sus subtareas, para no proponerlo otra vez. */
+  private async tareasAprobadasDelHilo(userId: string, threadId: string): Promise<string[]> {
+    const tareas =
+      (await this.prisma.task.findMany({
+        where: { userId, sourceEmail: { threadId } },
+        select: {
+          title: true,
+          status: true,
+          subtasks: { select: { title: true, isCompleted: true }, orderBy: { order: 'asc' } },
+        },
+      })) ?? [];
+
+    return tareas.map(
+      (t) =>
+        `- ${t.title} [${t.status}]` +
+        (t.subtasks ?? [])
+          .map((st) => `\n  · ${st.title} (${st.isCompleted ? 'hecha' : 'pendiente'})`)
+          .join(''),
+    );
+  }
+
+  /**
+   * Lo que el modelo ve del hilo (G.2.3): cada mensaje con su autor y su fecha
+   * y **solo su texto nuevo**, en orden, más lo ya aprobado.
+   *
+   * ⚠️ **El mensaje más antiguo que hay en la base conserva sus citas.** Si el
+   * hilo empezó antes de etiquetarse PMO, los primeros mensajes no están en la
+   * base y lo único que queda de ellos es lo que cita el primero que sí está.
+   * Quitárselo sería perderlos.
+   *
+   * `undefined` si el hilo es un solo correo y no hay nada aprobado: entonces
+   * se analiza como siempre, con el cuerpo entero.
+   */
+  private async contextoDelHilo(
+    hilo: Hilo,
+  ): Promise<{ paraElModelo: HiloParaElModelo; textoUltimo: string } | undefined> {
+    const { ancla, anteriores } = hilo;
+    const aprobadas = await this.tareasAprobadasDelHilo(ancla.userId, ancla.threadId);
+    if (anteriores.length === 0 && aprobadas.length === 0) return undefined;
+
+    const textoDe = (e: Email, esElMasAntiguo: boolean) => {
+      const crudo = (e.bodyText || e.snippet || '').trim();
+      return esElMasAntiguo ? crudo : quitarCitas(crudo);
+    };
+
+    const textoUltimo = textoDe(ancla, anteriores.length === 0);
+    let presupuesto = HILO_MAX_CARACTERES_NUEVOS - textoUltimo.length;
+
+    // Del más nuevo al más viejo: lo que no cabe es lo más antiguo.
     const cabidos: string[] = [];
-    let recortado = false;
-
-    for (const texto of textos) {
-      if (presupuesto <= 0) {
-        recortado = true;
+    let omitidos = 0;
+    for (let i = anteriores.length - 1; i >= 0; i--) {
+      const texto = textoDe(anteriores[i], i === 0);
+      if (!texto) continue;
+      if (texto.length > presupuesto) {
+        omitidos = i + 1;
         break;
       }
-      if (texto.length > presupuesto) {
-        cabidos.push(texto.slice(0, presupuesto));
-        recortado = true;
-        presupuesto = 0;
-      } else {
-        cabidos.push(texto);
-        presupuesto -= texto.length;
-      }
+      cabidos.unshift(`${cabeceraDe(anteriores[i])}\n${texto}`);
+      presupuesto -= texto.length;
     }
 
-    if (recortado || previos.length === HILO_MAX_MENSAJES) {
-      // Que quede en el log: si un hilo se clasifica raro, lo primero que hay
-      // que saber es si el modelo vio el hilo entero o solo la cola.
+    if (omitidos > 0) {
       this.logger.log(
-        `Hilo del email ${email.id} recortado: ${cabidos.length} de ${previos.length} mensajes ` +
-          `(tope ${HILO_MAX_MENSAJES} mensajes / ${HILO_MAX_CARACTERES} caracteres)`,
+        `Hilo ${ancla.threadId}: ${omitidos} mensaje(s) antiguo(s) fuera del contexto ` +
+          `(tope ${HILO_MAX_CARACTERES_NUEVOS} caracteres de texto nuevo)`,
       );
     }
 
-    return cabidos.reverse().join(SEPARADOR_HILO);
+    // Si se omite algo, lo que salió de ello sigue a la vista: lo aprobado va
+    // siempre, y aquí se añade el borrador pendiente que tuviera el hilo.
+    const borradorAnterior =
+      omitidos > 0
+        ? ([ancla, ...[...anteriores].reverse()]
+            .map((e) => (Array.isArray(e.proposedTasks) ? e.proposedTasks : []))
+            .find((p) => p.length > 0) ?? [])
+            .map((p) => (p as { title?: unknown })?.title)
+            .filter((t): t is string => typeof t === 'string' && t.length > 0)
+            .map((t) => `- ${t}`)
+        : [];
+
+    return {
+      textoUltimo,
+      paraElModelo: {
+        mensajes: cabidos.join(SEPARADOR_HILO),
+        ultimo: cabeceraDe(ancla),
+        aprobadas,
+        omitidos,
+        borradorAnterior,
+      },
+    };
   }
 
   /**
    * Lo común a las dos vías: pedirle el análisis al modelo y dejarlo listo para
    * persistir, con la prioridad ya pasada por la capa determinista.
    */
-  private async analyze(
-    email: {
-      id: string;
-      userId: string;
-      subject: string | null;
-      snippet: string | null;
-      bodyText: string | null;
-      receivedAt: Date;
-      /** Cabecera `From` cruda: de ahí sale el remitente del prefijo. */
-      from: string;
-      hasAttachments: boolean;
-      threadId: string;
-      /** Hace falta para pedirle los adjuntos a Gmail: son ids por mensaje. */
-      gmailMessageId: string;
-      /** Fichas de los adjuntos. `null` en correos anteriores a la Fase 8. */
-      attachments: Prisma.JsonValue | null;
-    },
-    forceActionable: boolean,
-  ): Promise<ClassificationDraft> {
-    const textToAnalyze = email.bodyText || email.snippet || '';
-    if (!textToAnalyze) {
+  private async analyze(hilo: Hilo, forceActionable: boolean): Promise<ClassificationDraft> {
+    // Se analiza el hilo desde su correo más reciente: sus adjuntos son los
+    // únicos que viajan, su fecha ancla las fechas relativas y en él se guarda
+    // el borrador.
+    const email = hilo.ancla;
+    const cuerpo = email.bodyText || email.snippet || '';
+    if (!cuerpo) {
       throw new Error(`El email ${email.id} no tiene texto para analizar.`);
     }
 
-    const threadContext = await this.buildThreadContext(email);
+    const delHilo = await this.contextoDelHilo(hilo);
+    const textToAnalyze = delHilo?.textoUltimo || cuerpo;
 
     // Solo se baja nada si el correo trae fichas. Un correo sin adjuntos no
     // gasta ni una llamada a Gmail, que es el caso mayoritario.
@@ -427,7 +528,7 @@ export class EmailClassificationService {
       email.receivedAt,
       {
         hasAttachments: email.hasAttachments,
-        threadContext,
+        hilo: delHilo?.paraElModelo,
         adjuntos,
         ausentes,
         traza: { emailId: email.id, threadId: email.threadId },
@@ -440,8 +541,12 @@ export class EmailClassificationService {
     // el 2026-07-28): es un dato duro y el modelo tendía a elegir a la persona
     // de la que hablaba el cuerpo. Solo si la cabecera no da nada aprovechable
     // se recurre a lo que dijera él, que es mejor que quedarse sin contexto.
+    // En un hilo, el remitente del prefijo es el último que no es del equipo:
+    // si el más reciente es una respuesta nuestra, «Zepto Main» no dice nada.
+    const remitente =
+      [email, ...[...hilo.anteriores].reverse()].find((e) => !esDelEquipo(e.from))?.from ?? email.from;
     const contexto = {
-      senderName: senderFromHeader(email.from) ?? analysis.senderName,
+      senderName: senderFromHeader(remitente) ?? analysis.senderName,
       project: analysis.project,
     };
 
