@@ -235,6 +235,14 @@ segunda mina (`.env.production` → `api.pmo-app.com`), que solo paró una revis
 
 **Decisión final (2026-09-30, el Jefe):** la app se queda en **`app.pmo-app.com`** (ya sirve el tablero con certificado); la raíz no es nuestra y el cambio del 25-09 queda anulado. Encargo D a @Claude: `WEB_URL` → `app.`, `WEB_URL_EXTRA` → web.app, con guardarraíl de CORS antes. Corrección mía del 29-09: dije que la API no admitía `app.`; sí lo admitía desde el 27-09 (lo midió @Alana).
 
+**Pedido del Jefe (2026-10-01), registrado aquí porque no estaba en ningún plan:** tarjetas del tablero **estilo Monday** (ficha resumen; subtareas al abrir). Encargado a @Gravity. Mismo día: el Jefe **deja de usar el tablero** hasta corregir ALANA §88 (IA que no entiende el hilo, tarjetas largas y cronómetro). Reparto: E (cronómetro) y F (diagnóstico y propuesta de IA por hilo, con coste, **decide el Jefe**) para @Claude; después, B.3.
+
+**Nota de historia (2026-10-01):** `bc5c688` lleva el mensaje «ficha resumen en tarjeta…» de @Gravity, pero su contenido es el cronómetro de @Claude (E). Alguien hizo `--amend` en el árbol compartido antes del push. La tarjeta real de @Gravity es `3419707`. No se reescribe: está en `master` y publicado. **Lección:** dos agentes en el mismo árbol e índice; nadie usa `--amend` sobre un commit que no ha hecho él en esa misma vuelta.
+
+**Decisión del Jefe (2026-10-01, ~19:00 UTC):** «sí» a F (la IA clasifica **por hilo**, sin citas, con autor y fecha, y propone solo lo abierto hoy) y a B.3 ya. Encargo G a @Claude: B.3 → F en pasos, con registro de tokens primero y una sola prueba real (hilo de Sofía Mayén).
+
+**Cerrados por prueba del Jefe (2026-10-01, «todo en orden»):** D (login por `app.` y por web.app termina en `app.pmo-app.com`), E (cronómetro sin recargar) y las tarjetas estilo Monday de @Gravity. Queda la auditoría de @Alana.
+
 **C12 con «Do not allow bypassing»:** los agentes empujan directo a `master` con la
 cuenta del Jefe, que es admin. Exigir el CI sin excepción para admins **rechaza todo
 empujón directo** y obliga a trabajar por rama + PR. Es un cambio de forma de trabajar,
