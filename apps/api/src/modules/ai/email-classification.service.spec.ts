@@ -60,6 +60,8 @@ describe('EmailClassificationService', () => {
     threadContext: undefined,
     adjuntos: [],
     ausentes: [],
+    // G.2.1: el correo y el hilo viajan para el log de uso por llamada.
+    traza: expect.objectContaining({ emailId: expect.any(String), threadId: expect.any(String) }),
   };
 
   beforeEach(() => {

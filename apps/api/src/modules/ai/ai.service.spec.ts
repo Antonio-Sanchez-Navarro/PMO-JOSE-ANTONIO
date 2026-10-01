@@ -52,6 +52,56 @@ describe('AiService', () => {
     expect(() => new AiService(config, costesDeMentira())).toThrow(/ANTHROPIC_API_KEY/);
   });
 
+  /**
+   * G.2.1 · Una línea de uso por llamada, con el correo, el hilo, los tokens y
+   * el coste. `aiUsage` solo guarda el total del día: sin esta línea no se
+   * puede decir cuánto costó un hilo.
+   */
+  describe('registro de uso por llamada', () => {
+    const salidaMinima = {
+      isActionable: false,
+      category: 'OTHER',
+      aiConfidence: 0.5,
+      tasks: [],
+      senderName: null,
+      project: null,
+      company: null,
+      bank: null,
+    };
+
+    it('deja en el log tokens de entrada y salida, coste en USD, correo e hilo', async () => {
+      create.mockResolvedValue({
+        ...comoRespuestaDeHerramienta(salidaMinima),
+        model: 'claude-sonnet-5',
+        usage: { input_tokens: 3000, output_tokens: 500 },
+      });
+      const log = jest.spyOn((service as unknown as { logger: { log: (m: string) => void } }).logger, 'log');
+
+      await service.analyzeEmail('Asunto', 'Cuerpo', new Date('2026-10-01T12:00:00Z'), {
+        traza: { emailId: 'correo-1', threadId: 'hilo-1' },
+      });
+
+      // Sonnet 5 a $3/$15 por millón desde el 31-08: 3000×3 + 500×15 = 0,0165.
+      const linea = log.mock.calls.map((c) => String(c[0])).find((m) => m.startsWith('Uso IA'));
+      expect(linea).toBe(
+        'Uso IA · correo=correo-1 hilo=hilo-1 · entrada=3000 salida=500 · $0.0165 · claude-sonnet-5',
+      );
+    });
+
+    it('sin traza no falla: pone guiones', async () => {
+      create.mockResolvedValue({
+        ...comoRespuestaDeHerramienta(salidaMinima),
+        usage: { input_tokens: 10, output_tokens: 1 },
+      });
+      const log = jest.spyOn((service as unknown as { logger: { log: (m: string) => void } }).logger, 'log');
+
+      await analizar(service);
+
+      const linea = log.mock.calls.map((c) => String(c[0])).find((m) => m.startsWith('Uso IA'));
+      expect(linea).toMatch(/^Uso IA · correo=- hilo=- · entrada=10 salida=1 · \$\d+\.\d{4} · /);
+    });
+  });
+
 
   /**
    * Fase 8 · banco y empresa.

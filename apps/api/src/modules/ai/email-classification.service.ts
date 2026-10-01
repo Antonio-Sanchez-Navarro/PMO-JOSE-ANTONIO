@@ -425,7 +425,13 @@ export class EmailClassificationService {
       email.subject || '(Sin Asunto)',
       textToAnalyze,
       email.receivedAt,
-      { hasAttachments: email.hasAttachments, threadContext, adjuntos, ausentes }
+      {
+        hasAttachments: email.hasAttachments,
+        threadContext,
+        adjuntos,
+        ausentes,
+        traza: { emailId: email.id, threadId: email.threadId },
+      },
     );
 
     const isActionable = analysis.isActionable || forceActionable;

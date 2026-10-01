@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiCostService } from '../../common/costs/ai-cost.service';
+import { costeEnUsd } from '../../common/costs/precios-modelo';
 import Anthropic from '@anthropic-ai/sdk';
 import { TaskPriority } from '@prisma/client';
 import {
@@ -276,6 +277,8 @@ export class AiService {
       adjuntos?: AdjuntoParaElModelo[];
       /** Adjuntos que existen pero no viajan, con el motivo. */
       ausentes?: AdjuntoAusente[];
+      /** A qué correo e hilo se le cobra la llamada, para el log de uso. */
+      traza?: { emailId?: string; threadId?: string };
     },
   ): Promise<EmailAnalysisResult> {
     const fecha = receivedAt.toISOString().slice(0, 10);
@@ -399,10 +402,18 @@ export class AiService {
     //
     // No se espera al `await`... si se espera, pero el metodo no lanza nunca:
     // el contador no puede tumbar el trabajo que esta midiendo.
-    await this.costes.registrar(
-      response.model ?? this.model,
-      response.usage?.input_tokens ?? 0,
-      response.usage?.output_tokens ?? 0,
+    const modelo = response.model ?? this.model;
+    const entrada = response.usage?.input_tokens ?? 0;
+    const salida = response.usage?.output_tokens ?? 0;
+    await this.costes.registrar(modelo, entrada, salida);
+
+    // Una línea por llamada, con el correo y el hilo: `aiUsage` solo guarda el
+    // total del día, y sin esto no hay forma de decir cuánto costó un hilo ni de
+    // comprobar si un cambio de prompt abarata o encarece.
+    const traza = options?.traza;
+    this.logger.log(
+      `Uso IA · correo=${traza?.emailId ?? '-'} hilo=${traza?.threadId ?? '-'} · ` +
+        `entrada=${entrada} salida=${salida} · $${costeEnUsd(modelo, entrada, salida).toFixed(4)} · ${modelo}`,
     );
 
     if (response.stop_reason === 'refusal') {

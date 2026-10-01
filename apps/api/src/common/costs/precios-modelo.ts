@@ -162,3 +162,14 @@ export function subidaCercana(
 
   return subidas;
 }
+
+/**
+ * Lo que cuesta una llamada, en USD, con el precio vigente en `cuando`.
+ *
+ * Es la misma cuenta que hace `AiCostService` con el total del día, pero para
+ * una sola llamada: la usa el log de uso por correo.
+ */
+export function costeEnUsd(model: string, entrada: number, salida: number, cuando: Date = new Date()): number {
+  const precio = precioDe(model, cuando);
+  return (entrada / 1_000_000) * precio.entrada + (salida / 1_000_000) * precio.salida;
+}
