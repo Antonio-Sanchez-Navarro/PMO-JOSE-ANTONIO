@@ -1,4 +1,23 @@
-import { BANCOS, EMPRESAS } from "@pmo/shared";
+import { BANCOS, EMPRESAS, TIPOS_BANCO, TIPO_BANCO, type TipoBanco } from "@pmo/shared";
+
+/** Rótulo corto de cada tipo para la fila de bancos; el nombre largo va en el `title`. */
+const ROTULO_TIPO: Record<TipoBanco, string> = {
+  "Banco tradicional": "Tradicional",
+  "Banco digital con tarjeta de crédito": "Digital TDC",
+  Financiera: "Financiera",
+};
+
+/**
+ * Los bancos agrupados por tipo, en el orden de `TIPOS_BANCO` y, dentro de cada
+ * grupo, en el de `BANCOS`. Sale de `TIPO_BANCO`: un banco nuevo cae solo en su
+ * grupo, y un tipo sin bancos no pinta un rótulo vacío.
+ */
+export function bancosPorTipo(): { tipo: TipoBanco; bancos: string[] }[] {
+  return TIPOS_BANCO.map((tipo) => ({
+    tipo,
+    bancos: BANCOS.filter((banco) => TIPO_BANCO[banco] === tipo),
+  })).filter((grupo) => grupo.bancos.length > 0);
+}
 
 /**
  * Por qué lado está cortada la bandeja.
@@ -28,6 +47,8 @@ export function mismoAmbito(a: Ambito, b: Ambito): boolean {
  * «Bancos» abre una segunda fila con uno por banco porque el filtro del
  * servidor es `?bank=<uno>` y no existe un «cualquier banco»: una pestaña que
  * prometiera todos y enseñara uno mentiría, así que se enseña cuál está puesto.
+ * La fila va partida por tipo de banco (`TIPO_BANCO`), con un rótulo pequeño
+ * por grupo: con nueve bancos, una fila sin agrupar no se lee.
  */
 export function ScopeTabs({
   ambito,
@@ -70,20 +91,35 @@ export function ScopeTabs({
       </div>
 
       {ambito.tipo === "banco" && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50 px-6 py-2.5">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-slate-100 bg-slate-50 px-6 py-2.5">
           <span className="mr-1 text-xs uppercase tracking-wide text-slate-400">Banco</span>
-          {BANCOS.map((banco) => (
-            <button
-              key={banco}
-              onClick={() => onChange({ tipo: "banco", valor: banco })}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                ambito.valor === banco
-                  ? "bg-indigo-600 text-white"
-                  : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
-              }`}
+          {bancosPorTipo().map((grupo) => (
+            <div
+              key={grupo.tipo}
+              role="group"
+              aria-label={grupo.tipo}
+              className="flex flex-wrap items-center gap-2"
             >
-              {banco}
-            </button>
+              <span
+                className="text-[11px] font-medium italic text-slate-500"
+                title={grupo.tipo}
+              >
+                {ROTULO_TIPO[grupo.tipo]}
+              </span>
+              {grupo.bancos.map((banco) => (
+                <button
+                  key={banco}
+                  onClick={() => onChange({ tipo: "banco", valor: banco })}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                    ambito.valor === banco
+                      ? "bg-indigo-600 text-white"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  {banco}
+                </button>
+              ))}
+            </div>
           ))}
         </div>
       )}

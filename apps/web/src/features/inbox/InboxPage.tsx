@@ -12,7 +12,7 @@ import {
 import type { EmailSnippet, InboxThread } from "./types";
 import { AiValidationModal } from "../kanban/components/AiValidationModal";
 import { classifyEmail, createTasksFromEmail } from "../kanban/api/tasks.api";
-import { EmailClassification } from "@pmo/shared";
+import { EmailClassification, TIPO_BANCO, type Banco } from "@pmo/shared";
 import { Toaster, toast } from 'sonner';
 import { EmailDetailModal } from "./components/EmailDetailModal";
 import { updateEmailStatus } from "../kanban/api/tasks.api";
@@ -639,7 +639,10 @@ function EmailRow({
               </span>
             )}
             {email.bank && (
-              <span className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800">
+              <span
+                className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800"
+                title={TIPO_BANCO[email.bank as Banco]}
+              >
                 {email.bank}
               </span>
             )}
