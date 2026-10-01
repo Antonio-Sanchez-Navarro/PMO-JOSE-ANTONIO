@@ -50,8 +50,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, onSubmit,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl dark:bg-slate-800 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className={`w-full p-6 bg-white rounded-lg shadow-xl dark:bg-slate-800 max-h-[90vh] overflow-y-auto ${task ? 'max-w-2xl' : 'max-w-md'}`}>
         <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-white">
           {task ? 'Detalle de Tarea' : 'Nueva Tarea'}
         </h2>
@@ -111,7 +111,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, onSubmit,
           {task && task.subtasks && task.subtasks.length > 0 && (
             <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
               <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Subtareas</h3>
-              <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
+              <div className="flex flex-col gap-2 max-h-96 overflow-y-auto pr-1">
                 {task.subtasks.map((sub) => (
                   <label 
                     key={sub.id} 
