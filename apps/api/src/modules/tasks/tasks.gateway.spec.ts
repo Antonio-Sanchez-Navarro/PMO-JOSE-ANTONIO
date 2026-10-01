@@ -149,6 +149,19 @@ describe('TasksGateway — handshake y salas', () => {
     expect(session.verifyAccess).not.toHaveBeenCalled();
   });
 
+  it('sin la de sesión pero con la de refresco: SESION_CADUCADA, no al login (ALANA §87.1)', async () => {
+    // La cookie de acceso vive 15 minutos y el navegador la borra al vencer. Un
+    // socket que reconecta después —un despliegue, una instancia nueva— llega
+    // sin ella, pero con la de refresco: la sesión está caducada, no es
+    // inválida. Con SESION_INVALIDA el cliente recargaba en /login.
+    const err = (await pasarPorElMiddleware(socketCon('pmo_refresh=un-refresco'))) as {
+      data?: { codigo?: string };
+    };
+
+    expect(err.data?.codigo).toBe('SESION_CADUCADA');
+    expect(session.verifyAccess).not.toHaveBeenCalled();
+  });
+
   it('token caducado: SESION_CADUCADA, que es la que NO manda al usuario al login', async () => {
     session.verifyAccess.mockRejectedValue(
       new SesionRechazadaError(CODIGO_SESION.caducada, 'Sesión inválida o expirada'),

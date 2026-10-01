@@ -11,7 +11,7 @@ import { EmailStatus, Task, TaskStatus } from '@prisma/client';
 import { SesionRechazadaError, SessionService } from '../auth/session.service';
 import { CODIGO_SESION, SESSION_EVENTS } from '@pmo/shared';
 import cookie from 'cookie';
-import { SESSION_COOKIE } from '../auth/auth.constants';
+import { REFRESH_COOKIE, SESSION_COOKIE } from '../auth/auth.constants';
 import { describirError, stackDe } from '../../common/observability/describir-error';
 import { origenesCors } from '../../common/security/origenes-cors';
 
@@ -198,9 +198,18 @@ export class TasksGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
       throw new SesionRechazadaError(CODIGO_SESION.invalida, 'Sin cookies');
     }
 
-    const token = cookie.parse(rawCookie)[SESSION_COOKIE];
+    const cookies = cookie.parse(rawCookie);
+    const token = cookies[SESSION_COOKIE];
     if (!token) {
-      throw new SesionRechazadaError(CODIGO_SESION.invalida, 'Sin token de sesión');
+      // La cookie de acceso caduca a los 15 minutos y el navegador la borra.
+      // Si aún está la de refresco, la sesión está caducada, no es inválida:
+      // el cliente renueva y reconecta sin que nadie lo note. Con `invalida`
+      // recargaba la pestaña en /login tras cada despliegue (ALANA §87.1).
+      // Si la de refresco tampoco vale, lo dirá `/auth/refresh`.
+      throw new SesionRechazadaError(
+        cookies[REFRESH_COOKIE] ? CODIGO_SESION.caducada : CODIGO_SESION.invalida,
+        'Sin token de sesión',
+      );
     }
 
     // `verifyAccess` y no `verify...` a secas: comprueba también el claim `typ`,
