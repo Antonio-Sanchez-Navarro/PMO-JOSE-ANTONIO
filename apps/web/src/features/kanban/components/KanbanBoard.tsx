@@ -21,6 +21,7 @@ import { Obra } from '@pmo/shared';
 import { fetchTasks, moveTask, createTask, deleteTask, FetchTasksFilters, updateEmailStatus, toggleSubtask } from '../api/tasks.api';
 import { fetchObras } from '../api/obras.api';
 import { startTimer, stopTimer, getActiveTimeEntry } from '../api/time.api';
+import { conCronometroEnMarcha, conCronometroParado } from '../utils/cronometro';
 import { TaskModal } from './TaskModal';
 import { TagManagerModal } from './TagManagerModal';
 import { TimeEntriesModal } from './TimeEntriesModal';
@@ -137,26 +138,13 @@ export const KanbanBoard: React.FC = () => {
         return updatedTasks;
       });
     },
+    // Por el socket el cierre del cronómetro anterior llega como su propio
+    // `time:stopped`, así que aquí no se cierra nada más.
     onTimeStarted: (timer) => {
-      setTasks((prev) => prev.map((t) => {
-        if (t.id === timer.taskId) {
-          return { ...t, activeTimeStartedAt: timer.startedAt, activeTimeEntryId: timer.id };
-        }
-        return t;
-      }));
+      setTasks((prev) => conCronometroEnMarcha(prev, timer));
     },
     onTimeStopped: (timer) => {
-      setTasks((prev) => prev.map((t) => {
-        if (t.id === timer.taskId) {
-          return {
-            ...t,
-            activeTimeEntryId: null,
-            activeTimeStartedAt: null,
-            totalTimeSec: (t.totalTimeSec || 0) + (timer.durationSec || 0)
-          };
-        }
-        return t;
-      }));
+      setTasks((prev) => conCronometroParado(prev, timer));
     }
   });
 
@@ -362,7 +350,10 @@ export const KanbanBoard: React.FC = () => {
 
   const handleStartTimer = async (id: string) => {
     try {
-      await startTimer(id);
+      // El servidor no le manda el evento a esta pestaña (`X-Socket-Id`): lo que
+      // se pinta sale de la respuesta. Si el POST falla, el estado no cambia.
+      const entry = await startTimer(id);
+      setTasks((prev) => conCronometroEnMarcha(prev, entry, true));
       toast.success('Cronómetro iniciado');
     } catch (error) {
       const err = error as Error;
@@ -372,7 +363,8 @@ export const KanbanBoard: React.FC = () => {
 
   const handleStopTimer = async (id: string) => {
     try {
-      await stopTimer(id);
+      const entry = await stopTimer(id);
+      setTasks((prev) => conCronometroParado(prev, entry));
       toast.success('Cronómetro detenido');
     } catch (error) {
       const err = error as Error;
