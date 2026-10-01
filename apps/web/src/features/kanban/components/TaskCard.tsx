@@ -4,6 +4,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Task, TaskPriority, TaskSource } from '../types';
 import { AiAuditBadge } from './AiAuditBadge';
 import { useCopilot } from '../../copilot/CopilotContext';
+import { TaskModal } from './TaskModal';
 
 interface TaskCardProps {
   task: Task;
@@ -100,6 +101,7 @@ const TaskTimer: React.FC<{
 export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail, onReturnToInbox, onStartTimer, onStopTimer, onManageTime, onToggleSubtask }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task.id });
   const { openCopilotWithContext } = useCopilot();
+  const [isDetailOpen, setIsDetailOpen] = React.useState(false);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -116,6 +118,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
       style={style}
       {...attributes}
       {...listeners}
+      onClick={() => setIsDetailOpen(true)}
       className="bg-white p-4 rounded-md shadow-sm border border-gray-200 mb-2 cursor-grab flex flex-col group"
     >
       <div className="flex justify-between items-start mb-2 gap-2">
@@ -177,31 +180,6 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
               className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300"
               style={{ width: `${(task.subtasks.filter(s => s.isCompleted).length / task.subtasks.length) * 100}%` }}
             />
-          </div>
-          <div className="flex flex-col gap-1 mt-2">
-            {task.subtasks.map((sub) => (
-              <label 
-                key={sub.id} 
-                className={`flex items-start gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-100 transition-colors ${
-                  sub.isCompleted ? 'opacity-60' : ''
-                }`}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                  checked={sub.isCompleted}
-                  onChange={(e) => {
-                    onToggleSubtask?.(task.id, sub.id, e.target.checked);
-                  }}
-                />
-                <span className={`text-[11px] leading-tight flex-1 ${
-                  sub.isCompleted ? 'line-through text-slate-400' : 'text-slate-700'
-                }`}>
-                  {sub.title}
-                </span>
-              </label>
-            ))}
           </div>
         </div>
       )}
@@ -330,6 +308,13 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
           🕒
         </button>
       </div>
+
+      <TaskModal 
+        isOpen={isDetailOpen}
+        onClose={() => setIsDetailOpen(false)}
+        task={task}
+        onToggleSubtask={onToggleSubtask}
+      />
     </div>
   );
 };
