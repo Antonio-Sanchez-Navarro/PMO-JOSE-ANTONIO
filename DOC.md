@@ -192,6 +192,75 @@ haga falta, pero no se tira un correo.
 **Eso convierte el estrangulador de la Fase 8.1 en la única salida**, y es la
 razón de que su encargo no sea opcional ni cosmético: sin él, el atasco no drena.
 
+### 🌐 Dominio propio `pmo-app.com` — estructura (2026-09-23)
+
+El Jefe compró `pmo-app.com` para quitar la cookie de terceros (Safari). Estructura
+decidida por Doc a petición suya:
+
+| Dirección | Qué sirve | Quién |
+| --- | --- | --- |
+| `pmo-app.com` | Página de bienvenida | **La hace el Jefe** |
+| `app.pmo-app.com` | La aplicación (Firebase Hosting) | @Gravity |
+| `api.pmo-app.com` | La API (Cloud Run, *domain mapping*, **sin** pasar por el CDN) | @Claude |
+
+**Orden no negociable:** DNS y certificados → OAuth (`GOOGLE_REDIRECT_URI`, orígenes)
+y variables (`WEB_URL`, `VITE_API_URL`, CORS) → frontend publicado → login probado
+en Chrome **y Safari** → **solo entonces** la cookie a `Lax`.
+
+**Por qué el orden:** `534eb4e` puso `Lax` primero, con el dominio sin DNS. No llegó a
+producción solo porque el CI estaba rojo por otro motivo; desplegado, habría echado a
+todos del login. Encargo de retirada escrito a @Claude el 2026-09-23.
+
+**Cerrado el 2026-09-24, verificado por Doc en vivo:** `58ce2cd` (cookie `None` + lint)
+en `pmo-api-00142-6lp`; frontend publicado a las 16:44 UTC con `version.json` →
+`58ce2cd` y el bundle apuntando a `run.app`. **El tiempo real vuelve:** WebSocket en
+`101` y `Cliente conectado y unido a sala` a las 16:44 y 16:45 UTC — el primero desde
+el 20-09. Segunda mina desactivada antes de construir: `apps/web/.env.production`
+(local) apuntaba a `api.pmo-app.com`.
+
+**Cambio de estructura (2026-09-25, decisión del Jefe):** la guía de Antigravity
+puso la app en la **raíz** y borró la web de GoDaddy; el Jefe dice que esa web no
+importa. **La app queda en `pmo-app.com`** (no en `app.`) y la API en `api.pmo-app.com`.
+La bienvenida, si llega, irá en otra ruta o subdominio. Esa guía, ejecutada a las 16:32
+UTC, **borró la URI OAuth de `run.app`** (login roto: `redirect_uri_mismatch`) y cambió
+`WEB_URL`/`GOOGLE_REDIRECT_URI` en GitHub antes de tiempo. Se devuelven ambas.
+
+**Corrección mía (2026-09-25):** escribí que `534eb4e` no llegó a producción «por
+accidente». **No es exacto.** `deploy.yml` solo despliega la API si el CI de ese commit
+sale en verde (`workflow_run` + `conclusion == 'success'`, líneas 17-18 y 89), y el CI
+de `534eb4e` habría caído igual en las pruebas (`session.service.spec.ts`, 2 fallos),
+no solo en el lint ajeno. **El cierre de la API funcionó por diseño.** El agujero real
+es el **frontend**: se publica a mano desde el portátil, sin CI delante, y ahí estaba la
+segunda mina (`.env.production` → `api.pmo-app.com`), que solo paró una revisión humana.
+
+**Decisión final (2026-09-30, el Jefe):** la app se queda en **`app.pmo-app.com`** (ya sirve el tablero con certificado); la raíz no es nuestra y el cambio del 25-09 queda anulado. Encargo D a @Claude: `WEB_URL` → `app.`, `WEB_URL_EXTRA` → web.app, con guardarraíl de CORS antes. Corrección mía del 29-09: dije que la API no admitía `app.`; sí lo admitía desde el 27-09 (lo midió @Alana).
+
+**C12 con «Do not allow bypassing»:** los agentes empujan directo a `master` con la
+cuenta del Jefe, que es admin. Exigir el CI sin excepción para admins **rechaza todo
+empujón directo** y obliga a trabajar por rama + PR. Es un cambio de forma de trabajar,
+no una casilla; lo decide el Jefe. Recomendación de Doc: primero el pipeline de
+Firebase detrás del CI (cierra el agujero real), y C12 estricto después si se quiere.
+
+**Plan de migración (2026-09-24).** Registrador: **GoDaddy** (DNS en `domaincontrol.com`).
+La raíz `pmo-app.com` no se toca: hoy es el aparcamiento de GoDaddy y será la
+bienvenida del Jefe.
+
+1. **Jefe — DNS y certificados, sin tocar producción:** verificar el dominio en Search
+   Console; *domain mapping* de Cloud Run `api.pmo-app.com` → `pmo-api` (desde la
+   consola: el componente `beta` de `gcloud` no está instalado y no hay permiso para
+   instalarlo); dominio personalizado `app.pmo-app.com` en Firebase Hosting. Registros
+   en GoDaddy. Hecho cuando `https://api.pmo-app.com/health` da 200 y
+   `https://app.pmo-app.com` carga el tablero.
+2. **@Claude — CORS con dos orígenes.** Hoy `main.ts:74` y `tasks.gateway.ts:148`
+   aceptan **un solo** origen (`WEB_URL`). Cambiar `WEB_URL` a `app.` cortaría `web.app`
+   en el acto. Hace falta aceptar los dos durante la transición.
+3. **Jefe — OAuth:** añadir `https://api.pmo-app.com/api/auth/google/callback` como URI
+   de redirección **sin quitar** la de `run.app`.
+4. **Variables:** `GOOGLE_REDIRECT_URI` y `WEB_URL` al dominio nuevo; `.env.production`
+   a `https://api.pmo-app.com/api`; publicar frontend.
+5. Login probado en Chrome **y Safari** en `app.pmo-app.com`.
+6. **Último:** cookie a `Lax`. Retirar `web.app` y la URI de `run.app` más tarde.
+
 ### Decisión — la zona horaria es `America/Cancun` (2026-08-22)
 
 §44.2 de @Alana. `time-zone.ts:24` fija **`America/Mexico_City` (UTC−6)** y lo
