@@ -2046,3 +2046,153 @@ Además, la clave `caducidad-anthropic` **nunca llegó a grabarse**: a las 15:15
 `coste-ia-0.9`, así que tampoco hay freno que la bloquee. El paso a paso está en el buzón.
 
 **No he cerrado nada y no he reparado nada.**
+
+---
+
+## 83. Despertar del 2026-09-25 (14:55 UTC)
+
+Desde §82 entraron `534eb4e`, `58ce2cd` y `c9b3b08`. `gcloud` **ha vuelto a caducar**,
+así que el estado de Cloud Run lo leo de los registros de GitHub, y los logs de la API
+no los he podido ver.
+
+### 83.1 ✅ Lo que se cerró
+
+| | |
+|---|---|
+| Lint de `ai-cost.service.ts:266` | ✅ `58ce2cd`: `msg` pasa a `const` con ternario. CI verde |
+| Aviso de caducidad con su propio freno | ✅ Está en producción: `pmo-api-00143-cgl` (24-09 18:48 UTC), con `PRESUPUESTO_IA_USD=75` y `EXPIRY=2026-11-01` en el despliegue. `c9b3b08` añade la prueba que falla si se vuelven a juntar. **Cierra §80.4 y §82.2** |
+| Frontend publicado | ✅ `version.json` → `commit: 58ce2cd…`, construido el 24-09 16:40. **El `desconocido` se acabó** y la sombra de `vite.config.js` (§80.1) no ha mordido |
+| Socket.IO directo a Cloud Run | ✅ El handshake con `Origin: …web.app` devuelve `allow-origin` y `allow-credentials: true` |
+
+### 83.2 ⚠️ Lo que casi pasa: `534eb4e` iba a echar a todo el mundo del tablero
+
+«migrate to custom domain pmo-app.com» puso la cookie de sesión en **`lax`** y escribió
+en el comentario «Resolvimos este problema… configurando un dominio propio». **Ese
+dominio no sirve la API**: `api.pmo-app.com` no existe en DNS, y `pmo-app.com` es la web
+de **Zepto en GoDaddy**. Con `lax`, el navegador no manda la cookie de `web.app` a
+`run.app`, y **todas las rutas darían 401 justo después del login**.
+
+**No llegó a producción por suerte, no por diseño**: el CI de `534eb4e` salió **rojo**
+por el lint heredado de `1f07736`, y el despliegue se saltó. Una hora y media después,
+`58ce2cd` lo deshizo, **y con un comentario honesto** (`session.service.ts:87-96`: «está
+planificada, no hecha… pasar esto a `lax` es el **último** paso»). Bien corregido.
+
+**La lección no es el error, es lo que lo paró.** Lo paró un lint que nada tenía que ver.
+Con C12 vacío (83.3), si ese lint no hubiera estado roto, **el `lax` se habría
+desplegado**. Es el mismo tipo de afirmación de §76 y §80 —«resuelto» escrito sobre algo
+que no existe—, pero esta vez **en un comentario de código** que decide el comportamiento.
+
+### 83.3 🔴 C12 sigue deshecho
+
+`required_status_checks`: `contexts: []`, `checks: []`, `enforce_admins: false`. **Sin
+cambios desde §82.3.** Hoy no hace daño porque `master` está en verde, pero 83.2 es la
+prueba de lo que cuesta: entre el 23-09 18:33 y 19:04 UTC, `master` tuvo un commit que
+rompía el login, y lo único que lo paraba era un error ajeno.
+
+### 83.4 🟠 Las cabeceras de seguridad se perdieron con Vercel, y nadie las ha puesto en Firebase
+
+`534eb4e` **borró `vercel.json`**, y con él las únicas cabeceras de seguridad del
+frontend: `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
+`X-Content-Type-Options: nosniff` y `Referrer-Policy`. `firebase.json` **no tiene
+bloque `headers`**, y la respuesta del tablero lo confirma: **ninguna de las cuatro
+sale**. En realidad faltan **desde la mudanza del 18-09**; el borrado solo quita el
+último rastro de que existían.
+
+**Qué supone:** el tablero —que aprueba propuestas y crea tareas con un clic— **se puede
+incrustar en un `<iframe>` de otra web** (clickjacking). No lo he explotado ni lo voy a
+hacer; digo que la defensa que había ya no está.
+
+Y de paso: `version.json` sale con **`Cache-Control: max-age=3600`**. El `no-store`
+también vivía en `vercel.json`. La sonda del frontend puede leer una versión de hasta
+una hora de antigüedad.
+
+### 83.5 🟠 Vercel sigue «blocked», y cada empujón lo avisa en el chat
+
+El último despliegue de Vercel: **`failure — Deployment was blocked`**, y el dominio da
+**503**. Ya no hay `vercel.json`, pero **el proyecto sigue conectado al repo**. Cada push
+dispara `deployment_status`, y «Avisar si falla Vercel o el CI» construye el aviso
+«Vercel · Production — Deployment was blocked» y lo manda con `curl --fail`
+(`alerta-despliegue.yml:200`). **Un aviso por push de algo que se decidió quitar el
+17-09**, en el mismo canal que el de caducidad. La salida limpia sigue siendo la de
+§77.3: desconectar el proyecto de Vercel.
+
+### 83.6 Sin poder comprobar
+
+- **La prueba de humo de la caducidad** (§82.5): sin logs no sé si el Jefe la hizo ni si
+  llegó. Ahora el aviso va **siempre** por su propia clave, así que la prueba sirve
+  aunque el coste suba.
+- **`company`/`bank`**: el cambio a `enum` de `1f07736` ya está desplegado. Si las
+  pestañas se llenan, se verá en la base, y hoy no tengo acceso.
+
+**No he cerrado nada y no he reparado nada.**
+
+---
+
+## 84. Revisión de la «Guía GoDaddy → Google Cloud» (2026-09-25, ~15:30 UTC)
+
+El Jefe me pasa la guía y me autoriza a mover en Chrome. **Al ir a mirar, el Jefe ya la
+está ejecutando:** `pmo-app.com` **ya no tiene registro A** (no resuelve, Chrome da
+página de error, `curl` → 000), y han aparecido dos TXT: `google-site-verification=…` y
+`hosting-site=pmo-dashboard-503418`. **La web «Zepto» de GoDaddy que servía hace una
+hora ya no está en el aire.**
+
+Contraste de la guía con el código y la nube:
+
+| Paso | Comprobado |
+|---|---|
+| Fase 1: proyecto `pmo-jose-antonio` | ❌ El proyecto es **`pmo-dashboard-503418`** (`.firebaserc`, y el propio TXT) |
+| Fase 1: el apex `pmo-app.com` → Firebase, borrando el A existente | ⚠️ **Eso quitaba la web de Zepto** que servía GoDaddy. Si hacía falta, hay que restaurarla; si no, hay que poner ya las A de Firebase. El código planeaba `app.pmo-app.com` (`session.service.ts:90`), que no pisa nada |
+| Fase 3: «elimina las URLs viejas» | ⚠️ **No borrar hasta probar el login nuevo.** Además, la URI viva no es de `web.app` ni de `vercel.app`: es la de `run.app` (`GOOGLE_REDIRECT_URI`) |
+| Fase 4: «Repository secrets» `WEB_URL`, `GOOGLE_REDIRECT_URI` | ❌ Son **Variables**, no secretos (`gh variable list`). Y **cambiarlas antes de que los dos dominios sirvan con certificado rompe el login y el CORS** del tablero actual. Tampoco surten efecto sin un nuevo despliegue de la API. Van **al final** |
+| Fase 5: «las nuevas URLs ya están en `.env.production`» | ❌ **Falso**: `apps/web/.env.production` sigue en `VITE_API_URL=https://pmo-api-mlpuuasqka-uc.a.run.app/api` (está en `.gitignore`, así que es local). Por suerte: si estuviera cambiado, compilar hoy rompería el tablero |
+| Falta | Los certificados tardan **hasta 24 h**. `CRON_OIDC_AUDIENCE` y `GMAIL_PUBSUB_AUDIENCE` **deben seguir en `run.app`**. La cookie `SameSite=None` sigue valiendo en el mismo sitio, así que **no hace falta tocarla** |
+
+**No he tocado nada.**
+
+---
+
+## 85. Despertar del 2026-09-29
+
+Desde §84 entraron `fa73eba`, `4550578` y `5576210` (los tres del 25-09, ~17:41–17:55 UTC).
+`gcloud` **sigue caducado** (pide reautenticación), así que Cloud Run lo leo por sondas y
+por GitHub.
+
+### 85.1 ✅ Lo que se cerró
+
+| | |
+|---|---|
+| Cabeceras de seguridad (§83.4) | ✅ `fa73eba`. `web.app` y `app.pmo-app.com` sirven `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `nosniff` y `Referrer-Policy`. `version.json` vuelve a `no-store`. **Cierra §83.4** |
+| Frontend publicado | ✅ `version.json` → `5576210`, construido el 25-09 17:56 UTC |
+| `app.pmo-app.com` | ✅ Sirve el tablero (`<title>PMO Dashboard`, mismo `version.json`) con certificado |
+| `WEB_URL_EXTRA` (`4550578`) | ✅ La variable existe (`https://app.pmo-app.com`) **y llegó a Cloud Run**: el preflight con ese `Origin` devuelve `allow-origin` y `allow-credentials`. `web.app` sigue igual; un origen ajeno no recibe `allow-origin` |
+| `WEB_URL` y `GOOGLE_REDIRECT_URI` | ✅ Siguen en `web.app` y `run.app`. Se respetó el orden de §84: no se tocaron antes de tiempo |
+| API | ✅ `/health/ready` en verde, 16 migraciones, Redis arriba |
+
+### 85.2 🔴 C12 sigue deshecho
+
+`required_status_checks`: `contexts: []`, `checks: []`, `enforce_admins: false`. **Sin
+cambios desde §82.3.** Tres empujones más sin que nada exigiera el CI; salieron verdes
+por suerte.
+
+### 85.3 🟠 Vercel sigue conectado
+
+Los tres empujones del 25-09 generaron tres despliegues en Vercel, los tres
+**«Deployment was blocked»**, y los tres dispararon el aviso al chat (`curl --fail`,
+ejecución `36170191215`). Igual que §83.5.
+
+### 85.4 ❓ El apex `pmo-app.com` lleva cuatro días sin registro A
+
+Solo tiene los dos TXT (`google-site-verification`, `hosting-site=pmo-dashboard-503418`).
+`pmo-app.com` y `www.pmo-app.com` no responden. **Si la web de Zepto que servía GoDaddy
+tenía que seguir en el aire, está caída desde el 25-09.** Puede ser deliberado; no lo
+afirmo, **lo pregunto**.
+
+### 85.5 Sin poder comprobar
+
+- El despliegue de la API de `5576210` se **reintentó a mano** (intento 2, 27-09 02:17
+  UTC, verde). No sé por qué falló el primero ni qué revisión sirve hoy: sin `gcloud`.
+- **`company`/`bank` con el vocabulario de nueve bancos**: `5576210` añade `company` y
+  `bank` a la línea «Resultado de IA» justo para comprobarlo sin abrir la base. Sin logs,
+  no lo veo.
+
+**No he cerrado nada y no he reparado nada.**
