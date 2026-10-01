@@ -569,3 +569,18 @@ porque comparten reglas con el cron y los sockets.
 - ⚠️ **Gmail:** la etiqueta PMO es por mensaje. La vía incremental (`history.list` con `labelId`) trae igual las
   respuestas de un hilo etiquetado; `backfill`/`getInbox` (`messages.list`) no. Y el historial del hilo se come el tope
   de 12.000 caracteres con citas repetidas.
+
+## La IA por hilo (G, 2026-10-01)
+
+- **B.3 (`b372767`):** la fila «Bancos» se agrupa por `TIPO_BANCO` (`bancosPorTipo()` en `ScopeTabs.tsx`); el chip del
+  banco lleva el tipo en el `title`.
+- **Uso por llamada (`0fe8a99`):** `Uso IA · correo=… hilo=… · entrada · salida · $` en el log. Es lo único que dice
+  cuánto cuesta un hilo: `aiUsage` solo guarda el total del día.
+- **`quitarCitas` (`8afc3b1`):** ante la duda, el texto entero. No corta reenvíos.
+- **Por hilo (`e78dfba`):** `cargarHilo` → el **ancla** es el correo más reciente del hilo. Se analiza desde él, sus
+  adjuntos son los únicos que viajan y en él se guarda el borrador; los demás del hilo se vacían. El más antiguo de la
+  base conserva sus citas. `reclassifyThread` = «Volver a analizar». «Revisar» devuelve el `emailId` del ancla.
+- **Prueba real del hilo de Sofía (00151-zhf):** 5.992 tokens de entrada, $0,0231. El prompt y las subtareas aprobadas
+  pesan más de lo que estimé. Repitió una subtarea aprobada pendiente: decisión de Doc pendiente.
+- ⚠️ **Las heredocs de bash en esta máquina se comen las barras invertidas** (`\n`, `\r`, `\` de continuación). Para
+  scripts con escapes: escribir el archivo con la herramienta Write y ejecutarlo.
