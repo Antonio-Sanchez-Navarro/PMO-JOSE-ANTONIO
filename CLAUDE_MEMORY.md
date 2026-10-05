@@ -584,3 +584,13 @@ porque comparten reglas con el cron y los sockets.
   pesan más de lo que estimé. Repitió una subtarea aprobada pendiente: decisión de Doc pendiente.
 - ⚠️ **Las heredocs de bash en esta máquina se comen las barras invertidas** (`\n`, `\r`, `\` de continuación). Para
   scripts con escapes: escribir el archivo con la herramienta Write y ejecutarlo.
+
+## Remates de G (H, 2026-10-05)
+
+- **H.1 (`6e6d1ea`):** el prompt del hilo prohíbe volver a proponer una subtarea aprobada **pendiente**. La prueba real dio
+  0 propuestas, pero el Jefe había mandado la boleta ese mismo día: no aísla la regla.
+- **H.2 (`76cce1e`):** `version.json` = `HEAD` local. Fuera de CI, el build **falla** si `apps/web`/`packages/shared` tienen
+  cambios o si `HEAD` no está en un remoto. Para publicar: commit, **push** y build. `tsconfig.node.json` emite en
+  `node_modules/.tmp` (TS6310 no deja `noEmit`); se acabó el `vite.config.js` fantasma.
+- ⚠️ `deploy.yml` tiene `concurrency: cancel-in-progress`: dos pushes seguidos cancelan el primer despliegue. El segundo
+  lleva el código del primero, pero el run del primero sale «cancelled», no «success».
