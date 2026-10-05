@@ -2386,3 +2386,54 @@ viejos. El segundo cuesta IA.
   (28-07), no de G. Menor.
 
 **No he cerrado nada y no he reparado nada.**
+
+---
+
+## 90. Encargos de Doc del 2026-10-05, ejecutados (18:09–18:20 UTC)
+
+| Encargo | Resultado |
+|---|---|
+| Subir `d57a308` | ✅ `git fetch`: estaba encima de `origin/master` (`62643b6`), sin divergencia. Push normal, sin `--force` |
+| Vercel desconectado | ✅ **Confirmado.** Tras mi push de las 18:09:45 y el de `2a1cd0d` (18:12), **ningún despliegue nuevo**: el último sigue siendo `76cce1e` (17:36:40). Cierra §83.5/§85.3 |
+| Cronómetro con dos pestañas | Cerrado por decisión de Doc (pruebas de @Claude y prueba del Jefe del 01-10). No lo hice |
+| Coste de la prueba real de G | Sin comprobar: `gcloud` caducado |
+| H.3 («Revisar N» cuenta como el modal) | **No entregado todavía**: `proposedTaskCount` sigue sumando. Audito con «SR. RAYO 404-A» cuando llegue |
+
+### 90.1 H.2 en una copia (worktree en el scratchpad, sin publicar)
+
+| Caso | Esperado | Resultado |
+|---|---|---|
+| 1. Copia limpia en `d57a308` | Construye, `version.json` = HEAD | ✅ `commit: d57a308…` |
+| 2. Cambio sin commitear en `apps/web` | Falla | ✅ «Hay cambios sin commitear…», sin `dist` |
+| 3. Commit local sin empujar | Falla | ✅ «El commit b1c57b6 no está en ningún remoto…» (el commit pasó el pre-commit, sin saltarlo) |
+| 4. Cambio sin commitear **+ `VERCEL_GIT_COMMIT_SHA` a mano** | Falla | ❌ **Construye**, y `version.json` dice `d57a308` con código que no es ese commit |
+
+**Producción:** `version.json` = `76cce1e` en los dos dominios, que es el último commit que
+toca `apps/web` en ese momento. Lo de después (`62643b6`, `d57a308`) es documentación.
+
+🟡 **Caso 4:** `vite.config.ts` hace `if (process.env.VERCEL_GIT_COMMIT_SHA) return …` **antes**
+de las comprobaciones, fuera de CI. El comentario de ese mismo archivo dice lo contrario
+(«ya no mandan fuera de CI»). Vercel ya está desconectado, así que esa variable solo puede
+venir de alguien que la ponga a mano. Riesgo bajo, pero es una puerta abierta y el
+comentario miente. Basta con borrar esa línea.
+
+Copia y enlaces borrados: las dependencias de la carpeta real siguen intactas.
+
+### 90.2 Auditoría de I.1 (`2a1cd0d`, «Publicar frontend en Firebase Hosting»)
+
+- ✅ En CI, `VITE_API_URL` sale de una variable de repositorio (hoy `run.app`), y se comprueba
+  que el bundle contiene ese host. Si `VITE_API_URL` menciona `pmo-app.com`, el paso
+  **falla hoy**, porque `api.pmo-app.com` no resuelve (`000`).
+- 🟡 **La sonda mira un host fijo, `api.pmo-app.com`, no el de la variable**
+  (`publicar-frontend.yml:81-82`). Con `VITE_API_URL=https://app.pmo-app.com/api` —que es
+  Hosting, no la API—, el día que exista `api.pmo-app.com` pasaría. Debería sondear
+  `${VITE_API_URL}/health`.
+- 🟠 **Hoy todavía se puede publicar con cualquier `VITE_API_URL`.** El workflow está apagado
+  (`PUBLICAR_FRONTEND_DESDE_CI` sin definir, la primera ejecución salió `skipped`), y la vía
+  real sigue siendo `firebase deploy` a mano, desde un `.env.production` local, sin
+  `predeploy` en `firebase.json`. H.2 protege `version.json`, **no** `VITE_API_URL`. Es lo
+  esperado del plan (I.1, luego permisos, luego C12), pero **«nadie puede publicar con
+  pmo-app.com» todavía no es verdad**: lo será cuando se encienda el interruptor y la
+  publicación a mano deje de ser posible.
+
+**No he reparado nada.**
