@@ -5,42 +5,26 @@ name: CI
 # `npm run lint` roto sobrevivió al proyecto entero sin que nadie lo notara.
 #
 # ─────────────────────────────────────────────────────────────────────────
-# paths-ignore — y por qué el filtro vive AQUÍ y no en `deploy.yml`
+# Corre en TODOS los commits, también en los de solo documentación (05-10)
 #
-# `deploy.yml` se dispara por `workflow_run` encadenado a este archivo, y
-# **`workflow_run` no admite `paths` ni `paths-ignore`**: GitHub los ignora en
-# silencio, sin error de sintaxis y sin aviso. Escribirlos allí daría una
-# protección que no existe, que es peor que no tenerla.
+# Hasta el 05-10 había aquí un `paths-ignore` (`**/*.md`, `docs/**`, …) para que
+# un commit de bitácora no disparara el despliegue. Se quitó por C12: este CI
+# va a ser el check **obligatorio** para fusionar en `master`, y un workflow que
+# se salta por `paths-ignore` deja su check «pendiente» para siempre, así que la
+# fusión de un commit de solo documentación quedaría bloqueada.
 #
-# Filtrando aquí sale gratis: si este workflow no corre, no hay `workflow_run`
-# que concluya, así que el despliegue tampoco se dispara. Un commit de solo
-# bitácora deja de costar un build de Docker y una revisión nueva en producción.
-#
-# **Solo se salta si TODOS los archivos del push encajan en la lista.** Un
-# commit que toque `CLAUDE_MEMORY.md` y un `.ts` corre entero, que es lo que
-# hay que querer: lo que decide es el código que va dentro, no la proporción
-# de documentación.
-#
-# `README.md` y `docs/` entran; `.github/**` **no**, a propósito: un cambio en
-# estos workflows tiene que probarse a sí mismo.
+# Lo que se salta ahora es el **despliegue**: `deploy.yml` y
+# `publicar-frontend.yml` comparan lo que sirve producción con el commit
+# aprobado (`.github/scripts/hay-que-desplegar.sh`) y no despliegan si solo
+# cambia documentación. El filtro no puede ir en ellos como `paths-ignore`:
+# **`workflow_run` no admite `paths` ni `paths-ignore`** y GitHub los ignora en
+# silencio.
 # ─────────────────────────────────────────────────────────────────────────
 on:
   push:
     branches: [ "master" ]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.gitignore'
-      - '.editorconfig'
-      - 'LICENSE'
   pull_request:
     branches: [ "master" ]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.gitignore'
-      - '.editorconfig'
-      - 'LICENSE'
 
   # ─────────────────────────────────────────────────────────────────────────
   # workflow_dispatch — el botón que faltaba (2026-08-12)
@@ -59,8 +43,9 @@ on:
   # abajo se despliega con `--set-env-vars`, que reemplaza el conjunto, no lo
   # completa. Así se perdió configuración inyectada en caliente más de una vez.
   #
-  # `paths-ignore` **no aplica** a este disparador: quien pulsa el botón está
-  # pidiendo el pipeline entero a sabiendas, no reaccionando a unos archivos.
+  # (Desde el 05-10 ya no hay `paths-ignore`: ver la cabecera. Para aplicar una
+  # variable sin commit, el botón bueno es el `workflow_dispatch` de `deploy.yml`
+  # o de `publicar-frontend.yml`, que despliegan siempre.)
   # ─────────────────────────────────────────────────────────────────────────
   workflow_dispatch:
 

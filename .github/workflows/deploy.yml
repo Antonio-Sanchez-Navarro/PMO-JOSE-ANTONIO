@@ -46,8 +46,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # ¿Hay algo que desplegar? (remate de las 18:30 del 05-10)
+  #
+  # Desde el 05-10 el CI corre en **todos** los commits, también en los de solo
+  # documentación: será el check obligatorio de C12, y un check que se salta
+  # bloquea la fusión. Lo que se salta ahora es el despliegue: si entre lo que
+  # sirve producción (`/health` → `version`) y el commit aprobado solo cambian
+  # `*.md`, `docs/` y similares, no se crea una revisión nueva de Cloud Run.
+  # `workflow_dispatch` despliega siempre: es el botón para aplicar variables.
+  # ───────────────────────────────────────────────────────────────────────────
+  cambios:
+    runs-on: ubuntu-latest
+    # Las mismas condiciones que `deploy` (explicadas allí).
+    if: >-
+      vars.GCP_PROJECT_ID != '' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'master' &&
+          github.event.workflow_run.event == 'push'
+        )
+      )
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      desplegar: ${{ steps.decidir.outputs.desplegar }}
+    steps:
+      - name: Traer el commit que aprobó el CI, con historia
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Autenticarse en Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Preparar gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Decidir si hay que desplegar
+        id: decidir
+        env:
+          COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+          REGION: ${{ vars.GCP_REGION }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "desplegar=true" >> "${GITHUB_OUTPUT}"
+            echo "Lanzado a mano: se despliega siempre."
+            exit 0
+          fi
+          URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format 'value(status.url)' || true)
+          DESPLEGADO=""
+          if [ -n "${URL}" ]; then
+            curl -sS --max-time 20 -o /tmp/health.json "${URL}/health" || true
+            DESPLEGADO=$(jq -r '.version // empty' /tmp/health.json 2>/dev/null || true)
+          fi
+          bash .github/scripts/hay-que-desplegar.sh "${DESPLEGADO}" "${COMMIT}"
+
   deploy:
     runs-on: ubuntu-latest
+    needs: cambios
 
     # **Las cuatro condiciones son necesarias y ninguna sobra:**
     #
@@ -83,8 +146,10 @@ jobs:
     # `vars.GCP_PROJECT_ID != ''` se queda **fuera del paréntesis**, aplicando a
     # los dos caminos: sin proyecto no hay nada que desplegar, venga de donde
     # venga.
+    #
+    # Y, desde el 05-10, que `cambios` diga que hay algo más que documentación.
     if: >-
-      vars.GCP_PROJECT_ID != '' && (
+      vars.GCP_PROJECT_ID != '' && needs.cambios.outputs.desplegar == 'true' && (
         github.event_name == 'workflow_dispatch' || (
           github.event.workflow_run.conclusion == 'success' &&
           github.event.workflow_run.head_branch == 'master' &&
@@ -1265,7 +1330,7 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   avisar-fallo:
     runs-on: ubuntu-latest
-    needs: deploy
+    needs: [cambios, deploy]
     if: ${{ failure() }}
 
     steps:

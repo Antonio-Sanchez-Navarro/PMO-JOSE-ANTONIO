@@ -26,8 +26,10 @@ const git = (comando: string) => execSync(`git ${comando}`, { encoding: "utf8" }
  *   GitHub por definición, y en un PR `HEAD` es un merge que no está en
  *   ninguna rama.
  *
- * `VITE_COMMIT_SHA` y `VERCEL_GIT_COMMIT_SHA` ya no mandan fuera de CI: decían
- * lo que alguien escribía, no lo que se construía.
+ * Ninguna variable de entorno manda: ni `VITE_COMMIT_SHA` ni
+ * `VERCEL_GIT_COMMIT_SHA` decían lo que se construía, sino lo que alguien
+ * escribía, y saltaban las comprobaciones de arriba. Vercel está desconectado
+ * desde octubre (ALANA §90); su atajo se quitó en el remate de las 18:30 del 05-10.
  */
 function commitDelBuild(): string {
   if (process.env.GITHUB_ACTIONS === "true") {
@@ -35,8 +37,6 @@ function commitDelBuild(): string {
     // la punta de `master`, no el commit que aprobó el CI y que se ha traído.
     return git("rev-parse HEAD");
   }
-  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA;
-
   const head = git("rev-parse HEAD");
   const raiz = git("rev-parse --show-toplevel");
 

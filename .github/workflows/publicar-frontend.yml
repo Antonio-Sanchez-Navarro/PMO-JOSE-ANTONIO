@@ -31,14 +31,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ¿Hay algo que publicar? Igual que en `deploy.yml`: el CI corre siempre desde
+  # el 05-10, y un commit de solo documentación no publica una versión nueva de
+  # Hosting. Lo publicado se lee de `version.json` de `WEB_URL`.
+  cambios:
+    runs-on: ubuntu-latest
+    if: >-
+      vars.GCP_PROJECT_ID != '' && vars.PUBLICAR_FRONTEND_DESDE_CI == 'true' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'master' &&
+          github.event.workflow_run.event == 'push'
+        )
+      )
+    permissions:
+      contents: read
+    outputs:
+      desplegar: ${{ steps.decidir.outputs.desplegar }}
+    steps:
+      - name: Traer el commit que aprobó el CI, con historia
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Decidir si hay que publicar
+        id: decidir
+        env:
+          COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+          WEB_URL: ${{ vars.WEB_URL }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "desplegar=true" >> "${GITHUB_OUTPUT}"
+            echo "Lanzado a mano: se publica siempre."
+            exit 0
+          fi
+          curl -sS --max-time 20 -H 'Cache-Control: no-cache' -o /tmp/version.json "${WEB_URL}/version.json" || true
+          PUBLICADO=$(jq -r '.commit // empty' /tmp/version.json 2>/dev/null || true)
+          bash .github/scripts/hay-que-desplegar.sh "${PUBLICADO}" "${COMMIT}"
+
   publicar:
     runs-on: ubuntu-latest
+    needs: cambios
 
     # `PUBLICAR_FRONTEND_DESDE_CI` es el interruptor de la puesta en marcha: hasta
     # que la cuenta de servicio tenga permiso sobre Hosting, cada push dejaría un
     # run en rojo y un aviso falso en el chat. Con la variable en `true`, publica.
     if: >-
-      vars.GCP_PROJECT_ID != '' && vars.PUBLICAR_FRONTEND_DESDE_CI == 'true' && (
+      vars.GCP_PROJECT_ID != '' && vars.PUBLICAR_FRONTEND_DESDE_CI == 'true' &&
+      needs.cambios.outputs.desplegar == 'true' && (
         github.event_name == 'workflow_dispatch' || (
           github.event.workflow_run.conclusion == 'success' &&
           github.event.workflow_run.head_branch == 'master' &&
@@ -66,9 +107,9 @@ jobs:
       # `apps/web/.env.production` está en `.gitignore`: lo que dijera dependía de
       # quién publicaba. Aquí manda la variable de repositorio `VITE_API_URL`.
       #
-      # Si apunta a `pmo-app.com`, se comprueba que `api.pmo-app.com` responde
-      # antes de construir: es exactamente la mina del 24-09. Cuando el dominio
-      # exista de verdad, la comprobación pasa sola y no hay que tocar nada.
+      # Antes de construir se comprueba que esa API responde. Es exactamente la
+      # mina del 24-09: apuntar a `api.pmo-app.com` antes de que existiera. Cuando
+      # el dominio exista de verdad, la comprobación pasa sola.
       - name: Comprobar VITE_API_URL
         run: |
           if [ -z "${VITE_API_URL}" ]; then
@@ -78,14 +119,18 @@ jobs:
           fi
           echo "VITE_API_URL=${VITE_API_URL}"
 
-          if [[ "${VITE_API_URL}" == *pmo-app.com* ]]; then
-            CODIGO=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://api.pmo-app.com/health || echo 000)
-            if [ "${CODIGO}" != "200" ]; then
-              echo "::error::VITE_API_URL apunta a pmo-app.com, pero https://api.pmo-app.com/health devolvió ${CODIGO}." \
-                   "Publicar así deja el tablero entero llamando a una API que no existe."
-              exit 1
-            fi
+          # Se sondea el host REAL de la variable, sea cual sea (remate de las
+          # 18:30, ALANA §90): antes solo se miraba api.pmo-app.com, fijo, y una
+          # VITE_API_URL con otra errata pasaba sin que nadie la probara. La API
+          # contesta en `/health` del origen, no bajo `/api`.
+          ORIGEN_API=$(printf '%s' "${VITE_API_URL}" | sed -E 's#^(https?://[^/]+).*#\1#')
+          CODIGO=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "${ORIGEN_API}/health" || echo 000)
+          if [ "${CODIGO}" != "200" ]; then
+            echo "::error::${ORIGEN_API}/health devolvió ${CODIGO}, y es la API a la que apunta VITE_API_URL." \
+                 "Publicar así deja el tablero entero llamando a una API que no responde."
+            exit 1
           fi
+          echo "${ORIGEN_API}/health responde 200."
 
       - name: Preparar Node
         uses: actions/setup-node@v5
