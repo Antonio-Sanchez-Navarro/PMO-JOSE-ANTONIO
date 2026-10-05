@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { TaskCard } from './TaskCard';
 import { describe, it, expect, vi } from 'vitest';
-import { TaskPriority, TaskSource } from '../types';
+import { TaskPriority, TaskSource, TaskStatus } from '../types';
 
 vi.mock('../../copilot/CopilotContext', () => ({
   useCopilot: () => ({ openCopilotWithContext: vi.fn() }),
@@ -11,7 +11,7 @@ describe('TaskCard', () => {
   const baseTask = {
     id: '1',
     title: 'Test Task',
-    status: 'TODO' as const,
+    status: TaskStatus.TODO,
     priority: TaskPriority.MEDIUM,
     source: TaskSource.MANUAL,
     tags: [],

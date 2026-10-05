@@ -1,14 +1,14 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TaskModal } from './TaskModal';
 import { describe, it, expect, vi } from 'vitest';
-import { TaskSource } from '../types';
+import { TaskSource, TaskStatus, TaskPriority } from '../types';
 
 describe('TaskModal', () => {
   const mockTask = {
     id: '1',
     title: 'Test Task',
-    status: 'TODO' as const,
-    priority: 'MEDIUM' as const,
+    status: TaskStatus.TODO,
+    priority: TaskPriority.MEDIUM,
     source: TaskSource.MANUAL,
     tags: [],
     labels: [],
@@ -16,7 +16,7 @@ describe('TaskModal', () => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     subtasks: [
-      { id: 's1', title: 'Sub 1', isCompleted: false },
+      { id: 's1', taskId: '1', title: 'Sub 1', isCompleted: false, order: 0 },
     ],
   };
 
