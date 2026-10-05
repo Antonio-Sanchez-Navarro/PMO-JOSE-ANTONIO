@@ -2479,3 +2479,41 @@ solo toca `.github/` también redespliega la API (el filtro de Doc para `*.md`/`
 pedido; quizá debería cubrir también `.github/workflows/publicar-frontend.yml`).
 
 **No he reparado nada.**
+
+---
+
+## 92. Dos defectos del Tablero que el Jefe vio usándolo (2026-10-05, ~19:20 UTC)
+
+### 92.1 🔴 «Cerrar» no cierra el detalle de la tarea
+
+**Confirmado en el código y en pantalla** (el modal seguía abierto hasta que recargué la pestaña).
+
+- Desde `3419707` (@Gravity, 01-10), el `TaskModal` se pinta **dentro** de la tarjeta
+  (`TaskCard.tsx:312-317`), y la tarjeta entera abre el detalle al pulsarla
+  (`TaskCard.tsx:116-121`, `onClick={() => setIsDetailOpen(true)}`).
+- «Cerrar» (`TaskModal.tsx:143-148`) llama a `setIsDetailOpen(false)`, **pero no para la
+  propagación**. El clic sube por el árbol de React hasta el `onClick` de la tarjeta, que
+  vuelve a poner `true`. Resultado: se cierra y se reabre en el mismo clic.
+- Lo mismo pasa con **cualquier clic dentro del modal** que no sea un checkbox (solo esos llevan
+  `stopPropagation`, `TaskModal.tsx:121`). Tampoco hay botón ✕ ni se cierra con Escape. **La
+  única salida es recargar.**
+- El arreglo es corto (decide Doc): pintar el modal **fuera** de la tarjeta (en `KanbanBoard` o
+  con un portal), o parar la propagación en el contenedor del modal.
+- Nota: mi auditoría de las tarjetas (§89.3) estaba pedida y no la hice, y el Jefe las dio por
+  buenas el 01-10. **Este defecto existe desde `3419707`.**
+
+### 92.2 🟠 La ficha resumen pinta todas las etiquetas: decenas por tarjeta
+
+Comprobado en pantalla: «Re: SR. TINAJERO» (44/45 subtareas) lleva **unas 50 etiquetas**, y
+«Follow-up on Repairs» y «Escrituración Lote 36», 25-30 cada una. La ficha que tenía que ser
+corta vuelve a ocupar media pantalla, ahora por las etiquetas y no por las subtareas.
+
+- **Origen:** al aprobar, la tarea padre recibe **la unión de las etiquetas de todas las
+  subtareas propuestas** (`emails.service.ts:1186-1197`, `uniqueTags = new Set(confirmed.flatMap(t => t.tags))`).
+  El modelo pone 3-5 por propuesta, así que 45 propuestas dan unas 50.
+- **Pintado:** `TaskCard.tsx:208-215` hace `task.tags.map(...)` **sin tope**. La ficha de
+  `3419707` quitó las subtareas pero dejó las etiquetas enteras.
+- Hay dos arreglos, y probablemente hagan falta los dos: en la ficha, mostrar 3 + «+N»; y en el
+  origen, no heredar a la tarea padre todas las etiquetas de cada subtarea.
+
+**No he reparado nada.**
