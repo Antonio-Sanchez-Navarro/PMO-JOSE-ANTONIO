@@ -31,7 +31,9 @@ const git = (comando: string) => execSync(`git ${comando}`, { encoding: "utf8" }
  */
 function commitDelBuild(): string {
   if (process.env.GITHUB_ACTIONS === "true") {
-    return process.env.GITHUB_SHA || git("rev-parse HEAD");
+    // `rev-parse HEAD` y no `GITHUB_SHA`: en un `workflow_run`, `GITHUB_SHA` es
+    // la punta de `master`, no el commit que aprobó el CI y que se ha traído.
+    return git("rev-parse HEAD");
   }
   if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA;
 

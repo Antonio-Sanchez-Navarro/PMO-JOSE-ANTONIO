@@ -34,10 +34,11 @@ on:
   # Vercel. `deployment_status` llega con cada cambio de estado; abajo se filtra.
   deployment_status:
 
-  # Nuestro CI. El despliegue de la API se avisa desde `deploy.yml`, que tiene
-  # acceso directo al resultado del job.
+  # Nuestro CI y la publicación del frontend (I.1). El despliegue de la API se
+  # avisa desde `deploy.yml`, que tiene acceso directo al resultado del job.
+  # El nombre tiene que coincidir literalmente con el `name:` de cada workflow.
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "Publicar frontend en Firebase Hosting"]
     types: [completed]
 
   # ⚠️ **Para provocar un mensaje de prueba sin romper nada.**
@@ -123,7 +124,7 @@ jobs:
             ENLACE="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             EMOJI="🧪"
           elif [ -n "${{ github.event.workflow_run.id }}" ]; then
-            QUE="CI"
+            QUE="${{ github.event.workflow_run.name }}"
             TITULO="${{ github.event.workflow_run.display_title }}"
             COMMIT="${{ github.event.workflow_run.head_sha }}"
             ENLACE="${{ github.event.workflow_run.html_url }}"

@@ -1,0 +1,183 @@
+name: Publicar frontend en Firebase Hosting
+
+# ─────────────────────────────────────────────────────────────────────────────
+# El frontend, detrás del CI (I.1, decisión del Jefe del 05-10)
+#
+# Hasta aquí el frontend se publicaba a mano desde un portátil, sin nada
+# delante: así llegaron a producción la mina de `.env.production` del 24-09
+# (apuntaba a un dominio que no existía) y el `version.json` falso del 01-10.
+# Este workflow publica **solo lo que el CI aprobó**, con la misma regla que
+# `deploy.yml`: `workflow_run` del CI + `conclusion == 'success'` + `master` +
+# `push`. Y comprueba, después de publicar, que lo servido es lo construido.
+#
+# Va en un workflow aparte y no como un job de `deploy.yml` para que un fallo de
+# uno no tumbe al otro: la API y el frontend se publican y se revierten por
+# separado. El avisador (`alerta-despliegue.yml`) escucha a los dos.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  # Republicar sin commit (por ejemplo, tras cambiar `VITE_API_URL`). Como en
+  # `deploy.yml`, **se salta el CI**: publica la rama elegida tal cual.
+  workflow_dispatch:
+
+# Dos publicaciones seguidas se ponen en cola, no se cancelan: una publicación a
+# medias de Hosting no deja nada roto, pero cancelarla deja el run en
+# «cancelled» y nadie sabe si lo servido es el commit viejo o el nuevo.
+concurrency:
+  group: publicar-frontend
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+
+    # `PUBLICAR_FRONTEND_DESDE_CI` es el interruptor de la puesta en marcha: hasta
+    # que la cuenta de servicio tenga permiso sobre Hosting, cada push dejaría un
+    # run en rojo y un aviso falso en el chat. Con la variable en `true`, publica.
+    if: >-
+      vars.GCP_PROJECT_ID != '' && vars.PUBLICAR_FRONTEND_DESDE_CI == 'true' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'master' &&
+          github.event.workflow_run.event == 'push'
+        )
+      )
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+      VITE_API_URL: ${{ vars.VITE_API_URL }}
+
+    steps:
+      - name: Traer el commit que aprobó el CI
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.COMMIT }}
+
+      # ── La URL de la API sale de GitHub, no de un archivo del portátil ─────
+      #
+      # `apps/web/.env.production` está en `.gitignore`: lo que dijera dependía de
+      # quién publicaba. Aquí manda la variable de repositorio `VITE_API_URL`.
+      #
+      # Si apunta a `pmo-app.com`, se comprueba que `api.pmo-app.com` responde
+      # antes de construir: es exactamente la mina del 24-09. Cuando el dominio
+      # exista de verdad, la comprobación pasa sola y no hay que tocar nada.
+      - name: Comprobar VITE_API_URL
+        run: |
+          if [ -z "${VITE_API_URL}" ]; then
+            echo "::error::La variable de repositorio VITE_API_URL no está definida." \
+                 "Sin ella el bundle llamaría a /api del propio Hosting."
+            exit 1
+          fi
+          echo "VITE_API_URL=${VITE_API_URL}"
+
+          if printf '%s' "${VITE_API_URL}" | grep -q 'pmo-app\.com'; then
+            CODIGO=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://api.pmo-app.com/health || echo 000)
+            if [ "${CODIGO}" != "200" ]; then
+              echo "::error::VITE_API_URL apunta a pmo-app.com, pero https://api.pmo-app.com/health devolvió ${CODIGO}." \
+                   "Publicar así deja el tablero entero llamando a una API que no existe."
+              exit 1
+            fi
+          fi
+
+      - name: Preparar Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # `vite.config.ts` escribe `version.json` con `git rev-parse HEAD`, que aquí
+      # es el commit que aprobó el CI (el `checkout` de arriba).
+      - name: Construir el frontend
+        run: |
+          npm run build:shared
+          npm --workspace @pmo/web run build
+
+      - name: Comprobar el bundle antes de publicar
+        run: |
+          set -eo pipefail
+          DIST=apps/web/dist
+
+          SERVIDO=$(jq -r .commit "${DIST}/version.json")
+          if [ "${SERVIDO}" != "${COMMIT}" ]; then
+            echo "::error::version.json dice ${SERVIDO} y se ha construido ${COMMIT}."
+            exit 1
+          fi
+
+          HOST_API=$(printf '%s' "${VITE_API_URL}" | sed -E 's#^https?://([^/]+).*#\1#')
+          if ! grep -lq "${HOST_API}" ${DIST}/assets/*.js; then
+            echo "::error::El bundle no contiene ${HOST_API}: no se construyó con VITE_API_URL."
+            exit 1
+          fi
+          if ! printf '%s' "${VITE_API_URL}" | grep -q 'pmo-app\.com' && grep -lq 'api\.pmo-app\.com' ${DIST}/assets/*.js; then
+            echo "::error::El bundle menciona api.pmo-app.com y VITE_API_URL no: algo coló otra URL."
+            exit 1
+          fi
+          echo "Bundle de ${COMMIT}, apuntando a ${HOST_API}."
+
+      - name: Autenticarse en Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # Versión fija: la misma con la que se publicaba a mano. Un `latest` que
+      # cambie de mayor puede romper un viernes sin que nadie haya tocado nada.
+      - name: Publicar en Firebase Hosting
+        run: npx --yes firebase-tools@15.32.1 deploy --only hosting --project "${PROJECT_ID}" --non-interactive
+
+      # ── Lo servido es lo construido ────────────────────────────────────────
+      #
+      # Se mira en los dos dominios y desde fuera, como lo vería un navegador: el
+      # `deploy` sale con 0 cuando Firebase acepta la versión, no cuando el CDN
+      # ya la sirve. Por eso se reintenta un rato antes de dar el fallo.
+      - name: Comprobar lo publicado
+        env:
+          WEB_URL: ${{ vars.WEB_URL }}
+          WEB_URL_EXTRA: ${{ vars.WEB_URL_EXTRA }}
+        run: |
+          set -o pipefail
+          FALLOS=0
+          for SITIO in ${WEB_URL} ${WEB_URL_EXTRA}; do
+            SERVIDO=""
+            for INTENTO in 1 2 3 4 5 6; do
+              SERVIDO=$(curl -sS --max-time 20 -H 'Cache-Control: no-cache' "${SITIO}/version.json" | jq -r .commit 2>/dev/null || true)
+              [ "${SERVIDO}" = "${COMMIT}" ] && break
+              sleep 20
+            done
+            if [ "${SERVIDO}" != "${COMMIT}" ]; then
+              echo "::error::${SITIO}/version.json sirve ${SERVIDO:-nada} y se publicó ${COMMIT}."
+              FALLOS=1
+              continue
+            fi
+
+            CABECERAS=$(curl -sS -D - -o /tmp/index.html --max-time 20 "${SITIO}/" | tr -d '\r')
+            if ! printf '%s' "${CABECERAS}" | grep -qi '^x-frame-options: DENY'; then
+              echo "::error::${SITIO} no manda X-Frame-Options: DENY."
+              FALLOS=1
+            fi
+            if ! printf '%s' "${CABECERAS}" | grep -qi "^content-security-policy:.*frame-ancestors 'none'"; then
+              echo "::error::${SITIO} no manda la CSP con frame-ancestors 'none'."
+              FALLOS=1
+            fi
+
+            BUNDLE=$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' /tmp/index.html | head -1)
+            HOST_API=$(printf '%s' "${VITE_API_URL}" | sed -E 's#^https?://([^/]+).*#\1#')
+            if ! curl -sS --max-time 20 "${SITIO}${BUNDLE}" | grep -q "${HOST_API}"; then
+              echo "::error::El bundle que sirve ${SITIO} (${BUNDLE}) no apunta a ${HOST_API}."
+              FALLOS=1
+            fi
+
+            echo "${SITIO}: ${COMMIT}, ${BUNDLE}, cabeceras de seguridad presentes."
+          done
+          exit ${FALLOS}
