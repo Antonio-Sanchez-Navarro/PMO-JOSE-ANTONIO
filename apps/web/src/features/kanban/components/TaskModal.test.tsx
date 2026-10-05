@@ -1,7 +1,7 @@
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TaskModal } from './TaskModal';
 import { describe, it, expect, vi } from 'vitest';
+import { TaskSource } from '../types';
 
 describe('TaskModal', () => {
   const mockTask = {
@@ -9,6 +9,12 @@ describe('TaskModal', () => {
     title: 'Test Task',
     status: 'TODO' as const,
     priority: 'MEDIUM' as const,
+    source: TaskSource.MANUAL,
+    tags: [],
+    labels: [],
+    position: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     subtasks: [
       { id: 's1', title: 'Sub 1', isCompleted: false },
     ],

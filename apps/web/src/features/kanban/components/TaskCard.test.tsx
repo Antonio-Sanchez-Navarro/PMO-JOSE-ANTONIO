@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { TaskCard } from './TaskCard';
 import { describe, it, expect, vi } from 'vitest';
@@ -15,6 +14,10 @@ describe('TaskCard', () => {
     status: 'TODO' as const,
     priority: TaskPriority.MEDIUM,
     source: TaskSource.MANUAL,
+    tags: [],
+    position: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     subtasks: [],
     labels: [],
   };
