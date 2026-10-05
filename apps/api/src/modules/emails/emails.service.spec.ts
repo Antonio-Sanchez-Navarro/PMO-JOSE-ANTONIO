@@ -1909,7 +1909,7 @@ describe('EmailsService — H.3 · el botón cuenta lo mismo que enseña la vent
           Promise.resolve(
             args._count
               ? [{ threadId: 'hilo-viejo', _count: { _all: 3 } }]
-              : [{ threadId: 'hilo-viejo', _max: { receivedAt: hilo[0].receivedAt } }],
+              : [{ threadId: 'hilo-viejo', _max: { receivedAt: new Date('2026-09-25T10:00:00Z') } }],
           ),
         ),
         findMany: jest.fn().mockResolvedValue(hilo),
