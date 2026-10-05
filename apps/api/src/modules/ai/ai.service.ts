@@ -87,8 +87,11 @@ export const INSTRUCCIONES_HILO =
   'QUÉ DEVOLVER: las tareas que siguen ABIERTAS HOY en el hilo entero, no solo ' +
   'las del último mensaje. Lo que se pidió y en un mensaje posterior se respondió, ' +
   'se entregó o se resolvió —lo haga quien lo haga, también nuestro equipo— NO se ' +
-  'propone. Lo que ya está en las tareas aprobadas tampoco. Si no queda nada ' +
-  'abierto, devuelve la lista de tareas vacía.';
+  'propone. Lo que ya está en las tareas aprobadas tampoco, aunque siga pendiente: ' +
+  'una subtarea aprobada y pendiente sigue abierta, pero ya tiene dueño en el tablero, ' +
+  'así que NO se propone otra vez, aunque su tarea esté marcada DONE o el hilo la ' +
+  'vuelva a pedir. Las subtareas «hecha» dicen qué está resuelto. Si no queda nada ' +
+  'nuevo abierto, devuelve la lista de tareas vacía.';
 
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
 

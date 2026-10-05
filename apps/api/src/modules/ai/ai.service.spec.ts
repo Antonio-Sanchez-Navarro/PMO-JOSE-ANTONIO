@@ -86,6 +86,28 @@ describe('AiService', () => {
       expect(texto).not.toContain('no debería aparecer');
       expect(texto).not.toContain('Analiza SOLO esto');
     });
+
+    it('H.1: con una aprobada DONE y una subtarea pendiente, lleva la regla de no repetirla', async () => {
+      // En la prueba real del 01-10 el modelo volvió a proponer «Enviar boleta de
+      // agua», que ya era una subtarea aprobada y pendiente de una tarea en DONE.
+      create.mockResolvedValue(
+        comoRespuestaDeHerramienta({
+          isActionable: false, category: 'OTHER', aiConfidence: 0.5, tasks: [],
+          senderName: null, project: null, company: null, bank: null,
+        }),
+      );
+      const aprobada = '- Depto 101 [DONE]\n  · Enviar boleta de agua (pendiente)\n  · Dar la notaría (hecha)';
+
+      await service.analyzeEmail('Re: Depto 101', 'Sigo atenta a la boleta de agua.', new Date('2026-09-30T14:46:00Z'), {
+        hilo: { mensajes: '', ultimo: 'De: Ana · 2026-09-30 14:46 UTC', aprobadas: [aprobada], omitidos: 0, borradorAnterior: [] },
+      });
+
+      const texto = create.mock.calls[0][0].messages[0].content[0].text as string;
+      // Las completadas siguen en el contexto: dicen qué está resuelto.
+      expect(texto).toContain(aprobada);
+      expect(texto).toContain('una subtarea aprobada y pendiente sigue abierta');
+      expect(texto).toContain('NO se propone otra vez, aunque su tarea esté marcada DONE');
+    });
   });
 
   describe('registro de uso por llamada', () => {
