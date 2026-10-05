@@ -2,20 +2,73 @@ import { defineConfig, Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { execSync } from "child_process";
 
+const git = (comando: string) => execSync(`git ${comando}`, { encoding: "utf8" }).trim();
+
+/**
+ * El commit que se está construyendo, o un error que para el build (H.2).
+ *
+ * `version.json` tiene que decir **exactamente** qué código va en el bundle: la
+ * sonda «frontend al día» lo compara con GitHub y una persona lo usa para saber
+ * qué hay publicado. Antes salía de `git ls-remote origin`, el último commit de
+ * GitHub, y no el que se construía: el 01-10 se publicó un commit sin empujar y
+ * `version.json` dijo el anterior.
+ *
+ * - **Cambios sin commitear en `apps/web` o `packages/shared`: falla.** Lo
+ *   construido no sería ningún commit, y `version.json` mentiría igual.
+ * - **`HEAD` que no está en ningún remoto: falla, no avisa.** Publicarlo deja en
+ *   `version.json` un commit que GitHub no tiene: la sonda no puede compararlo
+ *   (sale «indeterminado» cada media hora) y nadie más puede reconstruir lo
+ *   publicado. El arreglo es un `git push`, que no cuesta nada; un aviso en la
+ *   consola de un build que se publica de todas formas no lo lee nadie.
+ *   Se mira contra las ramas remotas **locales** (`git branch -r --contains`),
+ *   sin red: tras empujar, `origin/master` ya contiene el commit.
+ * - **En CI (`GITHUB_ACTIONS`) no se mira nada de eso:** el código sale de
+ *   GitHub por definición, y en un PR `HEAD` es un merge que no está en
+ *   ninguna rama.
+ *
+ * `VITE_COMMIT_SHA` y `VERCEL_GIT_COMMIT_SHA` ya no mandan fuera de CI: decían
+ * lo que alguien escribía, no lo que se construía.
+ */
+function commitDelBuild(): string {
+  if (process.env.GITHUB_ACTIONS === "true") {
+    return process.env.GITHUB_SHA || git("rev-parse HEAD");
+  }
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA;
+
+  const head = git("rev-parse HEAD");
+  const raiz = git("rev-parse --show-toplevel");
+
+  const sucio = execSync(`git status --porcelain -- apps/web packages/shared`, {
+    encoding: "utf8",
+    cwd: raiz,
+  }).trim();
+  if (sucio) {
+    throw new Error(
+      `Hay cambios sin commitear en apps/web o packages/shared:\n${sucio}\n` +
+        "version.json no podría decir qué se construye. Haz commit (y push) antes de construir para publicar.",
+    );
+  }
+
+  if (!git(`branch -r --contains ${head}`)) {
+    throw new Error(
+      `El commit ${head.slice(0, 7)} no está en ningún remoto. Haz git push antes de construir para publicar: ` +
+        "version.json diría un commit que GitHub no tiene y la sonda «frontend al día» no podría compararlo.",
+    );
+  }
+
+  return head;
+}
+
 function versionPlugin(): Plugin {
   return {
     name: "version-generator",
     generateBundle() {
-      let commit = process.env.VERCEL_GIT_COMMIT_SHA || process.env.VITE_COMMIT_SHA;
-      if (!commit) {
-        try {
-          // generateBundle corre al compilar para publicar (ej. Firebase).
-          // Se usa ls-remote para sacar el commit que ya está en GitHub, 
-          // evitando el 404 si el usuario publica código aún no empujado.
-          commit = execSync("git ls-remote origin -h refs/heads/master").toString().split('\t')[0].trim();
-        } catch {
-          commit = "desconocido";
-        }
+      let commit: string;
+      try {
+        commit = commitDelBuild();
+      } catch (err) {
+        // `this.error` para el build con el mensaje tal cual.
+        this.error(err instanceof Error ? err.message : String(err));
       }
       const construido = new Date().toISOString();
       this.emitFile({

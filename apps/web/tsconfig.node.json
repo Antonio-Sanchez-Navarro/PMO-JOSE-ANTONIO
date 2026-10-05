@@ -5,7 +5,12 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
-    "strict": true
+    "strict": true,
+    // `tsc -b` tiene que emitir este proyecto (un proyecto referenciado no puede
+    // llevar `noEmit`: TS6310), pero NO junto a `vite.config.ts`. Emitido ahí,
+    // Vite leía el `vite.config.js` viejo antes que el `.ts` (ALANA §80.4, H.2).
+    "outDir": "./node_modules/.tmp/tsconfig-node",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig-node/tsconfig.node.tsbuildinfo"
   },
   "include": ["vite.config.ts"]
 }
