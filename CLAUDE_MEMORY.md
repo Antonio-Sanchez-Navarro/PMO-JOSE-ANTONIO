@@ -594,3 +594,14 @@ porque comparten reglas con el cron y los sockets.
   `node_modules/.tmp` (TS6310 no deja `noEmit`); se acabó el `vite.config.js` fantasma.
 - ⚠️ `deploy.yml` tiene `concurrency: cancel-in-progress`: dos pushes seguidos cancelan el primer despliegue. El segundo
   lleva el código del primero, pero el run del primero sale «cancelled», no «success».
+
+## Frontend desde el CI y resync por hilos (I, 2026-10-05)
+
+- **El frontend se publica desde `publicar-frontend.yml`** (tras el CI de `master`); a mano está prohibido
+  (`apps/web/README.md`). Interruptor `PUBLICAR_FRONTEND_DESDE_CI`; URL de la API en la variable `VITE_API_URL`.
+  `github-deployer@` tiene «Administrador de Firebase Hosting» y «Consumidor de Service Usage» (los puso el Jefe; el
+  filtro de permisos de Claude Code bloquea conceder roles de IAM aunque el Jefe lo autorice en el chat).
+- ⚠️ **Nunca `curl … | grep -q` con `pipefail`**: `grep` cierra la tubería al encontrar y `curl` sale con 23. Bajar a
+  archivo y buscar ahí. Costó un rojo y un aviso falso al chat el 05-10.
+- **Resync por hilos (`203ed98`):** `mensajesQueEntran` en `gmail/hilos-pmo.ts`. Medido el 05-10: 52 hilos PMO, 225
+  mensajes por la regla, 0 nuevos (la vía incremental ya los tenía).
