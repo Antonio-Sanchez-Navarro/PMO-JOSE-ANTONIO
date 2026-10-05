@@ -231,6 +231,26 @@ export interface ThreadPage {
 }
 
 /**
+ * El correo cuyo borrador es **el** del hilo: el más reciente que tenga alguna
+ * propuesta. `undefined` si ninguno la tiene.
+ *
+ * Es la única fuente para las dos cosas que el Jefe ve de un borrador: el número
+ * del botón «Revisar N» (`aHiloDeDecision`) y lo que abre ese botón (`classify`).
+ * Hasta H.3 el botón sumaba los borradores de todos los correos del hilo y la
+ * ventana enseñaba solo uno: «Revisar 45» que abría 1 tarea.
+ *
+ * `delMasRecienteAlMasAntiguo` tiene que llegar en ese orden; las dos consultas
+ * que la usan ya ordenan por `receivedAt` descendente.
+ */
+export function borradorDelHilo<T extends { proposedTasks: Prisma.JsonValue | null }>(
+  delMasRecienteAlMasAntiguo: T[],
+): T | undefined {
+  return delMasRecienteAlMasAntiguo.find(
+    (e) => Array.isArray(e.proposedTasks) && e.proposedTasks.length > 0,
+  );
+}
+
+/**
  * Convierte los correos de un mismo hilo en la tarjeta que se pinta.
  *
  * `grupo` llega **ordenado del más reciente al más antiguo**, que es de donde
@@ -245,10 +265,11 @@ function aHiloDeDecision(grupo: FilaHilo[]): DecisionThread {
     emailIds: grupo.map((email) => email.id),
     latest: aTriageEmail(ultimo),
     allNonActionable: grupo.every(esNoAccionableConVeredicto),
-    proposedTaskCount: grupo.reduce(
-      (suma, email) => suma + (Array.isArray(email.proposedTasks) ? email.proposedTasks.length : 0),
-      0,
-    ),
+    // H.3: el mismo borrador que abre «Revisar», no la suma de todos.
+    proposedTaskCount: (() => {
+      const propuestas = borradorDelHilo(grupo)?.proposedTasks;
+      return Array.isArray(propuestas) ? propuestas.length : 0;
+    })(),
     hasAttachments: grupo.some((email) => email.hasAttachments),
   };
 }
@@ -936,9 +957,7 @@ export class EmailsService {
     // manda el más reciente: es el que ya vio el historial. Se devuelve **su**
     // id, porque es ahí donde se aprueba y de donde se lee la confianza.
     if (!force) {
-      const conBorrador = threadEmails.find(
-        (e) => Array.isArray(e.proposedTasks) && e.proposedTasks.length > 0,
-      );
+      const conBorrador = borradorDelHilo(threadEmails);
 
       // Así el modal "Revisar N" abre con las propuestas reales sin volver a cobrar.
       if (conBorrador) {

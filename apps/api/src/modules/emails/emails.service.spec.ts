@@ -1861,3 +1861,76 @@ describe('EmailsService — descarga de adjuntos (Fase 8)', () => {
     });
   });
 });
+
+/**
+ * H.3 — el número del botón «Revisar N» y lo que abre ese botón salen de la
+ * misma función (`borradorDelHilo`). En vivo, «SR. RAYO 404-A» decía «Revisar
+ * 45» y la ventana enseñaba 1: el botón sumaba los borradores de todos los
+ * correos del hilo, de antes de G, y la ventana ya enseñaba solo el último.
+ */
+describe('EmailsService — H.3 · el botón cuenta lo mismo que enseña la ventana', () => {
+  const fila = (extra: Record<string, unknown>) => ({
+    threadId: 'hilo-viejo',
+    subject: 'Asunto',
+    from: 'quien@ejemplo.mx',
+    category: 'OTHER',
+    status: EmailStatus.PENDING,
+    labels: [],
+    snippet: 'algo',
+    bodyText: 'algo',
+    company: null,
+    bank: null,
+    hasAttachments: false,
+    processedAt: new Date('2026-09-01T00:00:00.000Z'),
+    skipReason: null,
+    isActionable: true,
+    _count: { tasks: 0 },
+    ...extra,
+  });
+
+  // Del más reciente al más antiguo, como las dos consultas.
+  const hilo = [
+    fila({ id: 'nuevo', gmailMessageId: 'g-n', receivedAt: new Date('2026-09-25T10:00:00Z'), proposedTasks: [{ title: 'Firmar contrato', aiConfidence: 0.8 }] }),
+    fila({ id: 'medio', gmailMessageId: 'g-m', receivedAt: new Date('2026-09-20T10:00:00Z'), proposedTasks: null }),
+    fila({
+      id: 'viejo',
+      gmailMessageId: 'g-v',
+      receivedAt: new Date('2026-09-18T10:00:00Z'),
+      proposedTasks: [{ title: 'Pedir RFC' }, { title: 'Pedir INE' }, { title: 'Pedir acta' }],
+    }),
+  ];
+
+  let service: EmailsService;
+
+  beforeEach(() => {
+    const prisma = {
+      email: {
+        groupBy: jest.fn().mockImplementation((args: any) =>
+          Promise.resolve(
+            args._count
+              ? [{ threadId: 'hilo-viejo', _count: { _all: 3 } }]
+              : [{ threadId: 'hilo-viejo', _max: { receivedAt: hilo[0].receivedAt } }],
+          ),
+        ),
+        findMany: jest.fn().mockResolvedValue(hilo),
+        findFirst: jest.fn().mockResolvedValue({ threadId: 'hilo-viejo' }),
+      },
+    };
+    service = new EmailsService(
+      prisma as unknown as PrismaService,
+      { reclassifyThread: jest.fn() } as unknown as EmailClassificationService,
+      gateway as unknown as TasksGateway,
+      tags as unknown as TagsService,
+      gmail as unknown as GmailService,
+    );
+  });
+
+  it('un hilo con borradores en dos correos: botón y ventana dan el mismo número', async () => {
+    const [tarjeta] = (await service.listThreads(USER_ID, {})).items;
+    const ventana = await service.classify(USER_ID, 'viejo');
+
+    expect(ventana.tasks.map((t) => t.title)).toEqual(['Firmar contrato']);
+    expect(tarjeta.proposedTaskCount).toBe(ventana.tasks.length);
+    expect(tarjeta.proposedTaskCount).toBe(1);
+  });
+});
