@@ -2196,3 +2196,193 @@ afirmo, **lo pregunto**.
   no lo veo.
 
 **No he cerrado nada y no he reparado nada.**
+
+---
+
+## 86. Buzón de Doc y vuelta de `gcloud` (2026-10-01)
+
+Leídas las dos entradas de Doc del 30-09. **El encargo D todavía no está entregado**: no hay
+commits después de `5576210`, y `WEB_URL`/`WEB_URL_EXTRA` siguen como el 25-09. No hay
+nada que auditar todavía. **Apex sin registro A: aceptado, se retira** (§85.4). **C12 y
+Vercel** siguen abiertos y quedan en manos de Doc. `gcloud` vuelve a funcionar.
+
+### 86.1 ✅ El «despliegue relanzado» no tapaba un fallo
+
+- El **intento 1** de `36170292338` (25-09 17:56–18:03 UTC) **salió verde** y creó
+  `pmo-api-00145-5cv`. **No falló.**
+- 00145 **no tiene `WEB_URL_EXTRA`**: la variable se creó a las 17:58:20, cuando ese
+  despliegue ya había leído las variables (empezó a las 17:56:47).
+- El **intento 2** (27-09 02:17 UTC) creó **`pmo-api-00146-xfs`**, que sí la lleva. **Es la
+  revisión viva, con el 100 % del tráfico.** Se relanzó para recoger la variable, no para
+  tapar un fallo.
+- En 00146: `WEB_URL` = web.app, `GOOGLE_REDIRECT_URI` = run.app, `PRESUPUESTO_IA_USD=75`,
+  `ANTHROPIC_API_KEY_EXPIRY=2026-11-01`. Todo en su sitio.
+
+### 86.2 ✅ `company`/`bank`: el vocabulario de nueve bancos funciona
+
+Las 14 clasificaciones posteriores a `5576210` (25-09 18:22 → 30-09 14:46 UTC):
+
+| | Con valor | Antes (diagnóstico B) |
+|---|---|---|
+| `company` | **8 de 14** (todas `Urbazepto`) | 8 de 247 conservaban algo |
+| `bank` | **9 de 14** (8 `BIM`, 1 `Banregio`) | |
+
+**BIM**, que entró nuevo en `5576210`, es el que más aparece: el alias funciona. Los 5 casos
+sin banco y los 6 sin empresa **pueden ser correctos** (correos que no mencionan ninguno);
+sin leer los correos no lo afirmo.
+
+### 86.3 ❓ Entra muy poco correo, y parece deliberado
+
+Sincronizaciones al día: entre 7 y 134, **ninguna con fallos, ninguna sin descargar,
+ninguna retenida**. Lo que se guarda baja: 220 (21-09) → 60 → 25 → 5 → 18 → **0, 0, 1, 4, 1,
+0** (26-09 → 01-10). Todo lo guardado se clasifica: 18 guardados el 25-09 y 18 «Resultado
+de IA».
+
+Cuadra con **«Bandeja 0: entra solo lo etiquetado PMO»**: Gmail avisa y la sincronización
+corre, pero casi nada lleva la etiqueta. **No lo doy por defecto**, lo pregunto: ¿el Jefe
+está etiquetando PMO lo que quiere ver? Si no lo hace, el tablero se queda vacío **sin
+ningún error que lo avise**.
+
+**No he cerrado nada y no he reparado nada.**
+
+> **§86.3 contestada (2026-10-01):** el Jefe **no está usando el tablero** ni etiquetando
+> PMO hasta que se corrijan cosas. El poco volumen es esperado y **no es hallazgo**. Lo que
+> sí queda: cuando empiece a usarlo, comprobar que lo etiquetado entra y se clasifica.
+
+---
+
+## 87. Interacción del Jefe en el tablero, vista desde fuera (2026-10-01, 17:24–17:25 UTC)
+
+En `app.pmo-app.com`, cruzando Chrome con los logs de `pmo-api-00146-xfs`:
+
+| Hora UTC | Qué pasó | |
+|---|---|---|
+| 17:24:22 | Instancia nueva. El socket se cae, `/auth/me` da **401**, `/auth/refresh` **200**, y el socket se reconecta | ✅ La renovación silenciosa funciona **desde `app.`** |
+| 17:24:39 | Abre el correo de Sofía Mayén (BIM, 30-09) | ✅ |
+| 17:24:44 | «Revisar»: clasificación **servida del borrador guardado** | ✅ Sin gastar IA |
+| 17:24:53 | Aprueba: «Cuarentena confirmada… **1 tarea aprobada**» (`to-task` 201) | ✅ La bandeja se refresca sola |
+| 17:25:06 | Tablero: tareas, obras, cronómetros | ✅ |
+| 17:25:24 | Arranca el cronómetro sobre `cmupt12uw…` | ✅ |
+
+**Sin errores.** Observaciones abiertas, menores:
+
+1. 🟡 Tras el 401, **la pestaña se queda en `/login`** aunque pinta la bandeja y el
+   tablero. No lo he probado, pero recargar ahí podría llevar al login.
+2. 🟡 La tarjeta propuso **16** tareas y se aprobó **1**. Puede ser lo que el Jefe eligió;
+   no lo afirmo.
+3. ℹ️ A las 17:25:02 llegaron dos `OPTIONS /auth/me` **sin `/api`**, con `curl/8.5.0` desde
+   `52.159.243.201` (fuera de la red del Jefe). **No son del tablero.** Parece la sonda de
+   otro agente con la ruta mal escrita. Sin consecuencias (204).
+
+---
+
+## 88. Tres defectos que el Jefe vio usando el tablero (2026-10-01)
+
+El Jefe, tras su prueba de §87: *«no está reconociendo cadenas ni temporalidades ni tareas
+ya resueltas… las tarjetas son muy largas… el cronómetro no inicia»*. Los tres están
+**confirmados en el código**.
+
+### 88.1 🔴 La IA no entiende el hilo: suma propuestas viejas y no ve lo ya resuelto
+
+Cuatro causas, todas en el diseño:
+
+1. **«Revisar» suma las propuestas de todos los correos del hilo**, sin quitar
+   duplicados ni lo resuelto: `emails.service.ts:933-948`
+   (`threadEmails.flatMap(e => e.proposedTasks)`). Las **16 propuestas** del correo de
+   Sofía Mayén son la suma de varios mensajes. Se sirven «desde el borrador guardado», así
+   que **nunca se vuelven a pensar**.
+2. **Cada correo se analiza solo, y nunca se revisa lo anterior**:
+   `ai.service.ts:325-328` le dice al modelo «Analiza SOLO esto y no repitas tareas del
+   historial». Cuando llega un mensaje que **resuelve** tareas de uno anterior, nada borra
+   ni cierra esas propuestas. Y el prompt no tiene ninguna instrucción sobre lo resuelto.
+3. **El historial va sin autor ni fecha**: `email-classification.service.ts:323`
+   selecciona solo `bodyText` y `snippet`, unidos por `---`. El modelo **no sabe quién dijo
+   qué ni cuándo**: esas son las «temporalidades» que echa en falta el Jefe.
+4. **Probable, sin verificar en la base:** solo se ingieren los mensajes con la etiqueta
+   **PMO** (`gmail.service.ts:401-406`, `1139-1144`). En Gmail, la respuesta que el Jefe
+   envía en un hilo etiquetado **no hereda la etiqueta**. Si es así, **su respuesta con la
+   solución no llega ni a la base ni al modelo**, salvo citada dentro de un correo posterior.
+
+**Qué hace falta (lo decide Doc, no yo):** clasificar **por hilo** y no por mensaje; que
+en el contexto vayan el autor y la fecha; que se incluyan los mensajes enviados por el
+Jefe; y que lo resuelto en un mensaje posterior anule las propuestas anteriores.
+
+### 88.2 🟠 Las tarjetas pintan todas las subtareas
+
+`TaskCard.tsx:182`: `task.subtasks.map(...)` pinta **la lista entera, siempre**, sin
+plegar. Con 11 o 16 subtareas, la tarjeta ocupa varias pantallas (la captura de §87).
+**El Jefe pidió estilo Monday:** en el tablero solo la ficha resumen (título, barra de
+progreso X/N, etiquetas, cronómetro), y **al abrirla** se despliegan las tareas.
+⚠️ **Ese pedido no está escrito en ningún documento neutral** (`TASKS.md`, `docs/`): no
+aparece. Si está en una bitácora, no lo sé (no las leo). **Un pedido que no está en el
+plan no se va a entregar.**
+
+### 88.3 🔴 El cronómetro no se ve al arrancar ni al parar, hasta refrescar
+
+El patrón está roto por los dos lados:
+
+- **El cliente no actualiza su pantalla**: `KanbanBoard.tsx:363-381`
+  (`handleStartTimer`/`handleStopTimer`) llama a la API, muestra el toast y **no toca el
+  estado**: no usa lo que devuelve el `POST`.
+- **El servidor no le avisa a él**: el cliente manda `x-socket-id`
+  (`time.api.ts:67-85`), y el servidor emite `time:started`/`stopped` **a todos menos a
+  ese socket** (`tasks.gateway.ts:491`, `room.except(...)`).
+
+Así que quien pulsa es el único que no se entera. Solo lo ve al recargar, porque la carga
+inicial sí lee `/time/active` (`KanbanBoard.tsx:81`). Confirmado en vivo: a las 17:25:24
+UTC el servidor arrancó el cronómetro (`201`, «Cronómetro en marcha»), y la pantalla no lo
+mostró.
+
+**No he cerrado nada y no he reparado nada.**
+
+---
+
+## 89. Despertar del 2026-10-05: auditoría de G
+
+Desde §88 entraron E (`bc5c688`, `8c542d5`), las tarjetas de @Gravity (`3419707`, `e4cc5d3`),
+G (`b372767`, `0fe8a99`, `8afc3b1`, `e78dfba`) y hoy `6e6d1ea` (H.1) y `76cce1e` (H.2). El
+frontend publicado es `76cce1e` en los dos dominios. `/health/ready` en verde. **`gcloud` ha
+vuelto a caducar.** Variables de D: `WEB_URL=app.`, `WEB_URL_EXTRA=web.app`, `redirect_uri`
+en `run.app`, como pedía Doc. C12 sigue vacío (una línea, como pidió Doc).
+
+### 89.1 ✅ Lo que pide Doc de G, en el código
+
+| Criterio | Resultado |
+|---|---|
+| Las tareas aprobadas no cambian al reclasificar | ✅ `reclassifyThread` solo escribe `Email.proposedTasks`: el borrador en el correo más reciente, `JsonNull` en los demás, en una transacción. No toca `Task` |
+| «Revisar» ya no suma | ✅ En el modal: `emails.service.ts:938-957` sirve **un** borrador, el del correo más reciente que lo tenga |
+| Texto real de clientes en las pruebas de G | ✅ No: «Depto 101», `equipo@zepto.com.mx`, «boleta de agua». Genéricos |
+| H.1 (`6e6d1ea`) | ✅ La instrucción ya incluye las subtareas aprobadas y pendientes. Las completadas siguen en el contexto |
+| H.2 (`76cce1e`) | ✅ `version.json` sale del HEAD local, y el build falla si hay cambios sin commitear o HEAD no está empujado. Cierra mi §80.1 |
+
+### 89.2 🟠 El botón «Revisar N» sigue sumando, y miente en los hilos viejos
+
+G arregló el **modal**, pero no el **número del botón**: `emails.service.ts:248-251`
+(`proposedTaskCount: grupo.reduce(suma…)`, sin cambios desde `37b61b7`, 10-09) sigue sumando
+los borradores de todos los correos del hilo.
+
+- En los hilos que ya pensó G no se nota: los demás correos quedan en `JsonNull`, así que la
+  suma es el único borrador («Revisar 1» en Mariana Villanueva y en Atención a clientes).
+- **En los hilos de antes de G, sí:** casi toda la bandeja. **Comprobado en vivo**: Cecilia
+  Aguilar, «SR. RAYO Unidad 404-A», dice **«45 propuestas · Revisar 45»**, y al abrirlo el
+  modal enseña **1** tarea. Lo mismo, sin abrir, con 17, 15, 10, 9, 7… Cerré **sin cambios**.
+
+**Qué supone:** el Jefe ve 45 tareas pendientes donde hay una. Es justo la queja del 01-10
+(«no reconoce lo ya resuelto»), ahora solo en el contador. Hay dos arreglos y los decide Doc:
+contar como el modal (el borrador del más reciente que lo tenga) o volver a pensar los hilos
+viejos. El segundo cuesta IA.
+
+### 89.3 Sin poder comprobar
+
+- **El coste de la prueba real** ($0,0231, frente a los $0,10 estimados: **4 veces menos**).
+  Puede ser verdad (sin citas y con un tope de 8.000 caracteres), pero sin `gcloud` no veo la
+  línea «Uso IA · entrada=… salida=…» ni si el hilo entró **entero** o recortado. Es lo
+  primero que miro cuando vuelva.
+- **E con dos pestañas y las acciones de las tarjetas**: el Jefe las dio por buenas el 01-10.
+  Mi prueba con dos pestañas arranca un cronómetro real sobre una tarea suya, así que la
+  dejo para cuando él diga.
+- ℹ️ Fuera de G: `title.prefix.spec.ts:126,173` lleva `josmat.narvaez@sekuralaw.com` y
+  «Lic. Josmat Narvaez», que parecen una persona y un despacho reales. Es de `b1c0cac`
+  (28-07), no de G. Menor.
+
+**No he cerrado nada y no he reparado nada.**
