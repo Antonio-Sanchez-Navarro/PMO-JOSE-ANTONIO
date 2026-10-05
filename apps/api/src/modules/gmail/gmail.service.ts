@@ -10,6 +10,7 @@ import { describirError, stackDe } from '../../common/observability/describir-er
 import { AlertService } from '../../common/alerts/alert.service';
 import type { ClassifyEmailJob } from '../ai/classify-email.job';
 import { GmailQuotaError, esCuotaAgotada, esOmisionPermanente } from './gmail-quota';
+import { mensajesQueEntran } from './hilos-pmo';
 
 /**
  * Qué pasó al intentar poner el `watch` de un buzón.
@@ -130,7 +131,12 @@ const OMITIDO = Symbol('mensaje omitido: Gmail ya no lo tiene');
 /** Lo que puede salir de intentar bajar un mensaje suelto. */
 type ResultadoDescarga = EmailSnippet | typeof OMITIDO | null;
 
-/** Cuántos correos trae la primera sincronización cuando no hay `historyId` previo. */
+/**
+ * Cuántos **hilos** PMO mira la primera sincronización cuando no hay `historyId`
+ * previo. Hasta I.2 eran 25 mensajes; ahora son los 25 hilos más recientes, y de
+ * cada uno entra lo que dice `mensajesQueEntran` (desde la etiqueta, como mucho
+ * 90 días).
+ */
 const BACKFILL_SIZE = 25;
 
 /**
@@ -400,13 +406,13 @@ export class GmailService {
     const labelId = await this.getLabelIdByName(gmail, 'PMO');
     if (!labelId) throw new Error('La etiqueta PMO no existe en Gmail');
 
-    const res = await gmail.users.messages.list({
-      userId: 'me',
-      maxResults,
-      labelIds: [labelId],
-    });
-
-    const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
+    // I.2: por hilos, para que salgan también las respuestas sin etiqueta. Es
+    // una vista: se enseñan los `maxResults` mensajes más recientes de lo que
+    // entra por la regla, no todo.
+    const ids = (await this.mensajesDeHilosPmo(gmail, labelId, maxResults))
+      .sort((a, b) => b.fecha - a.fecha)
+      .slice(0, maxResults)
+      .map((m) => m.id);
     if (ids.length === 0) return [];
 
     // Lectura para la vista: aqui un fallo de descarga solo significa una fila
@@ -1138,13 +1144,10 @@ export class GmailService {
     const labelId = await this.getLabelIdByName(gmail, 'PMO');
     if (!labelId) throw new Error('La etiqueta PMO no existe en Gmail. Abortando resincronización.');
 
-    const res = await gmail.users.messages.list({
-      userId: 'me',
-      maxResults: BACKFILL_SIZE,
-      labelIds: [labelId],
-    });
-
-    const ids = (res.data.messages ?? []).map((m) => m.id).filter((id): id is string => !!id);
+    // I.2: los hilos con la etiqueta y, de cada uno, desde el mensaje etiquetado
+    // más antiguo (como mucho 90 días). Con `messages.list` + etiqueta se
+    // perdían las respuestas, que en Gmail no heredan la etiqueta del hilo.
+    const ids = (await this.mensajesDeHilosPmo(gmail, labelId, BACKFILL_SIZE)).map((m) => m.id);
     const descarga =
       ids.length > 0
         ? await this.fetchMessages(gmail, ids, 'full')
@@ -1181,6 +1184,38 @@ export class GmailService {
     }
 
     return { processed: recuento.encolados, mode: 'backfill', historyId };
+  }
+
+  /**
+   * Los mensajes que entran de los `maxHilos` hilos PMO más recientes, según
+   * `mensajesQueEntran`, con su fecha para quien quiera ordenarlos.
+   *
+   * Un `threads.get` por hilo en formato `minimal` (id, etiquetas y fecha, sin
+   * cuerpo): lo caro, la descarga entera, sigue siendo cosa de `fetchMessages` y
+   * solo de los que entran.
+   */
+  private async mensajesDeHilosPmo(
+    gmail: GmailClient,
+    labelId: string,
+    maxHilos: number,
+  ): Promise<{ id: string; fecha: number }[]> {
+    const res = await gmail.users.threads.list({
+      userId: 'me',
+      maxResults: maxHilos,
+      labelIds: [labelId],
+    });
+
+    const mensajes: { id: string; fecha: number }[] = [];
+    for (const { id } of res.data.threads ?? []) {
+      if (!id) continue;
+      const hilo = await gmail.users.threads.get({ userId: 'me', id, format: 'minimal' });
+      const delHilo = hilo.data.messages ?? [];
+      const fechas = new Map(delHilo.map((m) => [m.id, Number(m.internalDate)]));
+      for (const idMensaje of mensajesQueEntran(delHilo, labelId)) {
+        mensajes.push({ id: idMensaje, fecha: fechas.get(idMensaje) ?? 0 });
+      }
+    }
+    return mensajes;
   }
 
   private async saveHistoryId(userId: string, historyId?: string): Promise<void> {

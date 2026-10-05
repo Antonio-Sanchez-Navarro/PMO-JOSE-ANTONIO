@@ -281,6 +281,11 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
 
     const getProfile = jest.fn().mockResolvedValue({ data: { historyId: '9999' } });
     const messagesList = jest.fn().mockResolvedValue({ data: { messages: [{ id: 'bf-1' }] } });
+    // I.2: el backfill pide hilos, no mensajes sueltos.
+    const threadsList = jest.fn().mockResolvedValue({ data: { threads: [{ id: 'hilo-1' }] } });
+    const threadsGet = jest.fn().mockResolvedValue({
+      data: { messages: [{ id: 'bf-1', labelIds: ['Label_PMO'], internalDate: String(Date.now()) }] },
+    });
     const labels = { list: jest.fn().mockResolvedValue({ data: { labels: [{ name: 'PMO', id: 'Label_PMO' }] } }) };
 
     (service as unknown as { getGmailClient: unknown }).getGmailClient = jest
@@ -290,6 +295,7 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
           history: { list: historyList },
           getProfile,
           messages: { list: messagesList },
+          threads: { list: threadsList, get: threadsGet },
           labels,
         },
       });
@@ -316,7 +322,7 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
         }),
       );
 
-    return { service, prisma, add, upsert, alertas, historyList, getProfile, messagesList };
+    return { service, prisma, add, upsert, alertas, historyList, getProfile, messagesList, threadsList, threadsGet };
   }
 
   /**
@@ -534,6 +540,34 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
 
     expect(alertas.avisar).toHaveBeenCalledTimes(1);
     expect(String(alertas.avisar.mock.calls[0][1])).toContain('1 sin descargar');
+  });
+
+  it('I.2: el backfill pide hilos y baja desde el mensaje etiquetado, no lo anterior', async () => {
+    const { service, threadsList, threadsGet, messagesList } = crear({ paginas: 50 });
+    const dia = 24 * 3_600_000;
+    const ahora = Date.now();
+    threadsGet.mockResolvedValue({
+      data: {
+        messages: [
+          { id: 'antes', labelIds: ['INBOX'], internalDate: String(ahora - 10 * dia) },
+          { id: 'etiquetado', labelIds: ['INBOX', 'Label_PMO'], internalDate: String(ahora - 8 * dia) },
+          { id: 'respuesta-jefe', labelIds: ['SENT'], internalDate: String(ahora - 6 * dia) },
+          { id: 'respuesta-fuera', labelIds: ['INBOX'], internalDate: String(ahora - 2 * dia) },
+        ],
+      },
+    });
+    const fetchMessages = (service as unknown as { fetchMessages: jest.Mock }).fetchMessages;
+
+    const res = await service.syncHistory(USUARIO);
+
+    expect(res.mode).toBe('backfill');
+    expect(threadsList).toHaveBeenCalledWith(
+      expect.objectContaining({ labelIds: ['Label_PMO'], maxResults: 25 }),
+    );
+    expect(threadsGet).toHaveBeenCalledWith(expect.objectContaining({ id: 'hilo-1', format: 'minimal' }));
+    expect(fetchMessages.mock.calls.at(-1)[1]).toEqual(['etiquetado', 'respuesta-jefe', 'respuesta-fuera']);
+    // Ya no se piden mensajes sueltos por etiqueta: ese era el agujero.
+    expect(messagesList).not.toHaveBeenCalled();
   });
 
   it('un historial larguísimo se corta y cae a backfill en vez de paginar sin fin', async () => {
@@ -1340,6 +1374,12 @@ describe('GmailService · el goteo entre tandas (Fase 8.1)', () => {
         users: {
           messages: {
             list: jest.fn().mockResolvedValue({ data: { messages: [{ id: 'a' }] } }),
+          },
+          threads: {
+            list: jest.fn().mockResolvedValue({ data: { threads: [{ id: 'h' }] } }),
+            get: jest.fn().mockResolvedValue({
+              data: { messages: [{ id: 'a', labelIds: ['Label_PMO'], internalDate: String(Date.now()) }] },
+            }),
           },
           labels: {
             list: jest.fn().mockResolvedValue({ data: { labels: [{ name: 'PMO', id: 'Label_PMO' }] } }),
