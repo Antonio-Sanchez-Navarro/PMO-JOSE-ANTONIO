@@ -2437,3 +2437,45 @@ Copia y enlaces borrados: las dependencias de la carpeta real siguen intactas.
   publicación a mano deje de ser posible.
 
 **No he reparado nada.**
+
+---
+
+## 91. Primeras publicaciones del frontend desde el CI (2026-10-05, 18:32–18:42 UTC)
+
+### 91.1 ✅ La lectura de Doc es correcta: el rojo de `37356732489` era falso
+
+- La ejecución (`workflow_dispatch`, `2a1cd0d`) **publicó bien**: los dos dominios sirvieron
+  `version.json = 2a1cd0d` y las cabeceras. Falló solo en «Comprobar lo publicado».
+- Causa: el script abre con **`set -o pipefail`** (`publicar-frontend.yml`, paso «Comprobar lo
+  publicado») y hace `curl … | grep -q host`. `grep -q` sale en cuanto encuentra el host y
+  cierra la tubería; `curl` muere con **`(23) Failure writing output`**, y con `pipefail` la
+  tubería entera da error. Por eso dice «no apunta» justo cuando **sí** apunta.
+- **Lo medí aparte:** el bundle servido, `/assets/index-J2jsXo4i.js` (871 968 bytes), contiene
+  `pmo-api-mlpuuasqka-uc.a.run.app` y ni una vez `api.pmo-app.com`, en los dos dominios.
+- Además, la línea «cabeceras de seguridad presentes» **salía aunque hubiera fallado**: se
+  imprimía después del `::error::`.
+- `75f4d22` lo arregla bajando el bundle a un archivo antes de buscar, y el mensaje de «todo
+  bien» solo sale si el dominio pasó todo.
+
+### 91.2 🟠 El falso aviso SÍ llegó al chat
+
+El avisador `37356955224` (18:34:25) construyó «Publicar frontend en Firebase Hosting ·
+2a1cd0d» y lo mandó con `curl --fail`: **«Aviso enviado»** a las 18:34:30. El Jefe recibió un
+aviso de fallo de una publicación que salió bien. Ya no se repite con `75f4d22`, pero conviene
+que alguien le diga que ese aviso fue falso.
+
+### 91.3 ✅ Las dos primeras publicaciones automáticas (las que pidió Doc)
+
+| Run | Origen | Resultado |
+|---|---|---|
+| `37357272249` (18:36:52) | `workflow_run` del CI de `75f4d22` (intento 1) | ✅ verde |
+| `37357702558` (18:40:19) | `workflow_run` del **mismo CI relanzado a mano** (intento 2, 18:38:40) | ✅ verde |
+
+Producción: `version.json = 75f4d22` (construido a las 18:41:14) en `app.` y `web.app`, el mismo
+bundle `J2jsXo4i` (el commit solo toca el workflow, así que el bundle no cambia). La doble
+publicación **no es un defecto del disparador**: alguien relanzó el CI. Ese mismo relanzamiento
+canceló el primer «Deploy API» de `75f4d22` y lanzó otro. Inofensivo. Y de paso: un commit que
+solo toca `.github/` también redespliega la API (el filtro de Doc para `*.md`/`docs/` está
+pedido; quizá debería cubrir también `.github/workflows/publicar-frontend.yml`).
+
+**No he reparado nada.**
