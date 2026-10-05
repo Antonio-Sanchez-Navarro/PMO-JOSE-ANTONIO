@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -36,6 +37,15 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, onSubmit,
     },
   });
 
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleFormSubmit = (data: TaskFormData) => {
@@ -49,14 +59,53 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, onSubmit,
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className={`w-full p-6 bg-white rounded-lg shadow-xl dark:bg-slate-800 max-h-[90vh] overflow-y-auto ${task ? 'max-w-2xl' : 'max-w-md'}`}>
-        <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-white">
-          {task ? 'Detalle de Tarea' : 'Nueva Tarea'}
-        </h2>
+  const content = (
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      onClick={handleClose}
+      data-testid="modal-backdrop"
+    >
+      <div 
+        className={`w-full p-6 bg-white rounded-lg shadow-xl dark:bg-slate-800 max-h-[90vh] overflow-y-auto ${task ? 'max-w-2xl' : 'max-w-md'}`}
+        onClick={(e) => e.stopPropagation()}
+        data-testid="modal-content"
+      >
+        <div className="flex justify-between items-start mb-4">
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-white">
+            {task ? 'Detalle de Tarea' : 'Nueva Tarea'}
+          </h2>
+          <button 
+            type="button"
+            onClick={handleClose}
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors p-1"
+            title="Cerrar modal"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
         
         <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
+          {task && task.labels && task.labels.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-4">
+              {task.labels.map((label) => (
+                <span
+                  key={label.id}
+                  style={{
+                    backgroundColor: label.color + '20',
+                    color: label.color,
+                    borderColor: label.color,
+                  }}
+                  className="text-[10px] px-1.5 py-0.5 rounded-sm border font-medium max-w-full break-words"
+                  title={label.name}
+                >
+                  {label.name}
+                </span>
+              ))}
+            </div>
+          )}
+
           <div>
             <label className="block mb-1 text-sm font-medium text-slate-700 dark:text-slate-300">
               Título
@@ -161,4 +210,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, onSubmit,
       </div>
     </div>
   );
+
+  return createPortal(content, document.body);
 };

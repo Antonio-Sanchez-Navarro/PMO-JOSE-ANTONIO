@@ -113,7 +113,8 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
   const cleanTitle = titleMatch ? titleMatch[2] : task.title;
 
   return (
-    <div
+    <>
+      <div
       ref={setNodeRef}
       style={style}
       {...attributes}
@@ -187,7 +188,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
       {/* Etiquetas curadas del usuario */}
       {task.labels && task.labels.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
-          {task.labels.map(label => (
+          {task.labels.slice(0, 3).map(label => (
             <span
               key={label.id}
               style={{
@@ -201,6 +202,14 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
               {label.name}
             </span>
           ))}
+          {task.labels.length > 3 && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-sm border font-medium bg-slate-100 text-slate-600 border-slate-200 cursor-help"
+              title={task.labels.map(l => l.name).join(', ')}
+            >
+              +{task.labels.length - 3}
+            </span>
+          )}
         </div>
       )}
 
@@ -308,6 +317,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
           🕒
         </button>
       </div>
+      </div>
 
       <TaskModal 
         isOpen={isDetailOpen}
@@ -315,6 +325,6 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
         task={task}
         onToggleSubtask={onToggleSubtask}
       />
-    </div>
+    </>
   );
 };
