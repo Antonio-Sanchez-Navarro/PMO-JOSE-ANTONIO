@@ -11,6 +11,7 @@ import { AlertService } from '../../common/alerts/alert.service';
 import type { ClassifyEmailJob } from '../ai/classify-email.job';
 import { GmailQuotaError, esCuotaAgotada, esOmisionPermanente } from './gmail-quota';
 import { mensajesQueEntran } from './hilos-pmo';
+import { programarAnalisisDelHilo, type ColaDeHilos } from '../ai/programar-hilo';
 
 /**
  * Qué pasó al intentar poner el `watch` de un buzón.
@@ -1314,12 +1315,14 @@ export class GmailService {
       // aparte es lo que permite distinguir «no llego» de «llego y nadie lo
       // miro», que es justo lo que el `catch` compartido borraba.
       try {
-        // `jobId` determinista: BullMQ ignora un alta cuyo id ya existe, asi
-        // que reprocesar el mismo tramo -que ahora pasa a proposito cuando el
-        // marcador se retiene- no encola el mismo correo dos veces. Es tambien
-        // lo que impide que el barrido de reconciliacion duplique un trabajo
-        // que ya esta en vuelo.
-        await this.classifyQueue.add('classify', { emailId: upsertedEmail.id }, { jobId: upsertedEmail.id });
+        // Encargo J: no se analiza este correo, se programa «pensar el hilo»
+        // con un id por hilo y 60 s de espera. Una ráfaga de correos del mismo
+        // hilo se paga una vez, y reprocesar el mismo tramo no duplica nada.
+        await programarAnalisisDelHilo(this.classifyQueue as unknown as ColaDeHilos, {
+          emailId: upsertedEmail.id,
+          userId,
+          threadId: email.threadId,
+        });
         resultado.encolados++;
       } catch (err) {
         resultado.sinEncolar++;
@@ -1414,7 +1417,7 @@ export class GmailService {
         // incluiria en un `lte` a secas: en SQL, `NULL <= ahora` no es cierto.
         OR: [{ reconcileAfter: null }, { reconcileAfter: { lte: ahora } }],
       },
-      select: { id: true, reconcileAttempts: true },
+      select: { id: true, reconcileAttempts: true, userId: true, threadId: true },
       orderBy: { receivedAt: 'asc' },
       take: MAX_RECONCILIADOS,
     });
@@ -1432,23 +1435,20 @@ export class GmailService {
 
     let atascados = 0;
 
-    for (const { id, reconcileAttempts } of huerfanos) {
+    for (const { id, reconcileAttempts, userId, threadId } of huerfanos) {
       try {
-        // ⚠️ **El `remove` antes del `add` es lo que hace que esto funcione, y
-        // el orden importa.**
-        //
-        // El `add` usa `jobId: id`, así que BullMQ **ignora** un alta cuyo id ya
-        // existe. Eso es justo lo que se quiere frente a un trabajo **activo**
-        // —no duplicar— pero jugaría en contra frente a uno ya **terminado o
-        // fallido**, que sigue guardado (`removeOnComplete`/`removeOnFail` los
-        // conservan un tiempo) y bloquearía el reintento durante días.
-        //
-        // `remove` sobre un trabajo activo **falla**, y por eso el fallo se
-        // traga: si está corriendo, no se toca y el `add` de después se ignora
-        // solo. Si está terminado o fallido, se borra y el `add` entra. Las dos
-        // ramas hacen lo correcto sin preguntar en qué estado está.
+        // Desde el encargo J se programa **por hilo**, igual que la ingesta:
+        // `programarAnalisisDelHilo` mira el estado del trabajo del hilo y
+        // borra el terminado o fallido antes de volver a darlo de alta (BullMQ
+        // ignora un `add` cuyo id ya existe, y los terminados se conservan un
+        // tiempo). El `remove(id)` de aquí es solo para el trabajo por correo
+        // de antes de J, por si queda alguno; sobre uno activo falla y se traga.
         await this.classifyQueue.remove(id).catch(() => undefined);
-        await this.classifyQueue.add('classify', { emailId: id }, { jobId: id });
+        await programarAnalisisDelHilo(this.classifyQueue as unknown as ColaDeHilos, {
+          emailId: id,
+          userId,
+          threadId,
+        });
         reencolados++;
 
         // El intento se anota **despues** de encolar y solo si encolar salio

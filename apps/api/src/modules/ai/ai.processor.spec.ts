@@ -22,7 +22,18 @@ import { GmailQuotaError } from '../gmail/gmail-quota';
 describe('AiProcessor · el correo sin texto se cierra dejando rastro', () => {
   function crear(email: Record<string, unknown> | null) {
     const update = jest.fn().mockResolvedValue({});
-    const prisma = { email: { findUnique: jest.fn().mockResolvedValue(email), update } };
+    // Encargo J: el worker trabaja por hilo. `findMany` devuelve lo pendiente
+    // del hilo (aquí, el propio correo si no está procesado) y el cierre de los
+    // sin texto es un `updateMany`: el mismo doble que `update`, para que las
+    // aserciones sobre `data` sigan valiendo.
+    const prisma = {
+      email: {
+        findUnique: jest.fn().mockResolvedValue(email),
+        findMany: jest.fn().mockResolvedValue(email && !email.processedAt ? [email] : []),
+        update,
+        updateMany: update,
+      },
+    };
     const classification = { classifyAndPersist: jest.fn().mockResolvedValue({ isActionable: false, tasks: [] }) };
 
     const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
@@ -183,8 +194,13 @@ describe('AiProcessor · el credito agotado se dice con su nombre', () => {
           labels: [],
         }),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
     };
+    // Encargo J: lo pendiente del hilo es el propio correo.
+    (prisma.email as Record<string, unknown>).findMany = jest
+      .fn()
+      .mockImplementation(async () => [await prisma.email.findUnique()]);
     const classification = { classifyAndPersist: jest.fn().mockRejectedValue(error) };
     const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
     const gateway = { emitEmailUpdated: jest.fn() };
@@ -267,8 +283,13 @@ describe('AiProcessor · la cuota de GMAIL frena esta cola (Fase 8.2)', () => {
           labels: [],
         }),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
     };
+    // Encargo J: lo pendiente del hilo es el propio correo.
+    (prisma.email as Record<string, unknown>).findMany = jest
+      .fn()
+      .mockImplementation(async () => [await prisma.email.findUnique()]);
     const classification = { classifyAndPersist: jest.fn().mockRejectedValue(error) };
     const alertas = { avisar: jest.fn().mockResolvedValue(undefined) };
     const gateway = { emitEmailUpdated: jest.fn() };
@@ -349,5 +370,82 @@ describe('AiProcessor · la cuota de GMAIL frena esta cola (Fase 8.2)', () => {
     await processor.process(job).catch(() => undefined);
 
     expect(rateLimit).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Encargo J — un análisis por ráfaga.
+ *
+ * El trabajo es del hilo: al ejecutarse mira lo pendiente del hilo **en ese
+ * momento** y lo piensa una vez, desde el más reciente con texto.
+ */
+describe('AiProcessor · J · un análisis por hilo, no por correo', () => {
+  function crear(pendientes: Record<string, unknown>[]) {
+    const prisma = {
+      email: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'e1', userId: 'user-1', threadId: 'hilo-1' }),
+        findMany: jest.fn().mockResolvedValue(pendientes),
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const classification = {
+      classifyAndPersist: jest.fn().mockResolvedValue({ isActionable: true, tasks: [], company: null, bank: null }),
+    };
+    const gateway = { emitEmailUpdated: jest.fn() };
+    const processor = new AiProcessor(
+      classification as never,
+      prisma as never,
+      { avisar: jest.fn() } as never,
+      gateway as never,
+    );
+    return { processor, prisma, classification, gateway };
+  }
+  const job = { data: { emailId: 'e1' } } as never;
+  const correo = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    bodyText: `texto de ${id}`,
+    snippet: null,
+    labels: ['INBOX'],
+    ...extra,
+  });
+
+  it('tres correos pendientes del mismo hilo → UNA llamada, desde el más reciente', async () => {
+    const { processor, prisma, classification, gateway } = crear([correo('e1'), correo('e2'), correo('e3')]);
+
+    await processor.process(job);
+
+    expect(prisma.email.findMany.mock.calls[0][0].where).toEqual({
+      userId: 'user-1',
+      threadId: 'hilo-1',
+      processedAt: null,
+    });
+    expect(classification.classifyAndPersist).toHaveBeenCalledTimes(1);
+    expect(classification.classifyAndPersist.mock.calls[0][0]).toBe('e3');
+    // La bandeja se entera de los tres.
+    expect(gateway.emitEmailUpdated).toHaveBeenCalledTimes(3);
+  });
+
+  it('si otro trabajo ya pensó el hilo, no llama al modelo', async () => {
+    const { processor, classification } = crear([]);
+
+    await processor.process(job);
+
+    expect(classification.classifyAndPersist).not.toHaveBeenCalled();
+  });
+
+  it('los sin texto se cierran con su motivo y el resto se piensa igual', async () => {
+    const { processor, prisma, classification } = crear([
+      correo('e1'),
+      correo('e2', { bodyText: null, snippet: null }),
+    ]);
+
+    await processor.process(job);
+
+    expect(prisma.email.updateMany.mock.calls[0][0]).toEqual({
+      where: { id: { in: ['e2'] } },
+      data: { processedAt: expect.any(Date), skipReason: 'SIN_TEXTO' },
+    });
+    expect(classification.classifyAndPersist.mock.calls[0][0]).toBe('e1');
   });
 });

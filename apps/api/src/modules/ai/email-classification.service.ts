@@ -334,7 +334,7 @@ export class EmailClassificationService {
     draft: ClassificationDraft,
     marcarProcesado: boolean,
   ): Promise<void> {
-    const { ancla, objetivo } = hilo;
+    const { ancla } = hilo;
     const ahora = new Date();
 
     await this.prisma.$transaction(async (tx) => {
@@ -359,10 +359,23 @@ export class EmailClassificationService {
         data: { proposedTasks: Prisma.JsonNull },
       });
 
-      // El worker procesaba `objetivo`: queda despachado aunque el borrador
-      // haya ido a parar al más reciente.
-      if (marcarProcesado && objetivo.id !== ancla.id) {
-        await tx.email.update({ where: { id: objetivo.id }, data: { processedAt: ahora } });
+      // Encargo J: un análisis despacha **todo lo pendiente del hilo hasta el
+      // correo que se pensó**, no solo el que pedía el worker. Si no, los
+      // correos del medio de una ráfaga se quedaban con `processedAt` a `null`
+      // y el barrido de reconciliación los volvía a programar, pagando otra vez
+      // un análisis que ya estaba hecho. Lo que haya entrado **después** del
+      // ancla no se toca: lo pensará el trabajo que su llegada programó.
+      if (marcarProcesado) {
+        await tx.email.updateMany({
+          where: {
+            userId: ancla.userId,
+            threadId: ancla.threadId,
+            id: { not: ancla.id },
+            processedAt: null,
+            receivedAt: { lte: ancla.receivedAt },
+          },
+          data: { processedAt: ahora },
+        });
       }
     });
   }
@@ -379,8 +392,13 @@ export class EmailClassificationService {
     const todos = [...otros, objetivo].sort(
       (a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime(),
     );
-    const ancla = todos[todos.length - 1];
-    return { objetivo, ancla, anteriores: todos.slice(0, -1) };
+    // El ancla es el más reciente **con texto**: uno sin texto (una invitación
+    // de Calendar, un correo solo con adjunto) no se puede analizar, y el
+    // worker ya lo marcó aparte. Si ninguno tiene texto, el más reciente, y
+    // `analyze` dirá por qué no sigue.
+    const conTexto = todos.filter((e) => e.bodyText || e.snippet);
+    const ancla = conTexto[conTexto.length - 1] ?? todos[todos.length - 1];
+    return { objetivo, ancla, anteriores: todos.filter((e) => e !== ancla && e.receivedAt <= ancla.receivedAt) };
   }
 
   /** Lo aprobado del hilo, con su estado y sus subtareas, para no proponerlo otra vez. */

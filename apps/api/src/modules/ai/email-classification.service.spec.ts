@@ -259,16 +259,27 @@ describe('EmailClassificationService', () => {
 
       await service.classifyAndPersist(peticion.id, { replaceExisting: true, forceActionable: false });
 
-      const [primero, segundo] = tx.email.update.mock.calls.map((c: any[]) => c[0]);
+      const [primero] = tx.email.update.mock.calls.map((c: any[]) => c[0]);
       expect(primero.where).toEqual({ id: resolucion.id });
       expect(primero.data.proposedTasks).toEqual([expect.objectContaining({ title: expect.any(String) })]);
+      expect(primero.data.processedAt).toBeInstanceOf(Date);
       // Solo los de este hilo y de esta persona, y en ese momento.
       expect(tx.email.updateMany).toHaveBeenCalledWith({
         where: { userId: resolucion.userId, threadId: 'hilo-1', id: { not: resolucion.id } },
         data: { proposedTasks: expect.anything() },
       });
-      // El correo que procesaba el worker queda despachado.
-      expect(segundo).toEqual({ where: { id: peticion.id }, data: { processedAt: expect.any(Date) } });
+      // Encargo J: queda despachado todo lo pendiente del hilo hasta el ancla
+      // (aquí, la petición que procesaba el worker), no solo el correo pedido.
+      expect(tx.email.updateMany).toHaveBeenCalledWith({
+        where: {
+          userId: resolucion.userId,
+          threadId: 'hilo-1',
+          id: { not: resolucion.id },
+          processedAt: null,
+          receivedAt: { lte: resolucion.receivedAt },
+        },
+        data: { processedAt: expect.any(Date) },
+      });
     });
 
     it('(c) una tarea aprobada sigue intacta: se le enseña al modelo y no se escribe en Task', async () => {

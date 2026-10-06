@@ -125,7 +125,7 @@ export class AiProcessor extends WorkerHost {
       return;
     }
 
-    this.logger.log(`Procesando clasificación de email ${emailId}`);
+    this.logger.log(`Procesando clasificación del hilo de ${emailId}`);
 
     const email = await this.prisma.email.findUnique({
       where: { id: emailId },
@@ -134,10 +134,7 @@ export class AiProcessor extends WorkerHost {
         // Hace falta para encaminar el aviso por socket: los eventos van al
         // usuario dueño del correo, no a todas las pestañas del sistema.
         userId: true,
-        processedAt: true,
-        bodyText: true,
-        snippet: true,
-        labels: true,
+        threadId: true,
       },
     });
 
@@ -146,13 +143,26 @@ export class AiProcessor extends WorkerHost {
       return;
     }
 
-    // Idempotencia: la cola puede reentregar el mismo job.
-    if (email.processedAt) {
-      this.logger.log(`El email ${emailId} ya fue procesado el ${email.processedAt}. Omitiendo.`);
+    // ── Encargo J: el trabajo es del HILO, no del correo ───────────────────
+    //
+    // Se programa uno por hilo con 60 s de espera (`programar-hilo.ts`), y al
+    // ejecutarse se mira el hilo **ahora**: todo lo que siga sin procesar entra
+    // en un solo análisis. Si no queda nada —otro trabajo del hilo ya lo pensó,
+    // o la cola reentregó este—, se termina sin llamar al modelo. Es también la
+    // idempotencia de antes (`processedAt`), ahora a nivel de hilo.
+    const pendientes = await this.prisma.email.findMany({
+      where: { userId: email.userId, threadId: email.threadId, processedAt: null },
+      select: { id: true, bodyText: true, snippet: true, labels: true },
+      orderBy: { receivedAt: 'asc' },
+    });
+
+    if (pendientes.length === 0) {
+      this.logger.log(`El hilo de ${emailId} no tiene nada pendiente. Omitiendo.`);
       return;
     }
 
-    if (!email.bodyText && !email.snippet) {
+    const sinTexto = pendientes.filter((e) => !e.bodyText && !e.snippet);
+    if (sinTexto.length > 0) {
       // ⚠️ **Antes esto era un `return` pelado y ahí estaba el bucle.**
       //
       // El barrido de reconciliación busca `processedAt IS NULL`. Sin escribir
@@ -171,20 +181,29 @@ export class AiProcessor extends WorkerHost {
       // el parseo MIME se está comiendo el cuerpo y **ese** es el fallo gordo.
       // Se dejan fuera el asunto y el remitente: para saber de qué tipo son
       // basta la etiqueta, y el log no es sitio para el correo de nadie.
-      await this.prisma.email.update({
-        where: { id: emailId },
+      await this.prisma.email.updateMany({
+        where: { id: { in: sinTexto.map((e) => e.id) } },
         data: { processedAt: new Date(), skipReason: SKIP_REASON.sinTexto },
       });
 
-      this.logger.warn(
-        `El email ${emailId} no tiene texto para analizar: marcado como ` +
-          `${SKIP_REASON.sinTexto} (etiquetas: ${email.labels.join(', ') || 'ninguna'}).`,
-      );
-      return;
+      for (const e of sinTexto) {
+        this.logger.warn(
+          `El email ${e.id} no tiene texto para analizar: marcado como ` +
+            `${SKIP_REASON.sinTexto} (etiquetas: ${e.labels.join(', ') || 'ninguna'}).`,
+        );
+      }
     }
 
+    const conTexto = pendientes.filter((e) => e.bodyText || e.snippet);
+    if (conTexto.length === 0) return;
+
+    // Se clasifica desde el más reciente con texto: `classifyAndPersist` carga
+    // el hilo entero igualmente, y en él guarda el borrador y da por procesados
+    // los anteriores.
+    const objetivo = conTexto[conTexto.length - 1].id;
+
     try {
-      const result = await this.classification.classifyAndPersist(emailId, {
+      const result = await this.classification.classifyAndPersist(objetivo, {
         // Reproceso = reemplazo: si el correo ya tenía tareas de la IA, se
         // sustituyen en lugar de duplicarse.
         replaceExisting: true,
@@ -194,7 +213,8 @@ export class AiProcessor extends WorkerHost {
       });
 
       this.logger.log(
-        `Resultado de IA para ${emailId}: isActionable=${result.isActionable}` +
+        `Resultado de IA para ${objetivo} (hilo de ${conTexto.length} pendiente(s)): ` +
+          `isActionable=${result.isActionable}` +
           (result.tasks.length ? `, ${result.tasks.length} tarea(s) propuesta(s)` : '') +
           // Lo que se guarda en la fila, para poder verlo sin abrir la base.
           `, company=${result.company ?? 'null'}, bank=${result.bank ?? 'null'}`,
@@ -208,7 +228,9 @@ export class AiProcessor extends WorkerHost {
       //
       // Sin `exceptSocketId`: aquí no hay una pestaña que originara la acción
       // —lo disparó la cola—, así que se anuncia a todas las del usuario.
-      this.gateway.emitEmailUpdated({ id: emailId, userId: email.userId });
+      for (const { id } of conTexto) {
+        this.gateway.emitEmailUpdated({ id, userId: email.userId });
+      }
     } catch (error) {
       // ─── Saldo agotado: la causa, dicha con su nombre ──────────────────
       //

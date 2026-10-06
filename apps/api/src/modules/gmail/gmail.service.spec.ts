@@ -252,7 +252,8 @@ describe('GmailService · syncHistory y el marcador de historial', () => {
       {} as never,
       { get: jest.fn() } as never,
       prisma as never,
-      { add } as never,
+      // Encargo J: la ingesta pregunta por el trabajo del hilo antes de darlo de alta.
+      { add, getJob: jest.fn().mockResolvedValue(undefined) } as never,
       alertas as never,
     );
 
@@ -617,6 +618,8 @@ describe('GmailService · barrido de reconciliación', () => {
         (opciones.huerfanos ?? ['e1', 'e2']).map((id) => ({
           id,
           reconcileAttempts: opciones.intentos ?? 0,
+          userId: 'user-1',
+          threadId: `hilo-de-${id}`,
         })),
       );
     const add = opciones.add ?? jest.fn().mockResolvedValue({});
@@ -644,7 +647,7 @@ describe('GmailService · barrido de reconciliación', () => {
       {} as never,
       { get: jest.fn() } as never,
       prisma as never,
-      { add, remove, client } as never,
+      { add, remove, client, getJob: jest.fn().mockResolvedValue(undefined) } as never,
       alertas as never,
     );
 
@@ -752,16 +755,20 @@ describe('GmailService · barrido de reconciliación', () => {
     expect(findMany.mock.calls[0][0].take).toBeLessThanOrEqual(100);
   });
 
-  it('borra el trabajo anterior antes de encolar, y usa el id del correo', async () => {
-    // `add` con un jobId que ya existe se ignora. Eso protege del duplicado
-    // cuando el trabajo está activo, pero bloquearía el reintento cuando está
-    // terminado o fallido: por eso se intenta borrar antes.
+  it('borra el trabajo por correo de antes de J y programa el del hilo', async () => {
+    // Desde J se programa por hilo, con espera: el barrido usa la misma vía
+    // que la ingesta. El `remove` del id del correo limpia lo que quede de
+    // antes de J.
     const { service, add, remove } = crear({ huerfanos: ['e1'] });
 
     await service.reconciliarSinClasificar();
 
     expect(remove).toHaveBeenCalledWith('e1');
-    expect(add).toHaveBeenCalledWith('classify', { emailId: 'e1' }, { jobId: 'e1' });
+    expect(add).toHaveBeenCalledWith(
+      'classify',
+      { emailId: 'e1' },
+      { jobId: 'hilo-user-1-hilo-de-e1', delay: 60_000 },
+    );
   });
 
   it('si el trabajo anterior está activo y no se puede borrar, sigue igual', async () => {
