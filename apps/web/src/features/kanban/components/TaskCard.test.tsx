@@ -22,47 +22,41 @@ describe('TaskCard', () => {
     labels: [],
   };
 
-  it('debería mostrar 3 etiquetas y un chip +N cuando tiene 10 etiquetas', () => {
-    const taskWith10Labels = {
+  it('debería truncar a 3 chips y mostrar +N sumando labels y tags (ej: 10 tags)', () => {
+    const taskWith10Tags = {
       ...baseTask,
-      labels: Array.from({ length: 10 }).map((_, i) => ({
-        id: `lbl-${i}`,
-        name: `Label ${i + 1}`,
-        color: '#ff0000',
-      })),
+      labels: [],
+      tags: Array.from({ length: 10 }).map((_, i) => `Tag ${i + 1}`),
     };
 
-    render(<TaskCard task={taskWith10Labels} />);
+    render(<TaskCard task={taskWith10Tags} />);
     
     // Deberían estar las 3 primeras etiquetas
-    expect(screen.getByText('Label 1')).toBeInTheDocument();
-    expect(screen.getByText('Label 2')).toBeInTheDocument();
-    expect(screen.getByText('Label 3')).toBeInTheDocument();
+    expect(screen.getByText('Tag 1')).toBeInTheDocument();
+    expect(screen.getByText('Tag 2')).toBeInTheDocument();
+    expect(screen.getByText('Tag 3')).toBeInTheDocument();
     
     // No debería estar la etiqueta 4
-    expect(screen.queryByText('Label 4')).not.toBeInTheDocument();
+    expect(screen.queryByText('Tag 4')).not.toBeInTheDocument();
     
     // Debería estar el chip +7
     const plusChip = screen.getByText('+7');
     expect(plusChip).toBeInTheDocument();
-    expect(plusChip).toHaveAttribute('title', 'Label 1, Label 2, Label 3, Label 4, Label 5, Label 6, Label 7, Label 8, Label 9, Label 10');
+    expect(plusChip).toHaveAttribute('title', 'Tag 1, Tag 2, Tag 3, Tag 4, Tag 5, Tag 6, Tag 7, Tag 8, Tag 9, Tag 10');
   });
 
-  it('no debería mostrar chip +N si tiene 3 etiquetas o menos', () => {
-    const taskWith3Labels = {
+  it('no debería mostrar chip +N si la suma de labels y tags es 3 o menos', () => {
+    const taskWith3Tags = {
       ...baseTask,
-      labels: Array.from({ length: 3 }).map((_, i) => ({
-        id: `lbl-${i}`,
-        name: `Label ${i + 1}`,
-        color: '#ff0000',
-      })),
+      labels: [{ id: 'lbl-1', name: 'Label 1', color: '#ff0000' }],
+      tags: ['Tag 1', 'Tag 2'],
     };
 
-    render(<TaskCard task={taskWith3Labels} />);
+    render(<TaskCard task={taskWith3Tags} />);
     
     expect(screen.getByText('Label 1')).toBeInTheDocument();
-    expect(screen.getByText('Label 2')).toBeInTheDocument();
-    expect(screen.getByText('Label 3')).toBeInTheDocument();
+    expect(screen.getByText('Tag 1')).toBeInTheDocument();
+    expect(screen.getByText('Tag 2')).toBeInTheDocument();
     
     expect(screen.queryByText(/\+\d+/)).not.toBeInTheDocument();
   });

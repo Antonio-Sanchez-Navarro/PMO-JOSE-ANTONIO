@@ -79,6 +79,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, onSubmit,
             onClick={handleClose}
             className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors p-1"
             title="Cerrar modal"
+            aria-label="Cerrar"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

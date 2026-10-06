@@ -185,42 +185,40 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onDelete, onViewEmail,
         </div>
       )}
 
-      {/* Etiquetas curadas del usuario */}
-      {task.labels && task.labels.length > 0 && (
+      {/* Etiquetas curadas del usuario y automáticas del modelo (Total <= 3) */}
+      {(task.labels?.length || 0) + (task.tags?.length || 0) > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
-          {task.labels.slice(0, 3).map(label => (
-            <span
-              key={label.id}
-              style={{
-                backgroundColor: label.color + '20',
-                color: label.color,
-                borderColor: label.color,
-              }}
-              className="text-[10px] px-1.5 py-0.5 rounded-sm border font-medium truncate max-w-[120px]"
-              title={label.name}
-            >
-              {label.name}
-            </span>
+          {[
+            ...(task.labels || []).map(l => ({ type: 'label' as const, id: l.id, name: l.name, color: l.color })),
+            ...(task.tags || []).map((t, idx) => ({ type: 'tag' as const, id: `tag-${idx}`, name: t, color: '#64748b' }))
+          ].slice(0, 3).map(chip => (
+            chip.type === 'label' ? (
+              <span
+                key={chip.id}
+                style={{
+                  backgroundColor: chip.color + '20',
+                  color: chip.color,
+                  borderColor: chip.color,
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded-sm border font-medium truncate max-w-[120px]"
+                title={chip.name}
+              >
+                {chip.name}
+              </span>
+            ) : (
+              <span key={chip.id} className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded-sm truncate max-w-[120px]" title={chip.name}>
+                {chip.name}
+              </span>
+            )
           ))}
-          {task.labels.length > 3 && (
+          {(task.labels?.length || 0) + (task.tags?.length || 0) > 3 && (
             <span
               className="text-[10px] px-1.5 py-0.5 rounded-sm border font-medium bg-slate-100 text-slate-600 border-slate-200 cursor-help"
-              title={task.labels.map(l => l.name).join(', ')}
+              title={[...(task.labels || []).map(l => l.name), ...(task.tags || [])].join(', ')}
             >
-              +{task.labels.length - 3}
+              +{((task.labels?.length || 0) + (task.tags?.length || 0)) - 3}
             </span>
           )}
-        </div>
-      )}
-
-      {/* Etiquetas automáticas del modelo AI */}
-      {task.tags && task.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-2">
-          {task.tags.map((t, idx) => (
-            <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded-sm">
-              {t}
-            </span>
-          ))}
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 mt-3 text-xs">
