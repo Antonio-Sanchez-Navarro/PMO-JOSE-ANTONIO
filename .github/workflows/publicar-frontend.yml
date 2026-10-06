@@ -224,14 +224,31 @@ jobs:
 
             BUNDLE=$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' /tmp/index.html | head -1)
             HOST_API=$(printf '%s' "${VITE_API_URL}" | sed -E 's#^https?://([^/]+).*#\1#')
-            curl -sS --max-time 20 -o /tmp/bundle.js "${SITIO}${BUNDLE}"
+            curl -sS --max-time 20 -D /tmp/cabeceras-bundle.txt -o /tmp/bundle.js "${SITIO}${BUNDLE}"
             if ! grep -q "${HOST_API}" /tmp/bundle.js; then
               echo "::error::El bundle que sirve ${SITIO} (${BUNDLE}) no apunta a ${HOST_API}."
               FALLOS=1
             fi
 
+            # ── La caché (entrada de Doc del 05-10 19:45) ──────────────────
+            # Con `max-age=3600` en `/`, el navegador del Jefe seguía cargando el
+            # `index.html` viejo, y con él el bundle viejo, hasta una hora después
+            # de publicar: «nada se ha arreglado». `curl` sin caché no lo veía.
+            # `/` no puede llevar `max-age` > 0, y el bundle (con hash en el
+            # nombre) sí debe ser `immutable`.
+            CACHE_RAIZ=$(grep -i '^cache-control:' /tmp/cabeceras-limpias.txt | head -1 | cut -d' ' -f2- || true)
+            if printf '%s' "${CACHE_RAIZ}" | grep -qiE 'max-age=[1-9]'; then
+              echo "::error::${SITIO}/ sale con Cache-Control «${CACHE_RAIZ}»: el navegador seguiría con el index.html viejo."
+              FALLOS=1
+            fi
+            tr -d '\r' < /tmp/cabeceras-bundle.txt > /tmp/cabeceras-bundle-limpias.txt
+            if ! grep -qi '^cache-control:.*immutable' /tmp/cabeceras-bundle-limpias.txt; then
+              echo "::error::${SITIO}${BUNDLE} no sale con Cache-Control immutable."
+              FALLOS=1
+            fi
+
             if [ "${FALLOS}" = "${ANTES}" ]; then
-              echo "${SITIO}: ${COMMIT}, ${BUNDLE}, cabeceras de seguridad presentes."
+              echo "${SITIO}: ${COMMIT}, ${BUNDLE}, cabeceras de seguridad presentes, / «${CACHE_RAIZ}», bundle immutable."
             fi
           done
           exit ${FALLOS}
