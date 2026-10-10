@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { ConfigService } from "@nestjs/config";
 import { ValidationPipe, Logger as NestLogger } from "@nestjs/common";
 import cookieParser from "cookie-parser";
@@ -8,6 +9,7 @@ import { Logger as PinoNestLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { avisoDeConfiguracion } from "./common/observability/logger.config";
 import { origenesCors } from "./common/security/origenes-cors";
+import { configurarPeticiones } from "./common/security/configurar-peticiones";
 
 async function bootstrap() {
   /**
@@ -17,7 +19,11 @@ async function bootstrap() {
    * `DEFAULT` y sin estructura. Justo los mensajes de arranque, que son los que
    * se miran cuando un despliegue no levanta.
    */
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // `bodyParser: false`: los parsers se ponen a mano más abajo, solo JSON.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+    bodyParser: false,
+  });
 
   /**
    * A partir de aquí, **los 33 `new Logger(...)` que ya había en el proyecto
@@ -51,6 +57,15 @@ async function bootstrap() {
   if (aviso) NestLogger.warn(aviso, "Observabilidad");
 
   app.use(cookieParser());
+
+  /**
+   * Solo JSON en el cuerpo, y las peticiones que escriben solo desde los
+   * orígenes del frontend (la misma lista del CORS). Ver
+   * `common/security/configurar-peticiones.ts`.
+   */
+  const origenes = origenesCors(config.get<string>("WEB_URL"), config.get<string>("WEB_URL_EXTRA"));
+  configurarPeticiones(app, origenes, config.get<string>("NODE_ENV") === "production");
+
   app.setGlobalPrefix("api", { exclude: ['webhooks/gmail', 'cron/(.*)', 'health/(.*)'] });
 
   /**
@@ -72,7 +87,7 @@ async function bootstrap() {
   );
 
   app.enableCors({
-    origin: origenesCors(config.get<string>("WEB_URL"), config.get<string>("WEB_URL_EXTRA")),
+    origin: origenes,
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
