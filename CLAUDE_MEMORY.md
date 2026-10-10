@@ -605,3 +605,12 @@ porque comparten reglas con el cron y los sockets.
   archivo y buscar ahí. Costó un rojo y un aviso falso al chat el 05-10.
 - **Resync por hilos (`203ed98`):** `mensajesQueEntran` en `gmail/hilos-pmo.ts`. Medido el 05-10: 52 hilos PMO, 225
   mensajes por la regla, 0 nuevos (la vía incremental ya los tenía).
+
+## Un análisis por ráfaga (J, 2026-10-06; medido el 10-10)
+
+- La ingesta y el barrido no encolan el correo: `programarAnalisisDelHilo` programa «pensar el hilo»
+  (`jobId = hilo-<usuario>-<hilo>`, 60 s). Esperando → no se crea otro; ejecutándose → `…-tras`; terminado o fallido → se
+  borra y se reprograma (BullMQ ignora un `add` con id existente). El worker piensa lo pendiente del hilo y despacha todo
+  hasta el ancla.
+- Medido: 2 correos → 1 análisis ($0,024); 6 correos en 87 s → 2 análisis ($0,045).
+- ⚠️ `gcloud` caduca cada pocos días (reautenticación de Google): para leer logs hace falta `gcloud auth login` del Jefe.
