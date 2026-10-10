@@ -207,3 +207,49 @@ describe('FrontendAlDiaService · pregunta si producción está al día', () => 
     });
   });
 });
+
+/**
+ * F1.6 — con el repo privado, GitHub responde 404 a quien pregunta sin
+ * autenticar. La sonda usa un token de solo lectura si está configurado.
+ */
+describe('FrontendAlDiaService · token de solo lectura para GitHub', () => {
+  function crear(token: string | undefined) {
+    const llamadas: { url: string; headers: Record<string, string> }[] = [];
+    global.fetch = jest.fn(async (url: unknown, init?: { headers?: Record<string, string> }) => {
+      const u = String(url);
+      llamadas.push({ url: u, headers: init?.headers ?? {} });
+      if (u.endsWith('/version.json')) return { ok: true, status: 200, json: async () => ({ commit: 'a'.repeat(40) }) };
+      if (u.includes('/commits?')) return { ok: true, status: 200, json: async () => [] };
+      return { ok: true, status: 200, json: async () => ({ status: 'identical' }) };
+    }) as unknown as typeof fetch;
+
+    const config = {
+      get: (clave: string) =>
+        clave === 'WEB_URL' ? 'https://app.ejemplo.test' : clave === 'GITHUB_TOKEN_LECTURA' ? token : undefined,
+    } as unknown as ConfigService;
+    const service = new FrontendAlDiaService(config, { avisar: jest.fn() } as unknown as AlertService);
+    return { service, llamadas };
+  }
+
+  it('con GITHUB_TOKEN_LECTURA, cada llamada a la API de GitHub lleva el token', async () => {
+    const { service, llamadas } = crear('token-de-prueba');
+
+    await service.comprobar();
+
+    const deGitHub = llamadas.filter((l) => l.url.startsWith('https://api.github.com/'));
+    expect(deGitHub.length).toBeGreaterThan(0);
+    for (const l of deGitHub) expect(l.headers.authorization).toBe('Bearer token-de-prueba');
+    // A nuestro propio frontend no se le manda.
+    for (const l of llamadas.filter((x) => x.url.endsWith('/version.json'))) {
+      expect(l.headers.authorization).toBeUndefined();
+    }
+  });
+
+  it('sin token, pregunta sin autenticar, como hasta ahora', async () => {
+    const { service, llamadas } = crear(undefined);
+
+    await service.comprobar();
+
+    for (const l of llamadas) expect(l.headers.authorization).toBeUndefined();
+  });
+});

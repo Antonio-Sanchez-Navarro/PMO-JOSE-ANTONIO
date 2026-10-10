@@ -637,6 +637,15 @@ jobs:
                  "Crea el secreto con la URL del webhook de Google Chat y pon aquí su nombre."
           fi
 
+          # El token de solo lectura de GitHub para la sonda «frontend al día»,
+          # con el mismo patrón: solo si la variable con el nombre del secreto
+          # existe, para que crearlo y montarlo no tengan que ir a la vez.
+          if [ -n "${{ vars.GITHUB_LECTURA_SECRET }}" ]; then
+            SECRETS="${SECRETS},GITHUB_TOKEN_LECTURA=${{ vars.GITHUB_LECTURA_SECRET }}:latest"
+          else
+            echo "::warning::GITHUB_LECTURA_SECRET no está definida; la sonda del frontend pregunta a GitHub sin token."
+          fi
+
           # ───────────────────────────────────────────────────────────────
           # --allow-unauthenticated — quién llama a esta API
           #

@@ -13,6 +13,18 @@ import { describirError } from '../../common/observability/describir-error';
 const REPO = 'Antonio-Sanchez-Navarro/PMO-JOSE-ANTONIO';
 
 /**
+ * Cabeceras para la API de GitHub. Con `GITHUB_TOKEN_LECTURA` (un token de
+ * solo lectura de este repositorio, desde Secret Manager) la sonda sigue
+ * funcionando cuando el repo es privado; sin él, pregunta sin autenticar.
+ */
+function cabecerasGitHub(token: string | undefined): Record<string, string> {
+  return {
+    accept: 'application/vnd.github+json',
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+/**
  * Las rutas cuyo cambio obliga a que Vercel reconstruya.
  *
  * ⚠️ **Es el mismo criterio que usa el `ignoreCommand` de Vercel, y tiene que
@@ -192,7 +204,7 @@ export class FrontendAlDiaService {
   private async compararAscendencia(referencia: string, servido: string): Promise<ResultadoFrontend> {
     try {
       const res = await fetch(`https://api.github.com/repos/${REPO}/compare/${referencia}...${servido}`, {
-        headers: { accept: 'application/vnd.github+json' },
+        headers: cabecerasGitHub(this.config.get<string>('GITHUB_TOKEN_LECTURA')),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
 
@@ -235,7 +247,10 @@ export class FrontendAlDiaService {
       try {
         const res = await fetch(
           `https://api.github.com/repos/${REPO}/commits?sha=master&path=${ruta}&per_page=5`,
-          { headers: { accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(TIMEOUT_MS) },
+          {
+            headers: cabecerasGitHub(this.config.get<string>('GITHUB_TOKEN_LECTURA')),
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+          },
         );
         if (!res.ok) continue;
 
@@ -245,7 +260,7 @@ export class FrontendAlDiaService {
           if (!item.sha) continue;
 
           const detalleRes = await fetch(`https://api.github.com/repos/${REPO}/commits/${item.sha}`, {
-            headers: { accept: 'application/vnd.github+json' },
+            headers: cabecerasGitHub(this.config.get<string>('GITHUB_TOKEN_LECTURA')),
             signal: AbortSignal.timeout(TIMEOUT_MS),
           });
           if (!detalleRes.ok) continue;
