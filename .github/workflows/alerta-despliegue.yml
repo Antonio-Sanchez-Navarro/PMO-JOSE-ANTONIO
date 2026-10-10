@@ -65,9 +65,13 @@ jobs:
     #
     # `failure` **y** `error`: Vercel usa `error` para el fallo de construcción y
     # `failure` para el resto. Quedarse con uno deja la mitad sin avisar.
+    # Un `workflow_run` solo avisa si viene de un push a `master`: los runs de
+    # una rama de trabajo o de un PR no son producción.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'failure' ||
+      (github.event.workflow_run.conclusion == 'failure' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'master') ||
       github.event.deployment_status.state == 'failure' ||
       github.event.deployment_status.state == 'error'
 
@@ -104,6 +108,21 @@ jobs:
           # `gh api` necesita token; el de Actions basta con los permisos de
           # arriba y no hay que crear nada.
           GH_TOKEN: ${{ github.token }}
+          # Todo lo que viene del evento entra por aquí, como variables, y se
+          # usa entre comillas. Nunca escrito dentro del script con `${{ }}`.
+          EV_NOMBRE: ${{ github.event_name }}
+          EV_SHA: ${{ github.sha }}
+          EV_RUN_PROPIO: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EV_REPO: ${{ github.repository }}
+          EV_WR_ID: ${{ github.event.workflow_run.id }}
+          EV_WR_NOMBRE: ${{ github.event.workflow_run.name }}
+          EV_WR_TITULO: ${{ github.event.workflow_run.display_title }}
+          EV_WR_SHA: ${{ github.event.workflow_run.head_sha }}
+          EV_WR_URL: ${{ github.event.workflow_run.html_url }}
+          EV_DS_ENTORNO: ${{ github.event.deployment_status.environment }}
+          EV_DS_DESCRIPCION: ${{ github.event.deployment_status.description }}
+          EV_DS_SHA: ${{ github.event.deployment.sha }}
+          EV_DS_URL: ${{ github.event.deployment_status.target_url }}
         run: |
           set -eo pipefail
 
@@ -117,25 +136,25 @@ jobs:
           # GitHub y sus logs no estan aqui-.
           RUN_FALLIDO=""
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${EV_NOMBRE}" = "workflow_dispatch" ]; then
             QUE="Prueba manual del avisador"
             TITULO="Nadie habia visto avisar a este workflow. Esto lo comprueba."
-            COMMIT="${{ github.sha }}"
-            ENLACE="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            COMMIT="${EV_SHA}"
+            ENLACE="${EV_RUN_PROPIO}"
             EMOJI="🧪"
-          elif [ -n "${{ github.event.workflow_run.id }}" ]; then
-            QUE="${{ github.event.workflow_run.name }}"
-            TITULO="${{ github.event.workflow_run.display_title }}"
-            COMMIT="${{ github.event.workflow_run.head_sha }}"
-            ENLACE="${{ github.event.workflow_run.html_url }}"
+          elif [ -n "${EV_WR_ID}" ]; then
+            QUE="${EV_WR_NOMBRE}"
+            TITULO="${EV_WR_TITULO}"
+            COMMIT="${EV_WR_SHA}"
+            ENLACE="${EV_WR_URL}"
             EMOJI="🔴"
-            RUN_FALLIDO="${{ github.event.workflow_run.id }}"
+            RUN_FALLIDO="${EV_WR_ID}"
           else
-            QUE="Vercel · ${{ github.event.deployment_status.environment }}"
-            TITULO="${{ github.event.deployment_status.description }}"
-            COMMIT="${{ github.event.deployment.sha }}"
+            QUE="Vercel · ${EV_DS_ENTORNO}"
+            TITULO="${EV_DS_DESCRIPCION}"
+            COMMIT="${EV_DS_SHA}"
             # El log de Vercel y no el de GitHub: es donde está el motivo.
-            ENLACE="${{ github.event.deployment_status.target_url }}"
+            ENLACE="${EV_DS_URL}"
             EMOJI="🔴"
             # ⚠️ Vercel no deja jobs ni anotaciones en GitHub, asi que aqui no hay
             # forma de acotar el archivo. El aviso ira solo con el commit **que
@@ -168,7 +187,7 @@ jobs:
           DONDE=""
 
           if [ -n "${RUN_FALLIDO}" ]; then
-            JOBS=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_FALLIDO}/jobs" 2>/dev/null || echo '{}')
+            JOBS=$(gh api "repos/${EV_REPO}/actions/runs/${RUN_FALLIDO}/jobs" 2>/dev/null || echo '{}')
 
             JOB_FALLIDO=$(printf '%s' "${JOBS}" \
               | jq -r '[.jobs[]? | select(.conclusion == "failure")] | .[0].name // empty' 2>/dev/null || true)
@@ -177,7 +196,7 @@ jobs:
               | jq -r '[.jobs[]? | select(.conclusion == "failure")] | .[0].id // empty' 2>/dev/null || true)
 
             if [ -n "${ID_JOB}" ]; then
-              DONDE=$(gh api "repos/${{ github.repository }}/check-runs/${ID_JOB}/annotations" 2>/dev/null \
+              DONDE=$(gh api "repos/${EV_REPO}/check-runs/${ID_JOB}/annotations" 2>/dev/null \
                 | jq -r '[.[]? | select(.annotation_level == "failure")] | .[0]
                          | if . then "\(.path):\(.start_line)" else empty end' 2>/dev/null || true)
             fi
