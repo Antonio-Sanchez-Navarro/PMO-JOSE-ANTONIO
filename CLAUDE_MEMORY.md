@@ -1,3 +1,370 @@
+# CLAUDE_MEMORY
+
+**Cerebro del Backend.** Refactorizaciones, variables de entorno, operación y
+lógica de `@pmo/api` (y de lo que despliega el CI), por @Claude.
+
+> Los contratos de las rutas **no viven aquí**: están en `API_CONTRACTS.md`.
+> Esto es lo que hay que saber para tocar el backend sin repetir un error ya
+> pagado.
+
+> **Lo anterior al 10-09-2026** (3.880 líneas, de julio a septiembre) está en
+> [`docs/archive/CLAUDE_MEMORY_archive_hasta_2026-09-10.md`](docs/archive/CLAUDE_MEMORY_archive_hasta_2026-09-10.md):
+> la poda de `28a4fd5` lo quitó de aquí sin archivarlo, y se recuperó el 10-10.
+
+**Orden de este archivo:** primero **lo vigente** (dominio, trampas, Prisma,
+observabilidad, variables, arranque, Anthropic, imagen y despliegue); después **la
+crónica**, la más reciente arriba.
+
+---
+
+# Lo vigente
+
+## Dominio
+
+Backend profundo: workers y colas, Prisma, tubería de IA, `.spec.ts`, lógica de
+dominio, y los archivos de configuración (Dockerfile, YAML de Actions).
+
+**Desde octubre de 2026 también despliego yo, pero siempre por el CI**, no a mano:
+- La **API** la despliega `deploy.yml` y el **frontend** `publicar-frontend.yml`,
+  los dos tras el CI de `master` en verde. Cada uno tiene un job `cambios` que no
+  despliega si entre lo que sirve producción y el commit solo cambia documentación.
+- **Publicar el frontend a mano está prohibido** desde I.1 (`apps/web/README.md`),
+  salvo la marcha atrás de emergencia («Revertir» en Firebase).
+- Variables de GitHub (`WEB_URL`, `VITE_API_URL`, `PUBLICAR_FRONTEND_DESDE_CI`…):
+  las cambio cuando un encargo de Doc lo dice, con `gh variable set`.
+- **Permisos de IAM y secretos: los concede el Jefe.** El filtro de permisos de
+  Claude Code bloquea conceder roles aunque el Jefe lo autorice en el chat.
+- `gcloud` funciona con la cuenta del Jefe, pero **caduca cada pocos días**
+  (reautenticación de Google): para leer logs hace falta su `gcloud auth login`.
+
+Excepciones de capa REST que llevo yo: `modules/emails/`, `modules/time/`,
+`POST /tasks`, `DELETE /tasks/:id`, `TasksGateway` y `KanbanBoard.tsx` (cronómetro),
+porque comparten reglas con el cron y los sockets. `TaskCard.tsx` y
+`TaskModal.tsx` son de @Gravity.
+
+## Trampas de operación (cada una costó tiempo)
+
+1. **`start:dev` lleva `--max-old-space-size=4096`.** Los tipos de `googleapis`
+   son enormes y con el heap por defecto el supervisor muere de OOM. **El
+   síntoma engaña**: muere el padre, el hijo sobrevive, `/health` sigue dando
+   200 y el hot-reload deja de funcionar en silencio.
+2. **El mismo heap hace falta en `build`** dentro de un contenedor, donde Node
+   lo dimensiona según la RAM que le hayan dado. Sin él, `nest build` muere con
+   `Aborted (core dumped)` y código 134, que se lee como un fallo del compilador
+   y no como falta de memoria.
+3. **Un solo `dev:api` a la vez.** Dos watchers escriben en `apps/api/dist` y se
+   pisan. **Matar el proceso del puerto 3000 no basta**: ese es el último
+   eslabón de cuatro (`npm run dev:api` → `start:dev` → `cross-env` →
+   `nest start --watch`) y el watcher vuelve a levantarlo. El 2026-08-03 había
+   **tres cadenas completas** corriendo a la vez. Para reiniciar de verdad hay
+   que filtrar por línea de comando, no por puerto.
+4. **No ejecutar `nest build` con el watcher levantado**: el build borra `dist`
+   bajo sus pies. Para comprobar tipos con el servidor arriba,
+   `npx tsc -p apps/api/tsconfig.spec.json`.
+5. **El cron de vencidas vive en Redis** (job repetible de BullMQ), no un
+   `@Cron` en proceso: con varias instancias correría en todas.
+6. **`COPILOT_EMAIL_TRANSPORT=mock` en local.** Sin esa línea, cada clic en
+   «Enviar» del borrador manda un correo **de verdad** desde el Gmail del
+   usuario.
+
+### Las de octubre de 2026
+
+7. **Las heredocs de bash en esta máquina se comen las barras invertidas** (`\n`,
+   `\r`, la `\` de continuación). Scripts con escapes: escribir el archivo con
+   la herramienta de escritura y ejecutarlo.
+8. **`tsc --noEmit` no compila los specs y Jest no mira tipos**: un error de tipos
+   en una prueba solo sale en `nest build`, que es lo que corre el CI. Antes de
+   empujar, `npm run build`. (Rompió el CI el 05-10.)
+9. **Nunca `curl … | grep -q` con `pipefail`**: `grep` cierra la tubería al
+   encontrar y `curl` sale con 23, así que el acierto da rojo. Bajar a archivo y
+   buscar ahí. (Rojo y aviso falso al chat el 05-10.)
+10. **`deploy.yml` tiene `cancel-in-progress`**: un push nuevo cancela el
+    despliegue en curso, aunque esté a mitad de «Migrar la base de datos». El
+    siguiente lleva el código del anterior y termina la migración (06-10).
+11. **«Publicado» no es «lo que ve el navegador».** Con `max-age=3600` en
+    `index.html`, el Jefe veía el bundle viejo hasta una hora y decía que nada
+    estaba arreglado, mientras `curl` sin caché lo daba por bueno. Se mide el
+    bundle **cargado en Chrome**. Desde `860f23c`, `index.html` va con `no-cache`
+    y `/assets/**` con `immutable`.
+12. **Un `workflow_run` enseña como commit la punta de `master`** al arrancar, no
+    el que construye (lo dice `head_sha` del CI). Engañó al leer qué se desplegó.
+
+## Prisma
+
+- **El cliente es código generado.** Sin `prisma generate` no existen ni los
+  tipos de los modelos ni el namespace `Prisma`, y el build se cae con errores
+  que **parecen del código** —típicamente `Prisma.PrismaClientKnownRequestError`
+  en `tags.service.ts` y `time.service.ts`, que son los dos únicos sitios que lo
+  usan—. En una máquina de desarrollo no se nota porque lo dejó `prisma migrate`
+  hace semanas; en un CI, que parte de `npm ci`, no lo ha generado nadie. Por eso
+  existe el `prebuild` de `@pmo/api` (`dd99adb`), y por eso el CI estuvo en rojo
+  tres runs seguidos.
+- **En 5.22.0, `PrismaClientKnownRequestError` solo existe dentro del namespace.**
+  `import { PrismaClientKnownRequestError } from '@prisma/client'` **no
+  compila** (`TS2305`): en el `.d.ts` generado vive bajo `export namespace
+  Prisma`. La forma correcta es `Prisma.PrismaClientKnownRequestError`.
+- **`@default(now())` no desempata dentro de una transacción.** `now()` de
+  Postgres devuelve la hora de **inicio de la transacción**, así que dos filas
+  insertadas en el mismo `createMany` se sellan con el mismo instante al
+  milisegundo. Costó el fallo del copiloto (ver abajo).
+- **Los `DateTime` son `timestamp WITHOUT time zone` guardando UTC**, así que un
+  solo `AT TIME ZONE 'America/...'` **interpreta** la columna en esa zona en vez
+  de convertirla. Hace falta `AT TIME ZONE 'UTC' AT TIME ZONE tz`. Las cuentas
+  salían bien pero en el día equivocado. Hay prueba de regresión.
+
+## Observabilidad
+
+- `nestjs-pino` + `pino`. `app.useLogger` redirige **los 33 `new Logger(...)`**
+  repartidos en 32 archivos sin tocar ninguno.
+- `LOG_FORMAT`: `gcp` (JSON de una línea con `severity`, `time`, `message`,
+  `httpRequest`) o `pretty`. Por defecto sigue a `NODE_ENV`.
+- **Los formateadores de Google se aplican solo en `gcp`**: el de nivel
+  sustituye `level` por `severity` y `pino-pretty` busca `level` para colorear.
+  Con los dos a la vez, la terminal se queda sin colores y sin niveles.
+- **El serializador de fábrica de `pino-http` es peligroso**: guarda la petición
+  como *binding del logger hijo*, así que `url` y `query` en crudo salen en
+  **todas** las líneas de esa petición. Dejó el código de autorización de Google
+  cuatro veces en el log. Por eso aquí se **elige** qué se guarda (`id`,
+  `method`, URL saneada) en vez de filtrar lo que sobra.
+- Sentry se canceló: Error Reporting lee las excepciones de Cloud Logging, sin
+  SDK ni credencial.
+
+## Variables de entorno
+
+- **`PORT` manda sobre `API_PORT`.** Cloud Run inyecta `PORT` y espera que el
+  contenedor escuche ahí; si no, la revisión no pasa la sonda de arranque y se
+  revierte con un error que habla de contenedor que no arranca, sin mencionar el
+  puerto. `API_PORT` se queda para local.
+- ⚠️ **`GOOGLE_CLOUD_PROJECT` la tiene que poner el despliegue a mano.** Cloud
+  Run **no** la inyecta: pone `K_SERVICE` y `K_REVISION`. Sin ella
+  `traceFieldsFrom` devuelve `{}` y **las líneas de una misma petición dejan de
+  agruparse**, con los logs saliendo y pareciendo correctos. Ya va en el
+  `--set-env-vars` de `deploy.yml`.
+- `LOG_LEVEL`, `SERVICE_VERSION` y `OVERDUE_CRON` tienen valor por defecto.
+- ⚠️ **`GOOGLE_REDIRECT_URI` tumbaba el contenedor y tampoco iba en el
+  despliegue.** `AuthService` la pide con `getOrThrow` **en su constructor**, y
+  los proveedores de Nest se construyen al arrancar: sin ella la aplicación
+  revienta antes de escuchar en el 8080 y Cloud Run lo informa como **timeout de
+  arranque**, sin nombrar ninguna variable. Es exactamente el síntoma que
+  Gravity anotó el 2026-08-05 y por el que subió el timeout del servicio a 300 s:
+  no es que tarde, es que no llega. Desde el 2026-08-05 va en `--set-env-vars`
+  desde `vars.GOOGLE_REDIRECT_URI`, y el despliegue **se para con un mensaje** si
+  la variable no está. No es un secreto: es la URL de vuelta del login, y tiene
+  que coincidir carácter a carácter con una URI autorizada del cliente OAuth.
+
+  **La ruta es `/auth/google/callback` y nada más.** `main.ts` no llama a
+  `setGlobalPrefix` ni usa versionado, así que no hay `/api` ni `/v1` por
+  ninguna parte: el controlador es `@Controller("auth")` con
+  `@Get("google/callback")` y esa es la única ruta que existe. El valor que se
+  puso en la variable el 2026-08-05 —`https://<DOMAIN>/api/v1/auth/google/callback`—
+  fallaba por partida doble, y ninguno de los dos fallos se ve al arrancar: la
+  aplicación levanta igual y es Google quien rechaza el login después con
+  `redirect_uri_mismatch`, un error que parece del cliente OAuth y no del
+  despliegue. Por eso el guardarraíl comprueba la ruta completa y los
+  marcadores sin sustituir, no solo que la variable esté puesta.
+- ⚠️ **Los tres `CLAUDE_MODEL_*` no llegaban a Cloud Run.** Estaban en
+  `.env.example` y `AiService` los exigía con `getOrThrow`, pero el
+  `--set-secrets` de `deploy.yml` no los inyectaba: el primer despliegue con la
+  nube provisionada habría tumbado **la API entera** —tablero y sesiones
+  incluidos— al construir el módulo de IA. Arreglado el 2026-08-05 por los dos
+  lados: `AiService` degrada a un modelo por defecto con aviso en vez de impedir
+  el arranque, y el despliegue las inyecta.
+
+  **Van por `vars` del repositorio, no por Secret Manager** — y esto se decidió
+  **dos veces**, porque en medio se deshizo. Se intentaron como secretos y el
+  despliegue lo desmintió: `Secret
+  projects/614812477499/secrets/pmo-claude-model-classify/versions/latest was
+  not found` — los tres. `f75cfb2` los pasó a `vars`; `d3547fc` los devolvió a
+  `--set-secrets` sobre un reporte de que ya estaban aprovisionados, y volvió a
+  fallar con el mismo mensaje literal. `gcloud secrets list` sigue devolviendo
+  ocho secretos, ninguno de modelos. Restaurado el 2026-08-07 por orden de Doc.
+
+  No son credenciales, son ids de modelo públicos. Y se añaden **solo si están
+  puestas**: como el código trae un valor bueno y lo anuncia en el log, una
+  variable que falta cambia el modelo, no tumba el despliegue. Hoy **no está
+  puesta ninguna de las tres**, así que la API arrancará con sus modelos por
+  defecto y lo dirá en el log; el workflow además emite un `::notice::` por cada
+  una que falta, para que no sea un silencio.
+
+  ⚠️ **Y la lección que costó el servicio caído**: una revisión que Cloud Run
+  rechaza **retira a la que estaba sirviendo**. Fallar en el `gcloud run deploy`
+  no es el fallo barato que parecía cuando se escribió que era «ruidoso pero
+  bueno».
+- **`CLAUDE_MODEL_REASONING` y `CLAUDE_MODEL_CHEAP` no las leía nadie.** El
+  copiloto usaba solo `COPILOT_ANTHROPIC_MODEL_*`, así que configurarlas en la
+  nube no cambiaba nada. Desde el 2026-08-05 `tierConfig` encadena
+  `COPILOT_ANTHROPIC_MODEL_*` → `CLAUDE_MODEL_*` → tabla: la específica sigue
+  sirviendo para probar un modelo solo en el copiloto, y la compartida gobierna
+  el despliegue.
+- `ANTHROPIC_MAX_RETRIES` (4) y `ANTHROPIC_TIMEOUT_MS` (120 s en clasificación,
+  10 min en copiloto) ajustan la política de reintentos sin tocar código. Un
+  valor no numérico se ignora y se queda el de por defecto.
+
+## Qué puede impedir el arranque (regla, no lista)
+
+Los proveedores de Nest se construyen **al arrancar**, así que un constructor
+que lanza no deja sin servicio a su módulo: deja **la API entera** sin escuchar
+en el puerto. Y el síntoma que se ve arriba, en Cloud Run, es *timeout de
+arranque* — sin nombrar la variable, sin traza y sin pista de que el problema
+sea de configuración. Ya pasó dos veces el 2026-08-05 (`GOOGLE_REDIRECT_URI` y
+`CLAUDE_MODEL_CLASSIFY`), las dos con la misma cara.
+
+La regla con la que se decide, al añadir una variable nueva:
+
+- **Credencial que falta → no arrancar.** Una clave inventada no existe; el
+  respaldo solo difiere el fallo hasta la primera llamada y lo disfraza de 401.
+  `ANTHROPIC_API_KEY` y `TOKEN_ENCRYPTION_KEY` siguen así, a propósito.
+- **Configuración cuyo valor bueno sabemos escribir → respaldo con aviso.** Un
+  id de modelo lo sabemos poner desde el código. Impedir el arranque por él
+  cambia "la clasificación usa otro modelo del previsto" por "no hay tablero".
+  El aviso en el log es obligatorio: el entorno manda, y si no llegó, esto lo
+  está ignorando en silencio.
+- **Lo que no tiene valor bueno posible → pararlo antes de desplegar.** La URI
+  de vuelta del login no se puede adivinar y una equivocada rompe el login de
+  forma más confusa que no arrancar. Por eso la comprobación vive en
+  `deploy.yml` y no en el código: falla en el runner, con el motivo escrito.
+
+## Límite de tasa de Anthropic (2026-08-05)
+
+`common/anthropic/anthropic-client.ts` es el único sitio donde se construye el
+cliente, y lo comparten la clasificación y el copiloto.
+
+- **Los reintentos los pone el SDK, no un bucle nuestro**: repite 408/409/429 y
+  5xx con espera exponencial respetando `retry-after`, y no toca los 4xx que se
+  repetirían igual de mal. Solo se sube el tope de 2 a 4.
+- **La detección de fallos mira `error.status`, no `instanceof APIError`.** En
+  `ai.service.spec.ts` el módulo del SDK está sustituido por un doble y sus
+  clases de error **no existen**: un `instanceof` reventaría al comprobar el
+  error en vez de al provocarlo.
+- **`AiService` anota y propaga; no espera.** Un 429 que llega hasta él ya pasó
+  por los reintentos del SDK, así que registra el fallo con la espera que sugiere
+  la respuesta (`retry-after`, o el `*-reset` más lejano si no viene) y lo deja
+  subir. Dormir ahí solo retrasaría **ese** correo mientras los siguientes de la
+  tanda van a chocar igual; quien puede frenar de verdad es el worker, que
+  gobierna la cola entera.
+- **La espera se acota entre 1 s y 5 min.** Sin techo, una cabecera con fecha
+  rara o un reloj desajustado dejaría la cola dormida horas — un fallo que se
+  leería como "la IA dejó de clasificar" sin ningún error a la vista.
+- **El worker de clasificación es el único que frena.** Va con `concurrency: 2`
+  y `limiter: { max: 20, duration: 60_000 }` —ventana compartida entre
+  instancias porque el contador vive en Redis—, y ante un 429 que sobrevive a
+  los reintentos llama a `worker.rateLimit(espera)` y lanza
+  `Worker.RateLimitError()`: la cola se pausa lo que pida la cabecera y el job
+  vuelve **sin gastar un intento**. Con un error normal, una tanda de correos
+  buenos acabaría en la cola de fallidos por una saturación pasajera.
+  Ojo: `worker.rateLimit` está marcado `@deprecated` para BullMQ 6, donde pasa
+  a `queue.rateLimit`. En la 5 que usamos es el camino bueno.
+- El copiloto **no** frena: al otro lado hay alguien esperando y un error a los
+  veinte segundos es mejor que un cursor parpadeando tres minutos. Traduce el
+  429 a un mensaje que el chat puede enseñar tal cual.
+
+## Imagen y despliegue (`ebd06cc`)
+
+`apps/api/Dockerfile`, tres etapas, **construido y arrancado de verdad**: sondas
+en 200 contra Postgres y Redis, y `docker stop` saliendo con **código 0**, que
+es lo que confirma que Node es PID 1 y corre el cierre ordenado. Con `npm start`
+por medio no llegaría el `SIGTERM`.
+
+Lo que rompió al construirlo, por si vuelve:
+
+- Falta `tsconfig.base.json` en el contexto → `tsc` cae a sus valores por
+  defecto y type-checkea `node_modules` entero; el error habla de ESLint.
+- **npm no hoistea todo**: `@nestjs/terminus` se queda en
+  `apps/api/node_modules`. Copiando solo el `node_modules` de la raíz, la imagen
+  construye, arranca y se cae en el primer `require`.
+
+⚠️ **Peso: 882 MB, y `googleapis` son 204 MB** —el 46% de `node_modules`— para
+usar solo Gmail. `@googleapis/gmail` ahorraría unos 190 MB; es un cambio de
+código y está sin hacer.
+
+---
+
+# Crónica (la más reciente arriba)
+
+## Un análisis por ráfaga (J, 2026-10-06; medido el 10-10)
+
+- La ingesta y el barrido no encolan el correo: `programarAnalisisDelHilo` programa «pensar el hilo»
+  (`jobId = hilo-<usuario>-<hilo>`, 60 s). Esperando → no se crea otro; ejecutándose → `…-tras`; terminado o fallido → se
+  borra y se reprograma (BullMQ ignora un `add` con id existente). El worker piensa lo pendiente del hilo y despacha todo
+  hasta el ancla.
+- Medido: 2 correos → 1 análisis ($0,024); 6 correos en 87 s → 2 análisis ($0,045).
+- ⚠️ `gcloud` caduca cada pocos días (reautenticación de Google): para leer logs hace falta `gcloud auth login` del Jefe.
+
+## «Revisar», CI siempre y caché del tablero (H.3 y remates, 2026-10-05/06)
+
+- **H.3 (`7b451db` + `62791bd`):** `borradorDelHilo(delMasRecienteAlMasAntiguo)` en
+  `emails.service.ts` es **la única fuente** del número del botón «Revisar N» y de
+  lo que abre la ventana: el borrador del correo más reciente que lo tenga. El
+  botón sumaba los de todo el hilo («SR. RAYO 404-A»: 45 → 1). Sin reclasificar.
+- **`8c1ae2b`:** el CI corre en **todos** los commits (fuera `paths-ignore`): será el
+  check obligatorio de C12 y un check que se salta bloquea la fusión. `deploy.yml`
+  y `publicar-frontend.yml` tienen un job `cambios` con
+  `.github/scripts/hay-que-desplegar.sh`: compara lo que sirve producción
+  (`/health`, `version.json`) con el commit y no despliega si solo cambia
+  documentación. Comprobado con `ab02540` el 10-10. También: la sonda mira
+  `/health` del host real de `VITE_API_URL`, y se quitó el atajo de
+  `VERCEL_GIT_COMMIT_SHA` en `vite.config.ts`.
+- **`860f23c`:** `index.html` (y toda ruta reescrita a él) con `Cache-Control:
+  no-cache`; `/assets/**` con `public, max-age=31536000, immutable`; las
+  cabeceras de seguridad se mantienen. `publicar-frontend.yml` da rojo si no.
+- **Lección de proceso (05 y 06-10):** tres veces seguí trabajando sin releer el
+  buzón entero y me salté entradas de Doc (H.3, las de las 18:30 y 18:40, la
+  urgente de las 19:45). **Regla: antes de cada encargo y de cada paso, releer
+  todas las entradas de Doc posteriores a mi último parte.**
+
+## Frontend desde el CI y resync por hilos (I, 2026-10-05)
+
+- **El frontend se publica desde `publicar-frontend.yml`** (tras el CI de `master`); a mano está prohibido
+  (`apps/web/README.md`). Interruptor `PUBLICAR_FRONTEND_DESDE_CI`; URL de la API en la variable `VITE_API_URL`.
+  `github-deployer@` tiene «Administrador de Firebase Hosting» y «Consumidor de Service Usage» (los puso el Jefe; el
+  filtro de permisos de Claude Code bloquea conceder roles de IAM aunque el Jefe lo autorice en el chat).
+- ⚠️ **Nunca `curl … | grep -q` con `pipefail`**: `grep` cierra la tubería al encontrar y `curl` sale con 23. Bajar a
+  archivo y buscar ahí. Costó un rojo y un aviso falso al chat el 05-10.
+- **Resync por hilos (`203ed98`):** `mensajesQueEntran` en `gmail/hilos-pmo.ts`. Medido el 05-10: 52 hilos PMO, 225
+  mensajes por la regla, 0 nuevos (la vía incremental ya los tenía).
+
+## Remates de G (H, 2026-10-05)
+
+- **H.1 (`6e6d1ea`):** el prompt del hilo prohíbe volver a proponer una subtarea aprobada **pendiente**. La prueba real dio
+  0 propuestas, pero el Jefe había mandado la boleta ese mismo día: no aísla la regla.
+- **H.2 (`76cce1e`):** `version.json` = `HEAD` local. Fuera de CI, el build **falla** si `apps/web`/`packages/shared` tienen
+  cambios o si `HEAD` no está en un remoto. Para publicar: commit, **push** y build. `tsconfig.node.json` emite en
+  `node_modules/.tmp` (TS6310 no deja `noEmit`); se acabó el `vite.config.js` fantasma.
+- ⚠️ `deploy.yml` tiene `concurrency: cancel-in-progress`: dos pushes seguidos cancelan el primer despliegue. El segundo
+  lleva el código del primero, pero el run del primero sale «cancelled», no «success».
+
+## La IA por hilo (G, 2026-10-01)
+
+- **B.3 (`b372767`):** la fila «Bancos» se agrupa por `TIPO_BANCO` (`bancosPorTipo()` en `ScopeTabs.tsx`); el chip del
+  banco lleva el tipo en el `title`.
+- **Uso por llamada (`0fe8a99`):** `Uso IA · correo=… hilo=… · entrada · salida · $` en el log. Es lo único que dice
+  cuánto cuesta un hilo: `aiUsage` solo guarda el total del día.
+- **`quitarCitas` (`8afc3b1`):** ante la duda, el texto entero. No corta reenvíos.
+- **Por hilo (`e78dfba`):** `cargarHilo` → el **ancla** es el correo más reciente del hilo. Se analiza desde él, sus
+  adjuntos son los únicos que viajan y en él se guarda el borrador; los demás del hilo se vacían. El más antiguo de la
+  base conserva sus citas. `reclassifyThread` = «Volver a analizar». «Revisar» devuelve el `emailId` del ancla.
+- **Prueba real del hilo de Sofía (00151-zhf):** 5.992 tokens de entrada, $0,0231. El prompt y las subtareas aprobadas
+  pesan más de lo que estimé. Repitió una subtarea aprobada pendiente; Doc lo decidió y se arregló en H.1 (`6e6d1ea`).
+- ⚠️ **Las heredocs de bash en esta máquina se comen las barras invertidas** (`\n`, `\r`, `\` de continuación). Para
+  scripts con escapes: escribir el archivo con la herramienta Write y ejecutarlo.
+
+## Dominio, cronómetro y socket (2026-10-01)
+
+- **`1d26236`** — el preflight post-despliegue comprueba también `WEB_URL_EXTRA`. Desde entonces `WEB_URL` es
+  `https://app.pmo-app.com` y `WEB_URL_EXTRA` es web.app (variables de repo, 17:13 UTC; revisión `00148-qgz`). El login
+  vuelve siempre a `app.`. Marcha atrás: las dos variables al revés y redespliegue con `workflow_dispatch`.
+- **Cronómetro (`bc5c688`, con el mensaje de @Gravity por un `--amend` ajeno):** quien pulsa no recibe el evento
+  (`X-Socket-Id`), así que el tablero aplica la respuesta del `POST`. `kanban/utils/cronometro.ts` es idempotente: el
+  eco no suma dos veces. Al arrancar sobre otra tarea, se cierra en pantalla la anterior.
+- **Socket (`8c542d5`):** sin cookie de acceso pero con `pmo_refresh` → `SESION_CADUCADA`, no `INVALIDA`. La cookie de
+  acceso caduca a los 15 min y el navegador la borra. Con `INVALIDA`, cada despliegue mandaba la pestaña a `/login`.
+- *(Histórico, ya no aplica)* Trampas de publicación a mano del frontend: `firebase` no estaba en la ruta
+  (`npx firebase-tools`) y un `apps/web/vite.config.js` sin seguimiento ganaba al `.ts`. El fantasma se fue en H.2
+  (`76cce1e`) y publicar a mano está prohibido desde I.1: el frontend lo publica el CI.
+- ⚠️ **Gmail:** la etiqueta PMO es por mensaje. La vía incremental (`history.list` con `labelId`) trae igual las
+  respuestas de un hilo etiquetado; `backfill`/`getInbox` (`messages.list`) no. Y el historial del hilo se come el tope
+  de 12.000 caracteres con citas repetidas.
+
 ## Fase 8 — cuota, adjuntos y las dos listas cerradas (2026-09-11)
 
 **885 pruebas en 40 suites**, en verde. `tsc` y ESLint limpios. Tres commits:
@@ -277,6 +644,31 @@ _Nota menor pendiente_: el aviso de `ai.service.ts` sigue diciendo «En Cloud Ru
 llega desde Secret Manager», y ya no es cierto. Es texto de un log, no cambia
 comportamiento.
 
+## El fallo del copiloto del 2026-08-03 (`9a45a58`)
+
+El segundo turno de **cualquier** conversación moría, siempre. `saveTurn` metía
+pregunta y respuesta en el mismo `createMany`, las dos con el mismo `createdAt`;
+`history()` ordenaba solo por esa columna, el empate lo deshacía el motor, y lo
+deshacía al revés. Anthropic exige que el primer mensaje sea del usuario, así
+que la llamada moría con un 400 del proveedor.
+
+Comprobado contra la base real: el hilo rehidrataba
+`ASSISTANT → USER → USER`. Arreglado ordenando por `[createdAt, id]`, sellando
+las dos filas a mano y separadas, y descartando las respuestas que la ventana de
+20 deja sin su pregunta —ese último es el mismo 400 por otra puerta, en hilos
+largos, y no se arregla ordenando.
+
+**Y era invisible por tres capas sumadas**, que conviene recordar antes de
+declarar «no hay error en los logs»:
+
+1. `/copilot/chat` está **fuera del log automático de peticiones**
+   (`logger.config.ts`), así que no hay línea de petición.
+2. El `catch` del controlador convierte el fallo en un evento SSE **sobre una
+   respuesta que ya salió con 200** —las cabeceras se mandan antes—, así que
+   `customLogLevel` lo clasifica como `info` y Error Reporting no se entera.
+3. La línea que sí se escribía registraba **el texto genérico** que el usuario
+   ya tenía en pantalla, no la causa. Eso está arreglado.
+
 ## Estado a 2026-08-05
 
 - **525 pruebas en 20 suites**, todas en verde (`73ade8a`). Las 15 nuevas cubren
@@ -304,313 +696,3 @@ comportamiento.
   remoto, lint en verde y sitio donde ejecutarse.
 - Migraciones aplicadas: `20260729140000_add_copilot_threads`,
   `20260729153000_add_time_tracking`, `20260729160000_add_priority_audit`.
-
-## Trampas de operación (cada una costó tiempo)
-
-1. **`start:dev` lleva `--max-old-space-size=4096`.** Los tipos de `googleapis`
-   son enormes y con el heap por defecto el supervisor muere de OOM. **El
-   síntoma engaña**: muere el padre, el hijo sobrevive, `/health` sigue dando
-   200 y el hot-reload deja de funcionar en silencio.
-2. **El mismo heap hace falta en `build`** dentro de un contenedor, donde Node
-   lo dimensiona según la RAM que le hayan dado. Sin él, `nest build` muere con
-   `Aborted (core dumped)` y código 134, que se lee como un fallo del compilador
-   y no como falta de memoria.
-3. **Un solo `dev:api` a la vez.** Dos watchers escriben en `apps/api/dist` y se
-   pisan. **Matar el proceso del puerto 3000 no basta**: ese es el último
-   eslabón de cuatro (`npm run dev:api` → `start:dev` → `cross-env` →
-   `nest start --watch`) y el watcher vuelve a levantarlo. El 2026-08-03 había
-   **tres cadenas completas** corriendo a la vez. Para reiniciar de verdad hay
-   que filtrar por línea de comando, no por puerto.
-4. **No ejecutar `nest build` con el watcher levantado**: el build borra `dist`
-   bajo sus pies. Para comprobar tipos con el servidor arriba,
-   `npx tsc -p apps/api/tsconfig.spec.json`.
-5. **El cron de vencidas vive en Redis** (job repetible de BullMQ), no un
-   `@Cron` en proceso: con varias instancias correría en todas.
-6. **`COPILOT_EMAIL_TRANSPORT=mock` en local.** Sin esa línea, cada clic en
-   «Enviar» del borrador manda un correo **de verdad** desde el Gmail del
-   usuario.
-
-## Prisma
-
-- **El cliente es código generado.** Sin `prisma generate` no existen ni los
-  tipos de los modelos ni el namespace `Prisma`, y el build se cae con errores
-  que **parecen del código** —típicamente `Prisma.PrismaClientKnownRequestError`
-  en `tags.service.ts` y `time.service.ts`, que son los dos únicos sitios que lo
-  usan—. En una máquina de desarrollo no se nota porque lo dejó `prisma migrate`
-  hace semanas; en un CI, que parte de `npm ci`, no lo ha generado nadie. Por eso
-  existe el `prebuild` de `@pmo/api` (`dd99adb`), y por eso el CI estuvo en rojo
-  tres runs seguidos.
-- **En 5.22.0, `PrismaClientKnownRequestError` solo existe dentro del namespace.**
-  `import { PrismaClientKnownRequestError } from '@prisma/client'` **no
-  compila** (`TS2305`): en el `.d.ts` generado vive bajo `export namespace
-  Prisma`. La forma correcta es `Prisma.PrismaClientKnownRequestError`.
-- **`@default(now())` no desempata dentro de una transacción.** `now()` de
-  Postgres devuelve la hora de **inicio de la transacción**, así que dos filas
-  insertadas en el mismo `createMany` se sellan con el mismo instante al
-  milisegundo. Costó el fallo del copiloto (ver abajo).
-- **Los `DateTime` son `timestamp WITHOUT time zone` guardando UTC**, así que un
-  solo `AT TIME ZONE 'America/...'` **interpreta** la columna en esa zona en vez
-  de convertirla. Hace falta `AT TIME ZONE 'UTC' AT TIME ZONE tz`. Las cuentas
-  salían bien pero en el día equivocado. Hay prueba de regresión.
-
-## El fallo del copiloto del 2026-08-03 (`9a45a58`)
-
-El segundo turno de **cualquier** conversación moría, siempre. `saveTurn` metía
-pregunta y respuesta en el mismo `createMany`, las dos con el mismo `createdAt`;
-`history()` ordenaba solo por esa columna, el empate lo deshacía el motor, y lo
-deshacía al revés. Anthropic exige que el primer mensaje sea del usuario, así
-que la llamada moría con un 400 del proveedor.
-
-Comprobado contra la base real: el hilo rehidrataba
-`ASSISTANT → USER → USER`. Arreglado ordenando por `[createdAt, id]`, sellando
-las dos filas a mano y separadas, y descartando las respuestas que la ventana de
-20 deja sin su pregunta —ese último es el mismo 400 por otra puerta, en hilos
-largos, y no se arregla ordenando.
-
-**Y era invisible por tres capas sumadas**, que conviene recordar antes de
-declarar «no hay error en los logs»:
-
-1. `/copilot/chat` está **fuera del log automático de peticiones**
-   (`logger.config.ts`), así que no hay línea de petición.
-2. El `catch` del controlador convierte el fallo en un evento SSE **sobre una
-   respuesta que ya salió con 200** —las cabeceras se mandan antes—, así que
-   `customLogLevel` lo clasifica como `info` y Error Reporting no se entera.
-3. La línea que sí se escribía registraba **el texto genérico** que el usuario
-   ya tenía en pantalla, no la causa. Eso está arreglado.
-
-## Observabilidad
-
-- `nestjs-pino` + `pino`. `app.useLogger` redirige **los 33 `new Logger(...)`**
-  repartidos en 32 archivos sin tocar ninguno.
-- `LOG_FORMAT`: `gcp` (JSON de una línea con `severity`, `time`, `message`,
-  `httpRequest`) o `pretty`. Por defecto sigue a `NODE_ENV`.
-- **Los formateadores de Google se aplican solo en `gcp`**: el de nivel
-  sustituye `level` por `severity` y `pino-pretty` busca `level` para colorear.
-  Con los dos a la vez, la terminal se queda sin colores y sin niveles.
-- **El serializador de fábrica de `pino-http` es peligroso**: guarda la petición
-  como *binding del logger hijo*, así que `url` y `query` en crudo salen en
-  **todas** las líneas de esa petición. Dejó el código de autorización de Google
-  cuatro veces en el log. Por eso aquí se **elige** qué se guarda (`id`,
-  `method`, URL saneada) en vez de filtrar lo que sobra.
-- Sentry se canceló: Error Reporting lee las excepciones de Cloud Logging, sin
-  SDK ni credencial.
-
-## Variables de entorno
-
-- **`PORT` manda sobre `API_PORT`.** Cloud Run inyecta `PORT` y espera que el
-  contenedor escuche ahí; si no, la revisión no pasa la sonda de arranque y se
-  revierte con un error que habla de contenedor que no arranca, sin mencionar el
-  puerto. `API_PORT` se queda para local.
-- ⚠️ **`GOOGLE_CLOUD_PROJECT` la tiene que poner el despliegue a mano.** Cloud
-  Run **no** la inyecta: pone `K_SERVICE` y `K_REVISION`. Sin ella
-  `traceFieldsFrom` devuelve `{}` y **las líneas de una misma petición dejan de
-  agruparse**, con los logs saliendo y pareciendo correctos. Ya va en el
-  `--set-env-vars` de `deploy.yml`.
-- `LOG_LEVEL`, `SERVICE_VERSION` y `OVERDUE_CRON` tienen valor por defecto.
-- ⚠️ **`GOOGLE_REDIRECT_URI` tumbaba el contenedor y tampoco iba en el
-  despliegue.** `AuthService` la pide con `getOrThrow` **en su constructor**, y
-  los proveedores de Nest se construyen al arrancar: sin ella la aplicación
-  revienta antes de escuchar en el 8080 y Cloud Run lo informa como **timeout de
-  arranque**, sin nombrar ninguna variable. Es exactamente el síntoma que
-  Gravity anotó el 2026-08-05 y por el que subió el timeout del servicio a 300 s:
-  no es que tarde, es que no llega. Desde el 2026-08-05 va en `--set-env-vars`
-  desde `vars.GOOGLE_REDIRECT_URI`, y el despliegue **se para con un mensaje** si
-  la variable no está. No es un secreto: es la URL de vuelta del login, y tiene
-  que coincidir carácter a carácter con una URI autorizada del cliente OAuth.
-
-  **La ruta es `/auth/google/callback` y nada más.** `main.ts` no llama a
-  `setGlobalPrefix` ni usa versionado, así que no hay `/api` ni `/v1` por
-  ninguna parte: el controlador es `@Controller("auth")` con
-  `@Get("google/callback")` y esa es la única ruta que existe. El valor que se
-  puso en la variable el 2026-08-05 —`https://<DOMAIN>/api/v1/auth/google/callback`—
-  fallaba por partida doble, y ninguno de los dos fallos se ve al arrancar: la
-  aplicación levanta igual y es Google quien rechaza el login después con
-  `redirect_uri_mismatch`, un error que parece del cliente OAuth y no del
-  despliegue. Por eso el guardarraíl comprueba la ruta completa y los
-  marcadores sin sustituir, no solo que la variable esté puesta.
-- ⚠️ **Los tres `CLAUDE_MODEL_*` no llegaban a Cloud Run.** Estaban en
-  `.env.example` y `AiService` los exigía con `getOrThrow`, pero el
-  `--set-secrets` de `deploy.yml` no los inyectaba: el primer despliegue con la
-  nube provisionada habría tumbado **la API entera** —tablero y sesiones
-  incluidos— al construir el módulo de IA. Arreglado el 2026-08-05 por los dos
-  lados: `AiService` degrada a un modelo por defecto con aviso en vez de impedir
-  el arranque, y el despliegue las inyecta.
-
-  **Van por `vars` del repositorio, no por Secret Manager** — y esto se decidió
-  **dos veces**, porque en medio se deshizo. Se intentaron como secretos y el
-  despliegue lo desmintió: `Secret
-  projects/614812477499/secrets/pmo-claude-model-classify/versions/latest was
-  not found` — los tres. `f75cfb2` los pasó a `vars`; `d3547fc` los devolvió a
-  `--set-secrets` sobre un reporte de que ya estaban aprovisionados, y volvió a
-  fallar con el mismo mensaje literal. `gcloud secrets list` sigue devolviendo
-  ocho secretos, ninguno de modelos. Restaurado el 2026-08-07 por orden de Doc.
-
-  No son credenciales, son ids de modelo públicos. Y se añaden **solo si están
-  puestas**: como el código trae un valor bueno y lo anuncia en el log, una
-  variable que falta cambia el modelo, no tumba el despliegue. Hoy **no está
-  puesta ninguna de las tres**, así que la API arrancará con sus modelos por
-  defecto y lo dirá en el log; el workflow además emite un `::notice::` por cada
-  una que falta, para que no sea un silencio.
-
-  ⚠️ **Y la lección que costó el servicio caído**: una revisión que Cloud Run
-  rechaza **retira a la que estaba sirviendo**. Fallar en el `gcloud run deploy`
-  no es el fallo barato que parecía cuando se escribió que era «ruidoso pero
-  bueno».
-- **`CLAUDE_MODEL_REASONING` y `CLAUDE_MODEL_CHEAP` no las leía nadie.** El
-  copiloto usaba solo `COPILOT_ANTHROPIC_MODEL_*`, así que configurarlas en la
-  nube no cambiaba nada. Desde el 2026-08-05 `tierConfig` encadena
-  `COPILOT_ANTHROPIC_MODEL_*` → `CLAUDE_MODEL_*` → tabla: la específica sigue
-  sirviendo para probar un modelo solo en el copiloto, y la compartida gobierna
-  el despliegue.
-- `ANTHROPIC_MAX_RETRIES` (4) y `ANTHROPIC_TIMEOUT_MS` (120 s en clasificación,
-  10 min en copiloto) ajustan la política de reintentos sin tocar código. Un
-  valor no numérico se ignora y se queda el de por defecto.
-
-## Qué puede impedir el arranque (regla, no lista)
-
-Los proveedores de Nest se construyen **al arrancar**, así que un constructor
-que lanza no deja sin servicio a su módulo: deja **la API entera** sin escuchar
-en el puerto. Y el síntoma que se ve arriba, en Cloud Run, es *timeout de
-arranque* — sin nombrar la variable, sin traza y sin pista de que el problema
-sea de configuración. Ya pasó dos veces el 2026-08-05 (`GOOGLE_REDIRECT_URI` y
-`CLAUDE_MODEL_CLASSIFY`), las dos con la misma cara.
-
-La regla con la que se decide, al añadir una variable nueva:
-
-- **Credencial que falta → no arrancar.** Una clave inventada no existe; el
-  respaldo solo difiere el fallo hasta la primera llamada y lo disfraza de 401.
-  `ANTHROPIC_API_KEY` y `TOKEN_ENCRYPTION_KEY` siguen así, a propósito.
-- **Configuración cuyo valor bueno sabemos escribir → respaldo con aviso.** Un
-  id de modelo lo sabemos poner desde el código. Impedir el arranque por él
-  cambia "la clasificación usa otro modelo del previsto" por "no hay tablero".
-  El aviso en el log es obligatorio: el entorno manda, y si no llegó, esto lo
-  está ignorando en silencio.
-- **Lo que no tiene valor bueno posible → pararlo antes de desplegar.** La URI
-  de vuelta del login no se puede adivinar y una equivocada rompe el login de
-  forma más confusa que no arrancar. Por eso la comprobación vive en
-  `deploy.yml` y no en el código: falla en el runner, con el motivo escrito.
-
-## Límite de tasa de Anthropic (2026-08-05)
-
-`common/anthropic/anthropic-client.ts` es el único sitio donde se construye el
-cliente, y lo comparten la clasificación y el copiloto.
-
-- **Los reintentos los pone el SDK, no un bucle nuestro**: repite 408/409/429 y
-  5xx con espera exponencial respetando `retry-after`, y no toca los 4xx que se
-  repetirían igual de mal. Solo se sube el tope de 2 a 4.
-- **La detección de fallos mira `error.status`, no `instanceof APIError`.** En
-  `ai.service.spec.ts` el módulo del SDK está sustituido por un doble y sus
-  clases de error **no existen**: un `instanceof` reventaría al comprobar el
-  error en vez de al provocarlo.
-- **`AiService` anota y propaga; no espera.** Un 429 que llega hasta él ya pasó
-  por los reintentos del SDK, así que registra el fallo con la espera que sugiere
-  la respuesta (`retry-after`, o el `*-reset` más lejano si no viene) y lo deja
-  subir. Dormir ahí solo retrasaría **ese** correo mientras los siguientes de la
-  tanda van a chocar igual; quien puede frenar de verdad es el worker, que
-  gobierna la cola entera.
-- **La espera se acota entre 1 s y 5 min.** Sin techo, una cabecera con fecha
-  rara o un reloj desajustado dejaría la cola dormida horas — un fallo que se
-  leería como "la IA dejó de clasificar" sin ningún error a la vista.
-- **El worker de clasificación es el único que frena.** Va con `concurrency: 2`
-  y `limiter: { max: 20, duration: 60_000 }` —ventana compartida entre
-  instancias porque el contador vive en Redis—, y ante un 429 que sobrevive a
-  los reintentos llama a `worker.rateLimit(espera)` y lanza
-  `Worker.RateLimitError()`: la cola se pausa lo que pida la cabecera y el job
-  vuelve **sin gastar un intento**. Con un error normal, una tanda de correos
-  buenos acabaría en la cola de fallidos por una saturación pasajera.
-  Ojo: `worker.rateLimit` está marcado `@deprecated` para BullMQ 6, donde pasa
-  a `queue.rateLimit`. En la 5 que usamos es el camino bueno.
-- El copiloto **no** frena: al otro lado hay alguien esperando y un error a los
-  veinte segundos es mejor que un cursor parpadeando tres minutos. Traduce el
-  429 a un mensaje que el chat puede enseñar tal cual.
-
-## Imagen y despliegue (`ebd06cc`)
-
-`apps/api/Dockerfile`, tres etapas, **construido y arrancado de verdad**: sondas
-en 200 contra Postgres y Redis, y `docker stop` saliendo con **código 0**, que
-es lo que confirma que Node es PID 1 y corre el cierre ordenado. Con `npm start`
-por medio no llegaría el `SIGTERM`.
-
-Lo que rompió al construirlo, por si vuelve:
-
-- Falta `tsconfig.base.json` en el contexto → `tsc` cae a sus valores por
-  defecto y type-checkea `node_modules` entero; el error habla de ESLint.
-- **npm no hoistea todo**: `@nestjs/terminus` se queda en
-  `apps/api/node_modules`. Copiando solo el `node_modules` de la raíz, la imagen
-  construye, arranca y se cae en el primer `require`.
-
-⚠️ **Peso: 882 MB, y `googleapis` son 204 MB** —el 46% de `node_modules`— para
-usar solo Gmail. `@googleapis/gmail` ahorraría unos 190 MB; es un cambio de
-código y está sin hacer.
-
-## Dominio
-
-Backend profundo: workers y colas, Prisma, tubería de IA, `.spec.ts`, lógica de
-dominio, y **los archivos estáticos de configuración** (Dockerfile, YAML de
-Actions) desde el reparto del 2026-08-03. La **ejecución** en la nube —`gcloud`,
-secretos, despliegues— es de Gravity.
-
-Excepciones vigentes: `modules/emails/` y `modules/time/`, `POST /tasks`,
-`DELETE /tasks/:id` y `TasksGateway` los lleva Claude aunque sean capa REST,
-porque comparten reglas con el cron y los sockets.
-
-## Dominio, cronómetro y socket (2026-10-01)
-
-- **`1d26236`** — el preflight post-despliegue comprueba también `WEB_URL_EXTRA`. Desde entonces `WEB_URL` es
-  `https://app.pmo-app.com` y `WEB_URL_EXTRA` es web.app (variables de repo, 17:13 UTC; revisión `00148-qgz`). El login
-  vuelve siempre a `app.`. Marcha atrás: las dos variables al revés y redespliegue con `workflow_dispatch`.
-- **Cronómetro (`bc5c688`, con el mensaje de @Gravity por un `--amend` ajeno):** quien pulsa no recibe el evento
-  (`X-Socket-Id`), así que el tablero aplica la respuesta del `POST`. `kanban/utils/cronometro.ts` es idempotente: el
-  eco no suma dos veces. Al arrancar sobre otra tarea, se cierra en pantalla la anterior.
-- **Socket (`8c542d5`):** sin cookie de acceso pero con `pmo_refresh` → `SESION_CADUCADA`, no `INVALIDA`. La cookie de
-  acceso caduca a los 15 min y el navegador la borra. Con `INVALIDA`, cada despliegue mandaba la pestaña a `/login`.
-- ⚠️ **Trampas de publicación del frontend:** `firebase` no está en la ruta (`npx firebase-tools`), y el
-  `apps/web/vite.config.js` sin seguimiento gana al `.ts` (`vite build --config vite.config.ts`).
-- ⚠️ **Gmail:** la etiqueta PMO es por mensaje. La vía incremental (`history.list` con `labelId`) trae igual las
-  respuestas de un hilo etiquetado; `backfill`/`getInbox` (`messages.list`) no. Y el historial del hilo se come el tope
-  de 12.000 caracteres con citas repetidas.
-
-## La IA por hilo (G, 2026-10-01)
-
-- **B.3 (`b372767`):** la fila «Bancos» se agrupa por `TIPO_BANCO` (`bancosPorTipo()` en `ScopeTabs.tsx`); el chip del
-  banco lleva el tipo en el `title`.
-- **Uso por llamada (`0fe8a99`):** `Uso IA · correo=… hilo=… · entrada · salida · $` en el log. Es lo único que dice
-  cuánto cuesta un hilo: `aiUsage` solo guarda el total del día.
-- **`quitarCitas` (`8afc3b1`):** ante la duda, el texto entero. No corta reenvíos.
-- **Por hilo (`e78dfba`):** `cargarHilo` → el **ancla** es el correo más reciente del hilo. Se analiza desde él, sus
-  adjuntos son los únicos que viajan y en él se guarda el borrador; los demás del hilo se vacían. El más antiguo de la
-  base conserva sus citas. `reclassifyThread` = «Volver a analizar». «Revisar» devuelve el `emailId` del ancla.
-- **Prueba real del hilo de Sofía (00151-zhf):** 5.992 tokens de entrada, $0,0231. El prompt y las subtareas aprobadas
-  pesan más de lo que estimé. Repitió una subtarea aprobada pendiente: decisión de Doc pendiente.
-- ⚠️ **Las heredocs de bash en esta máquina se comen las barras invertidas** (`\n`, `\r`, `\` de continuación). Para
-  scripts con escapes: escribir el archivo con la herramienta Write y ejecutarlo.
-
-## Remates de G (H, 2026-10-05)
-
-- **H.1 (`6e6d1ea`):** el prompt del hilo prohíbe volver a proponer una subtarea aprobada **pendiente**. La prueba real dio
-  0 propuestas, pero el Jefe había mandado la boleta ese mismo día: no aísla la regla.
-- **H.2 (`76cce1e`):** `version.json` = `HEAD` local. Fuera de CI, el build **falla** si `apps/web`/`packages/shared` tienen
-  cambios o si `HEAD` no está en un remoto. Para publicar: commit, **push** y build. `tsconfig.node.json` emite en
-  `node_modules/.tmp` (TS6310 no deja `noEmit`); se acabó el `vite.config.js` fantasma.
-- ⚠️ `deploy.yml` tiene `concurrency: cancel-in-progress`: dos pushes seguidos cancelan el primer despliegue. El segundo
-  lleva el código del primero, pero el run del primero sale «cancelled», no «success».
-
-## Frontend desde el CI y resync por hilos (I, 2026-10-05)
-
-- **El frontend se publica desde `publicar-frontend.yml`** (tras el CI de `master`); a mano está prohibido
-  (`apps/web/README.md`). Interruptor `PUBLICAR_FRONTEND_DESDE_CI`; URL de la API en la variable `VITE_API_URL`.
-  `github-deployer@` tiene «Administrador de Firebase Hosting» y «Consumidor de Service Usage» (los puso el Jefe; el
-  filtro de permisos de Claude Code bloquea conceder roles de IAM aunque el Jefe lo autorice en el chat).
-- ⚠️ **Nunca `curl … | grep -q` con `pipefail`**: `grep` cierra la tubería al encontrar y `curl` sale con 23. Bajar a
-  archivo y buscar ahí. Costó un rojo y un aviso falso al chat el 05-10.
-- **Resync por hilos (`203ed98`):** `mensajesQueEntran` en `gmail/hilos-pmo.ts`. Medido el 05-10: 52 hilos PMO, 225
-  mensajes por la regla, 0 nuevos (la vía incremental ya los tenía).
-
-## Un análisis por ráfaga (J, 2026-10-06; medido el 10-10)
-
-- La ingesta y el barrido no encolan el correo: `programarAnalisisDelHilo` programa «pensar el hilo»
-  (`jobId = hilo-<usuario>-<hilo>`, 60 s). Esperando → no se crea otro; ejecutándose → `…-tras`; terminado o fallido → se
-  borra y se reprograma (BullMQ ignora un `add` con id existente). El worker piensa lo pendiente del hilo y despacha todo
-  hasta el ancla.
-- Medido: 2 correos → 1 análisis ($0,024); 6 correos en 87 s → 2 análisis ($0,045).
-- ⚠️ `gcloud` caduca cada pocos días (reautenticación de Google): para leer logs hace falta `gcloud auth login` del Jefe.
