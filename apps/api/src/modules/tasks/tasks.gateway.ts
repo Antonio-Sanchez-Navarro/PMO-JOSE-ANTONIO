@@ -14,6 +14,7 @@ import cookie from 'cookie';
 import { REFRESH_COOKIE, SESSION_COOKIE } from '../auth/auth.constants';
 import { describirError, stackDe } from '../../common/observability/describir-error';
 import { origenesCors } from '../../common/security/origenes-cors';
+import { conexionDeOrigenAdmitido, origenesAdmitidos } from '../../common/security/origen-de-peticion';
 
 /** Nombres de los eventos que emite el backend. Se importan desde los tests. */
 export const TASK_EVENTS = {
@@ -144,11 +145,27 @@ const MARGEN_DE_RELOJ_MS = 5_000;
  * opciones del decorador se evalúan al cargar la clase, antes de que exista el
  * contenedor de Nest.
  */
+/**
+ * Qué conexiones de socket se aceptan: solo las que vienen de los orígenes del
+ * frontend. Se exporta para probarla.
+ */
+export function permitirConexion(
+  req: { headers: { origin?: string } },
+  responder: (error: string | null | undefined, permitida: boolean) => void,
+): void {
+  const admitidos = origenesAdmitidos(
+    origenesCors(process.env.WEB_URL, process.env.WEB_URL_EXTRA),
+    process.env.NODE_ENV === 'production',
+  );
+  responder(null, conexionDeOrigenAdmitido(req.headers.origin, admitidos));
+}
+
 @WebSocketGateway({
   cors: {
     origin: origenesCors(process.env.WEB_URL, process.env.WEB_URL_EXTRA),
     credentials: true,
   },
+  allowRequest: permitirConexion,
 })
 export class TasksGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(TasksGateway.name);

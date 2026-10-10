@@ -55,3 +55,12 @@ export function filtroDeOrigen(admitidos: string[]) {
     res.status(403).json({ statusCode: 403, message: 'Origen no admitido' });
   };
 }
+
+/**
+ * La misma regla para el tiempo real: una conexión de socket solo se acepta si
+ * su `Origin` está en la lista. Un navegador siempre lo manda al abrirla.
+ */
+export function conexionDeOrigenAdmitido(origin: string | undefined, admitidos: string[]): boolean {
+  const origen = origenDe(origin);
+  return origen !== null && admitidos.includes(origen);
+}
